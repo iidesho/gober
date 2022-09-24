@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	log "github.com/cantara/bragi"
 	"testing"
 
 	"github.com/cantara/gober/store"
@@ -116,4 +117,52 @@ func TestStreamMultiple(t *testing.T) {
 		}
 	}
 	return
+}
+
+func BenchmarkStoreAndStream(b *testing.B) { //FIXME: Storing and reading a lot in succession is broken.
+	log.SetLevel(log.ERROR)
+	log.Debug("b.N ", b.N)
+	data := make(map[string]interface{})
+	data["id"] = 1
+	data["name"] = "test"
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := Init()
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	stream, err := s.Stream(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), store.STREAM_START, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	for i := 0; i < b.N; i++ {
+		_, err = s.Store(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx, store.Event{
+			Id:   uuid.Must(uuid.NewV7()),
+			Type: "test",
+			Data: bytes,
+		})
+		if err != nil {
+			b.Error(err)
+			return
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		e := <-stream
+		if e.Type != "test" {
+			b.Error(fmt.Errorf("missmatch event types"))
+			return
+		}
+		if e.Id.String() == "" {
+			b.Error(fmt.Errorf("missing event id"))
+			return
+		}
+	}
 }

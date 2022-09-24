@@ -3,6 +3,7 @@ package inmemory
 import (
 	"context"
 	"encoding/binary"
+	log "github.com/cantara/bragi"
 	"sync"
 
 	"github.com/cantara/gober/store"
@@ -13,7 +14,7 @@ type Stream struct {
 	db       []store.Event
 	dbLock   *sync.Mutex
 	newData  *sync.Cond
-	position uint64
+	position *uint64
 }
 
 type EventStore struct {
@@ -52,7 +53,8 @@ func (es *EventStore) Store(streamName string, ctx context.Context, events ...st
 	}
 
 	stream.db = append(stream.db, events...)
-	stream.position = uint64(curPos + len(events))
+	p := uint64(curPos + len(events))
+	stream.position = &p
 
 	//stream.dbLock.Unlock()
 	es.streams.Store(streamName, stream)
@@ -67,8 +69,9 @@ func (es *EventStore) Stream(streamName string, from store.StreamPosition, ctx c
 		newData: sync.NewCond(&sync.Mutex{}),
 	})
 	stream := streamAny.(Stream)
+	log.Debug(stream)
 
-	eventChan := make(chan store.Event, 0)
+	eventChan := make(chan store.Event, 2)
 	out = eventChan
 	go func() {
 		defer close(eventChan)
@@ -87,15 +90,16 @@ func (es *EventStore) Stream(streamName string, from store.StreamPosition, ctx c
 				case <-ctx.Done():
 					return
 				default:
-					streamAny, _ = es.streams.Load(streamName)
-					stream = streamAny.(Stream)
-
 					for ; position < uint64(len(stream.db)); position++ {
 						eventChan <- stream.db[position]
 					}
-					stream.newData.L.Lock()
-					stream.newData.Wait()
-					stream.newData.L.Unlock()
+					streamAny, _ = es.streams.Load(streamName)
+					stream = streamAny.(Stream)
+					if position >= uint64(len(stream.db)) {
+						stream.newData.L.Lock()
+						stream.newData.Wait()
+						stream.newData.L.Unlock()
+					}
 				}
 			}
 		}
