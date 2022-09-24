@@ -3,13 +3,14 @@ package saga
 import (
 	"context"
 	"fmt"
+	log "github.com/cantara/bragi"
+	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/gofrs/uuid"
-	"go/types"
 	"testing"
 )
 
-var s Saga[dd, types.Nil]
+var s Saga
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -26,52 +27,66 @@ func cryptKeyProvider(_ string) string {
 }
 
 type act1 struct {
-	inner string
+	Inner string `json:"inner"`
 }
 
 func (a act1) Execute() error {
-	fmt.Println(a.inner)
+	fmt.Println(a.Inner)
 	return nil
 }
 
 type act2 struct {
-	pre  string
-	post string
+	Pre  string `json:"pre"`
+	Post string `json:"post"`
 }
 
 func (a act2) Execute() error {
-	fmt.Println(a.pre, "woop", a.post)
+	fmt.Println(a.Pre, "woop", a.Post)
 	return nil
 }
 
 var stry = Story{
 	Name: "test",
-	Actions: []Action{
+	Arcs: []Arc{
 		{
-			Id: "action_1",
-			Body: act1{
-				inner: "test",
+			Actions: []Action{
+				{
+					Id: "action_1",
+					Body: act1{
+						Inner: "test",
+					},
+				},
 			},
 		},
 		{
-			Id:       "action_2",
-			Requires: []string{"action_1"},
-			Body: act2{
-				pre:  "bef",
-				post: "aft",
+			Actions: []Action{
+				{
+					Id: "action_3",
+					Body: act1{
+						Inner: "test",
+					},
+				},
+				{
+					Id: "action_2",
+					Body: act2{
+						Pre:  "bef",
+						Post: "aft",
+					},
+				},
 			},
 		},
 	},
 }
 
 func TestInit(t *testing.T) {
+	log.SetLevel(log.INFO)
 	store, err := inmemory.Init()
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := Init[types.Nil](store, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
+	edt, err := Init(store, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -80,8 +95,8 @@ func TestInit(t *testing.T) {
 	return
 }
 
-func TestPrime(t *testing.T) {
-	err := s.Prime(stry)
+func TestExecuteFirst(t *testing.T) {
+	err := s.ExecuteFirst(stry.Arcs[0].Actions[0].Body)
 	if err != nil {
 		t.Error(err)
 		return
@@ -92,4 +107,28 @@ func TestPrime(t *testing.T) {
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
 	s.Close()
+}
+
+func BenchmarkSaga(b *testing.B) {
+	log.SetLevel(log.ERROR)
+	store, err := eventstore.Init()
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
+	edt, err := Init(store, "1.0.0", fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), stry, cryptKeyProvider, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	defer edt.Close()
+	for i := 0; i < b.N; i++ {
+		err = edt.ExecuteFirst(stry.Arcs[0].Actions[0].Body)
+		if err != nil {
+			b.Error(err)
+			return
+		}
+	}
 }
