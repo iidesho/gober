@@ -2,12 +2,10 @@ package tasks
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	log "github.com/cantara/bragi"
 	"sync"
 	"time"
-
-	log "github.com/cantara/bragi"
 
 	event "github.com/cantara/gober"
 	"github.com/cantara/gober/crypto"
@@ -60,8 +58,9 @@ type TaskData[DT any] struct {
 }
 
 type dmd[DT, MT any] struct {
-	Task     TaskData[DT]
-	Metadata event.Metadata[MT]
+	Task     *TaskData[DT]
+	Metadata *event.Metadata[MT]
+	//Readable *sync.Mutex
 }
 
 func Init[DT, MT any](pers event.Persistence, dataTypeVersion, stream string, p event.CryptoKeyProvider, ctx context.Context) (ed *tasks[DT, MT], err error) {
@@ -107,8 +106,9 @@ func Init[DT, MT any](pers event.Persistence, dataTypeVersion, stream string, p 
 				continue
 			}
 			ed.data.Store(e.Data.Id, dmd[DT, MT]{
-				Task:     e.Data,
-				Metadata: e.Metadata,
+				Task:     &e.Data,
+				Metadata: &e.Metadata,
+				//Readable: &sync.Mutex{},
 			})
 		default:
 			upToDate = true
@@ -122,18 +122,18 @@ func Init[DT, MT any](pers event.Persistence, dataTypeVersion, stream string, p 
 			case <-ctx.Done():
 				return
 			case e := <-eventChan:
-				d, _ := json.MarshalIndent(e, "", "    ")
-				log.Printf("Stream read: \n%s\n", d)
+				//d, _ := json.MarshalIndent(e, "", "    ")
+				//log.Printf("Stream read: \n%s\n", d)
 				if ed.finishEventType != "" && e.Type == ed.finishEventType {
 					ed.data.Delete(e.Data.Id)
 					transactionChan <- e.Transaction
 					continue
 				}
 				ed.data.Store(e.Data.Id, dmd[DT, MT]{
-					Task:     e.Data,
-					Metadata: e.Metadata,
+					Task:     &e.Data,
+					Metadata: &e.Metadata,
+					//Readable: &sync.Mutex{},
 				})
-				fmt.Println(ed.data.Load(e.Data.Id))
 				transactionChan <- e.Transaction
 			}
 		}
@@ -212,12 +212,14 @@ func (t *tasks[DT, MT]) Select() (outDT TaskData[DT], outMT MT, err error) {
 		task.Selector = t.name
 		//task.Id = task.Next
 		var e event.Event[TaskData[DT], MT]
-		e, err = t.event(task.Next, t.selectEventType, task)
+		e, err = t.event(task.Next, t.selectEventType, *task)
 		if err != nil {
 			return false
 		}
-		e.Metadata = ev.Metadata
+		e.Metadata = *ev.Metadata
+		//ev.Readable.Lock()
 		err = t.setAndWait(e)
+		//ev.Readable.Unlock()
 		if err != nil {
 			return false
 		}
@@ -231,7 +233,7 @@ func (t *tasks[DT, MT]) Select() (outDT TaskData[DT], outMT MT, err error) {
 			return true
 		}
 		log.Println(outTask)
-		outDT = outTask.Task
+		outDT = *outTask.Task
 		outMT = outTask.Metadata.Event
 		return false
 	})
@@ -277,7 +279,7 @@ func (t *tasks[DT, MT]) Finish(id uuid.UUID) (err error) {
 	}
 	task.Status = Finished
 
-	e, err := t.event(task.Next, t.finishEventType, task)
+	e, err := t.event(task.Next, t.finishEventType, *task)
 	if err != nil {
 		return
 	}
@@ -305,6 +307,8 @@ func (t *tasks[DT, MT]) Create(dt DT, mt MT) (err error) {
 }
 
 func (t *tasks[DT, MT]) setAndWait(e event.Event[TaskData[DT], MT]) (err error) {
+	//d, _ := json.MarshalIndent(e, "", "    ")
+	//log.Printf("Stream write: \n%s\n", d)
 	transaction, err := t.es.Store(e, t.provider)
 	if err != nil {
 		return
@@ -317,10 +321,10 @@ func (t *tasks[DT, MT]) setAndWait(e event.Event[TaskData[DT], MT]) (err error) 
 	}
 	log.Println("Set and wait waiting")
 	<-completeChan
-	t.data.Range(func(key, value any) bool {
-		fmt.Println("Range print", key, value)
-		return true
-	})
+	//t.data.Range(func(key, value any) bool {
+	//fmt.Println("Range print", key, value)
+	//return true
+	//})
 	return
 }
 
