@@ -3,6 +3,8 @@ package gober
 import (
 	"context"
 	"fmt"
+	log "github.com/cantara/bragi"
+	"github.com/cantara/gober/store/eventstore"
 	"testing"
 
 	"github.com/cantara/gober/store"
@@ -178,4 +180,72 @@ func TestStreamDuplicate(t *testing.T) {
 
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
+}
+
+func BenchmarkStoreAndStream(b *testing.B) {
+	log.SetLevel(log.ERROR)
+	pers, err := eventstore.Init()
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	est, err := Init[dd, md](pers, fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	stream, err := est.Stream([]string{b.Name()}, store.STREAM_START, ReadType[md](b.Name()), cryptKeyProvider, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	events := make([]Event[dd, md], b.N)
+	for i := 0; i < b.N; i++ {
+		data := dd{
+			Id:   i,
+			Name: "test",
+		}
+		meta := md{
+			Extra: "extra metadata test",
+		}
+		events[i], err = EventBuilder[dd, md]().
+			WithType(b.Name()).
+			WithData(data).
+			WithMetadata(Metadata[md]{
+				Event: meta,
+			}).
+			Build()
+		if err != nil {
+			b.Error(err)
+			return
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		if i == 0 {
+			fmt.Println(events[i].Data)
+		}
+		_, err = est.Store(events[i],
+			cryptKeyProvider)
+		if err != nil {
+			b.Error(err)
+			return
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		e := <-stream
+		if e.Type != b.Name() {
+			b.Error(fmt.Errorf("missmatch event types"))
+			return
+		}
+		if e.Id.String() == "" {
+			b.Error(fmt.Errorf("missing event id"))
+			return
+		}
+		if e.Data != events[i].Data {
+			b.Error(fmt.Errorf("missmatch event data, %v != %v", e.Data, events[i].Data))
+			return
+		}
+	}
 }

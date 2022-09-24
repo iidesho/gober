@@ -176,7 +176,7 @@ func (es EventService[DT, MT]) Stream(eventTypes []string, from store.StreamPosi
 					continue
 				}
 
-				log.Println("Read event: ", event.Position)
+				log.Debug("Read event: ", event.Position)
 				eventChan <- Event[DT, MT]{
 					Id:       event.Id,
 					Type:     event.Type,
