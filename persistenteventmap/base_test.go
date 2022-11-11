@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/cantara/gober/store/inmemory"
+	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event"
 	"testing"
 )
 
@@ -34,7 +36,11 @@ func TestInit(t *testing.T) {
 		return
 	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := Init[dd, md](store, "testdata", "1.0.0", STREAM_NAME, "create_setandwait", "update_setandwait", "delete_setandwait", cryptKeyProvider, ctxGlobal)
+	s, err := stream.Init[dd, md](store, STREAM_NAME, ctxGlobal)
+	if err != nil {
+		return
+	}
+	edt, err := Init[dd, md](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -67,25 +73,24 @@ func TestGet(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	if meta.Type != "create_setandwait" {
-		t.Error(fmt.Errorf("Missmatch event types"))
+	if meta.EventType != event.Create {
+		t.Error(fmt.Errorf("missmatch event types"))
 		return
 	}
 	if data.Id != 1 {
-		t.Error(fmt.Errorf("Missmatch data id"))
+		t.Error(fmt.Errorf("missmatch data id"))
 		return
 	}
 	if data.Name != "test" {
-		t.Error(fmt.Errorf("Missmatch data name"))
+		t.Error(fmt.Errorf("missmatch data name"))
 		return
 	}
 	if meta.Event.Extra != "extra metadata test" {
-		t.Error(fmt.Errorf("Missmatch event metadata extra"))
+		t.Error(fmt.Errorf("missmatch event metadata extra"))
 		return
 	}
 }
 
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
-	ed.Close()
 }

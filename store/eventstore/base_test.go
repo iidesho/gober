@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	"github.com/cantara/gober/store"
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid"
 )
 
 var es EventStore
 
-var STREAM_NAME = "TestStoreAndStream_" + uuid.New().String()
+var STREAM_NAME = "TestStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
 func TestInit(t *testing.T) {
 	est, err := Init()
@@ -37,7 +37,7 @@ func TestStore(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err = es.Store(STREAM_NAME, ctx, store.Event{
-		Id:   uuid.New().String(),
+		Id:   uuid.Must(uuid.NewV7()),
 		Type: "test",
 		Data: bytes,
 	})

@@ -2,6 +2,7 @@ package eventstore
 
 import (
 	"context"
+	"github.com/cantara/gober/stream/event"
 	"time"
 
 	//"github.com/EventStore/EventStore-Client-Go/esdb/v2"
@@ -30,13 +31,13 @@ func Init() (es EventStore, err error) {
 
 func (es EventStore) Store(streamName string, ctx context.Context, events ...store.Event) (transactionId uint64, err error) {
 	eventDatas := make([]esdb.EventData, len(events))
-	for i, event := range events {
+	for i, e := range events {
 		eventDatas[i] = esdb.EventData{
-			EventID:     event.Id,
+			EventID:     e.Id,
 			ContentType: esdb.BinaryContentType, //Teknically json on the back end of it
-			EventType:   event.Type,
-			Data:        event.Data,
-			Metadata:    event.Metadata,
+			EventType:   string(e.Type),
+			Data:        e.Data,
+			Metadata:    e.Metadata,
 		}
 	}
 
@@ -90,18 +91,18 @@ func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx co
 						continue
 					}
 
-					event := subEvent.EventAppeared.OriginalEvent()
+					e := subEvent.EventAppeared.OriginalEvent()
 					eventChan <- store.Event{
-						Id:          event.EventID,
-						Type:        event.EventType,
-						Transaction: event.Position.Commit,
-						Position:    event.EventNumber,
-						Data:        event.Data,
-						Metadata:    event.UserMetadata,
-						Created:     event.CreatedDate,
+						Id:          e.EventID,
+						Type:        event.TypeFromString(e.EventType),
+						Transaction: e.Position.Commit,
+						Position:    e.EventNumber,
+						Data:        e.Data,
+						Metadata:    e.UserMetadata,
+						Created:     e.CreatedDate,
 					}
-					if from < store.StreamPosition(event.EventNumber) { // This could potentially be a bottleneck, the only reason to have this is so that if stream end was selected, then we won't catch up the missing events in the time we were down.
-						from = store.StreamPosition(event.EventNumber)
+					if from < store.StreamPosition(e.EventNumber) { // This could potentially be a bottleneck, the only reason to have this is so that if stream end was selected, then we won't catch up the missing events in the time we were down.
+						from = store.StreamPosition(e.EventNumber)
 					}
 				}
 			}

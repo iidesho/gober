@@ -1,18 +1,21 @@
-package gober
+package stream
 
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/store/eventstore"
 	"testing"
 
+	"github.com/gofrs/uuid"
+
+	log "github.com/cantara/bragi"
+
 	"github.com/cantara/gober/store"
 	"github.com/cantara/gober/store/inmemory"
-	"github.com/gofrs/uuid"
+	"github.com/cantara/gober/stream/event"
 )
 
-var es EventService[dd, md]
+var es Stream[dd, md]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -57,10 +60,10 @@ func TestStoreOrder(t *testing.T) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		event, err := EventBuilder[dd, md]().
+		event, err := event.NewBuilder[dd, md]().
 			WithType("test").
 			WithData(data).
-			WithMetadata(Metadata[md]{
+			WithMetadata(event.Metadata[md]{
 				Event: meta,
 			}).
 			Build()
@@ -81,14 +84,14 @@ func TestStoreOrder(t *testing.T) {
 func TestStreamOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := es.Stream([]string{"test"}, store.STREAM_START, ReadType[md]("test"), cryptKeyProvider, ctx)
+	stream, err := es.Stream([]event.Type{event.Create}, store.STREAM_START, ReadType[md](event.Create), cryptKeyProvider, ctx)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	for i := 1; i <= 5; i++ {
 		e := <-stream
-		if e.Type != "test" {
+		if e.Type != event.Create {
 			t.Error(fmt.Errorf("missmatch event types"))
 			return
 		}
@@ -104,7 +107,7 @@ func TestStreamOrder(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch event metadata extra"))
 			return
 		}
-		if e.Metadata.Type != e.Type {
+		if e.Metadata.EventType != e.Type {
 			t.Error(fmt.Errorf("missmatch event metadata type and event type"))
 			return
 		}
@@ -122,11 +125,11 @@ func TestStoreDuplicate(t *testing.T) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		event, err := EventBuilder[dd, md]().
+		e, err := event.NewBuilder[dd, md]().
 			WithId(id).
 			WithType("test").
 			WithData(data).
-			WithMetadata(Metadata[md]{
+			WithMetadata(event.Metadata[md]{
 				Event: meta,
 			}).
 			Build()
@@ -134,7 +137,7 @@ func TestStoreDuplicate(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, err = es.Store(event,
+		_, err = es.Store(e,
 			cryptKeyProvider)
 		if err != nil {
 			t.Error(err)
@@ -147,7 +150,7 @@ func TestStoreDuplicate(t *testing.T) {
 func TestStreamDuplicate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := es.Stream([]string{"test"}, store.STREAM_START, ReadType[md]("test"), cryptKeyProvider, ctx)
+	stream, err := es.Stream([]event.Type{event.Create}, store.STREAM_START, ReadType[md](event.Create), cryptKeyProvider, ctx)
 	if err != nil {
 		t.Error(err)
 		return
@@ -170,7 +173,7 @@ func TestStreamDuplicate(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch event metadata extra"))
 			return
 		}
-		if e.Metadata.Type != e.Type {
+		if e.Metadata.EventType != e.Type {
 			t.Error(fmt.Errorf("missmatch event metadata type and event type"))
 			return
 		}
@@ -196,24 +199,24 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	stream, err := est.Stream([]string{b.Name()}, store.STREAM_START, ReadType[md](b.Name()), cryptKeyProvider, ctx)
+	stream, err := est.Stream([]event.Type{event.Create}, store.STREAM_START, ReadType[md](event.Create), cryptKeyProvider, ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	events := make([]Event[dd, md], b.N)
+	events := make([]event.Event[dd, md], b.N)
 	for i := 0; i < b.N; i++ {
 		data := dd{
 			Id:   i,
-			Name: "test",
+			Name: "test" + b.Name(),
 		}
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		events[i], err = EventBuilder[dd, md]().
-			WithType(b.Name()).
+		events[i], err = event.NewBuilder[dd, md]().
+			WithType(event.Create).
 			WithData(data).
-			WithMetadata(Metadata[md]{
+			WithMetadata(event.Metadata[md]{
 				Event: meta,
 			}).
 			Build()
@@ -235,7 +238,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		e := <-stream
-		if e.Type != b.Name() {
+		if e.Type != event.Create {
 			b.Error(fmt.Errorf("missmatch event types"))
 			return
 		}

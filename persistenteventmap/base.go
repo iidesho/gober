@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event"
 	"time"
 
 	log "github.com/cantara/bragi"
 
-	event "github.com/cantara/gober"
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
 	"github.com/dgraph-io/badger"
@@ -22,9 +23,8 @@ type EventMap[DT, MT any] interface {
 	Len() (l int)
 	Keys() (keys []string)
 	Range(f func(key, value any) bool)
-	Delete(key string) (err error)
+	Delete(data DT, metadata MT) (err error)
 	Set(key string, data DT, metadata MT) (err error)
-	Close()
 }
 
 type transactionCheck struct {
@@ -37,30 +37,32 @@ type mapData[DT, MT any] struct {
 	transactionChan chan transactionCheck
 	dataTypeName    string
 	dataTypeVersion string
-	createEventType string
-	updateEventType string
-	deleteEventType string
-	provider        event.CryptoKeyProvider
-	es              event.EventService[kv[DT], MT]
-	closeES         func()
+	provider        stream.CryptoKeyProvider
+	es              stream.Stream[DT, MT]
+	ctx             context.Context
+	getKey          func(dt DT) string
 }
 
+/*
 type kv[DT any] struct {
 	Key   string `json:"key"`
 	Value DT     `json:"value"`
 }
+*/
 
 type dmd[DT, MT any] struct {
 	Data     DT                 `json:"data"`
 	Metadata event.Metadata[MT] `json:"metadata"`
 }
 
-func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, stream, createEventType, updateEventType, deleteEventType string, p event.CryptoKeyProvider, ctx context.Context) (ed *mapData[DT, MT], err error) {
-	ctxES, cancel := context.WithCancel(ctx)
-	es, err := event.Init[kv[DT], MT](pers, stream, ctxES)
-	if err != nil {
-		return
-	}
+func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
+	//ctxES, cancel := context.WithCancel(ctx)
+	/*
+		es, err := stream.Init[kv[DT], MT](pers, streamName, ctxES)
+		if err != nil {
+			return
+		}
+	*/
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
 	if err != nil {
 		return
@@ -70,16 +72,13 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 		transactionChan: make(chan transactionCheck),
 		dataTypeName:    dataTypeName,
 		dataTypeVersion: dataTypeVersion,
-		createEventType: createEventType,
-		updateEventType: updateEventType,
-		deleteEventType: deleteEventType,
 		provider:        p,
-		es:              es,
-		closeES:         cancel,
+		es:              s,
+		getKey:          getKey,
 	}
 	from := store.STREAM_START
-	positionKey := []byte(fmt.Sprintf("%s_%s_position", stream, dataTypeName))
-	err = ed.data.View(func(txn *badger.Txn) error {
+	positionKey := []byte(fmt.Sprintf("%s_%s_position", s.Name(), dataTypeName))
+	err = db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(positionKey)
 		if err != nil {
 			return err
@@ -95,14 +94,8 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	eventTypes := []string{createEventType}
-	if updateEventType != "" {
-		eventTypes = append(eventTypes, updateEventType)
-	}
-	if deleteEventType != "" {
-		eventTypes = append(eventTypes, deleteEventType)
-	}
-	eventChan, err := ed.es.Stream(eventTypes, from, event.ReadAll[MT](), ed.provider, ctxES)
+	eventTypes := event.AllTypes()
+	eventChan, err := s.Stream(eventTypes, from, stream.ReadAll[MT](), p, ctx)
 	if err != nil {
 		return
 	}
@@ -111,17 +104,18 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 		time.Sleep(time.Millisecond)
 		select {
 		case <-ctx.Done():
+			db.Close()
 			return
-		case event := <-eventChan:
-			if deleteEventType != "" && event.Type == deleteEventType {
-				err := ed.data.Update(func(txn *badger.Txn) error {
-					err = txn.Delete([]byte(event.Data.Key))
+		case e := <-eventChan:
+			if e.Type == event.Delete {
+				err := db.Update(func(txn *badger.Txn) error {
+					err = txn.Delete([]byte(getKey(e.Data)))
 					if err != nil {
 						return err
 					}
 
 					pos := make([]byte, 8)
-					binary.LittleEndian.PutUint64(pos, uint64(event.Position))
+					binary.LittleEndian.PutUint64(pos, e.Position)
 					return txn.Set(positionKey, pos)
 				})
 				if err != nil {
@@ -129,21 +123,21 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 				}
 				continue
 			}
-			err := ed.data.Update(func(txn *badger.Txn) error {
-				data, err := json.Marshal(dmd[DT, MT]{
-					Data:     event.Data.Value,
-					Metadata: event.Metadata,
-				})
-				if err != nil {
-					return err
-				}
-				err = txn.Set([]byte(event.Data.Key), data)
+			data, err := json.Marshal(dmd[DT, MT]{
+				Data:     e.Data,
+				Metadata: e.Metadata,
+			})
+			if err != nil {
+				continue
+			}
+			err = db.Update(func(txn *badger.Txn) error {
+				err = txn.Set([]byte(getKey(e.Data)), data)
 				if err != nil {
 					return err
 				}
 
 				pos := make([]byte, 8)
-				binary.LittleEndian.PutUint64(pos, uint64(event.Position))
+				binary.LittleEndian.PutUint64(pos, e.Position)
 				return txn.Set(positionKey, pos)
 			})
 			if err != nil {
@@ -160,47 +154,48 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 		for {
 			select {
 			case <-ctx.Done():
+				db.Close()
 				return
-			case event := <-eventChan:
+			case e := <-eventChan:
 				//log.Println("event got", string(event.Data.Key))
-				if deleteEventType != "" && event.Type == deleteEventType {
-					err := ed.data.Update(func(txn *badger.Txn) error {
-						err := txn.Delete([]byte(event.Data.Key))
+				if e.Type == event.Delete {
+					err := db.Update(func(txn *badger.Txn) error {
+						err := txn.Delete([]byte(getKey(e.Data)))
 						if err != nil {
 							return err
 						}
 
 						pos := make([]byte, 8)
-						binary.LittleEndian.PutUint64(pos, uint64(event.Position))
+						binary.LittleEndian.PutUint64(pos, e.Position)
 						return txn.Set(positionKey, pos)
 					})
 					if err != nil {
 						log.AddError(err).Warning("Delete error")
 					}
-					transactionChan <- event.Transaction
+					transactionChan <- e.Transaction
 					continue
 				}
-				err := ed.data.Update(func(txn *badger.Txn) error {
+				err := db.Update(func(txn *badger.Txn) error {
 					data, err := json.Marshal(dmd[DT, MT]{
-						Data:     event.Data.Value,
-						Metadata: event.Metadata,
+						Data:     e.Data,
+						Metadata: e.Metadata,
 					})
 					if err != nil {
 						return err
 					}
-					err = txn.Set([]byte(event.Data.Key), data)
+					err = txn.Set([]byte(getKey(e.Data)), data)
 					if err != nil {
 						return err
 					}
 
 					pos := make([]byte, 8)
-					binary.LittleEndian.PutUint64(pos, uint64(event.Position))
+					binary.LittleEndian.PutUint64(pos, e.Position)
 					return txn.Set(positionKey, pos) //Sestting pos without reading can be done since events arrive in order
 				})
 				if err != nil {
 					log.AddError(err).Warning("Update error")
 				}
-				transactionChan <- event.Transaction
+				transactionChan <- e.Transaction
 				//log.Printf("stored (%s) %s", d.Key, d.Data)
 			}
 		}
@@ -212,8 +207,9 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 		for {
 			select {
 			case <-ctx.Done():
+				db.Close()
 				return
-			case completeChan := <-ed.transactionChan:
+			case completeChan := <-ed.(*mapData[DT, MT]).transactionChan:
 				log.Println("Check pre: ", completeChan.transaction, currentTransaction)
 				if currentTransaction >= completeChan.transaction {
 					completeChan.completeChan <- struct{}{}
@@ -239,7 +235,7 @@ func Init[DT, MT any](pers event.Persistence, dataTypeName, dataTypeVersion, str
 	return
 }
 
-var ERROR_KEY_NOT_FOUND = fmt.Errorf("Provided key does not exist")
+var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
 func (m mapData[DT, MT]) Get(key string) (data DT, metadata event.Metadata[MT], err error) {
 	var ed []byte
@@ -291,18 +287,15 @@ func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
 	return
 }
 
-func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.Event[kv[DT], MT], err error) {
-	eventType := m.createEventType
+func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.Event[DT, MT], err error) {
+	eventType := event.Create
 	if m.Exists(key) {
-		eventType = m.updateEventType
+		eventType = event.Update
 	}
 
-	return event.EventBuilder[kv[DT], MT]().
+	return event.NewBuilder[DT, MT]().
 		WithType(eventType).
-		WithData(kv[DT]{
-			Key:   key,
-			Value: data,
-		}).
+		WithData(data).
 		WithMetadata(event.Metadata[MT]{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
@@ -312,16 +305,14 @@ func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.
 		Build()
 }
 
-func (m *mapData[DT, MT]) Delete(key string) (err error) {
-	e, err := event.EventBuilder[kv[DT], MT]().
-		WithType(m.deleteEventType).
-		WithData(kv[DT]{
-			Key: key,
-		}).
+func (m *mapData[DT, MT]) Delete(data DT, metadata MT) (err error) {
+	e, err := event.NewBuilder[DT, MT]().
+		WithType(event.Delete).
+		WithData(data).
 		WithMetadata(event.Metadata[MT]{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
-			Key:      crypto.SimpleHash(key),
+			Key:      crypto.SimpleHash(m.getKey(data)),
 		}).
 		Build()
 
@@ -329,7 +320,7 @@ func (m *mapData[DT, MT]) Delete(key string) (err error) {
 	return
 }
 
-func (m *mapData[DT, MT]) setAndWait(e event.Event[kv[DT], MT]) (err error) {
+func (m *mapData[DT, MT]) setAndWait(e event.Event[DT, MT]) (err error) {
 	transaction, err := m.es.Store(e, m.provider)
 	if err != nil {
 		return
@@ -354,9 +345,4 @@ func (m *mapData[DT, MT]) Set(key string, data DT, metadata MT) (err error) {
 	err = m.setAndWait(e)
 	log.Println("Set and wait end")
 	return
-}
-
-func (m mapData[DT, MT]) Close() {
-	m.closeES()
-	m.data.Close()
 }

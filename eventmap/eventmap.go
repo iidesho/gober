@@ -3,12 +3,13 @@ package eventmap
 import (
 	"context"
 	"fmt"
+	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event"
 	"sync"
 	"time"
 
 	log "github.com/cantara/bragi"
 
-	event "github.com/cantara/gober"
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
 	"github.com/google/uuid"
@@ -35,11 +36,8 @@ type mapData[DT, MT any] struct {
 	transactionChan  chan transactionCheck
 	eventTypeName    string
 	eventTypeVersion string
-	createEventType  string
-	setEventType     string
-	deleteEventType  string
-	provider         event.CryptoKeyProvider
-	es               event.EventService[kv[DT], MT]
+	provider         stream.CryptoKeyProvider
+	es               stream.Stream[kv[DT], MT]
 	closeES          func()
 }
 
@@ -53,9 +51,9 @@ type dmd[DT, MT any] struct {
 	Metadata event.Metadata[MT]
 }
 
-func Init[DT, MT any](pers event.Persistence, eventType, dataTypeVersion, stream string, p event.CryptoKeyProvider, ctx context.Context) (ed *mapData[DT, MT], err error) {
+func Init[DT, MT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed *mapData[DT, MT], err error) {
 	ctxES, cancel := context.WithCancel(ctx)
-	es, err := event.Init[kv[DT], MT](pers, stream, ctxES)
+	es, err := stream.Init[kv[DT], MT](pers, streamName, ctxES)
 	if err != nil {
 		return
 	}
@@ -64,15 +62,12 @@ func Init[DT, MT any](pers event.Persistence, eventType, dataTypeVersion, stream
 		transactionChan:  make(chan transactionCheck),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
-		createEventType:  fmt.Sprintf("create_%s", eventType),
-		setEventType:     fmt.Sprintf("set_%s", eventType),
-		deleteEventType:  fmt.Sprintf("delete_%s", eventType),
 		provider:         p,
 		es:               es,
 		closeES:          cancel,
 	}
-	eventTypes := []string{ed.createEventType, ed.setEventType, ed.deleteEventType}
-	eventChan, err := ed.es.Stream(eventTypes, store.STREAM_START, event.ReadAll[MT](), ed.provider, ctxES)
+	eventTypes := []event.Type{event.Create, event.Update, event.Delete}
+	eventChan, err := ed.es.Stream(eventTypes, store.STREAM_START, stream.ReadAll[MT](), ed.provider, ctxES)
 	if err != nil {
 		return
 	}
@@ -82,14 +77,14 @@ func Init[DT, MT any](pers event.Persistence, eventType, dataTypeVersion, stream
 		select {
 		case <-ctx.Done():
 			return
-		case event := <-eventChan:
-			if ed.deleteEventType != "" && event.Type == ed.deleteEventType {
-				ed.data.Delete(event.Data.Key)
+		case e := <-eventChan:
+			if e.Type == event.Delete {
+				ed.data.Delete(e.Data.Key)
 				continue
 			}
-			ed.data.Store(event.Data.Key, dmd[DT, MT]{
-				Data:     event.Data.Value,
-				Metadata: event.Metadata,
+			ed.data.Store(e.Data.Key, dmd[DT, MT]{
+				Data:     e.Data.Value,
+				Metadata: e.Metadata,
 			})
 		default:
 			upToDate = true
@@ -102,18 +97,18 @@ func Init[DT, MT any](pers event.Persistence, eventType, dataTypeVersion, stream
 			select {
 			case <-ctx.Done():
 				return
-			case event := <-eventChan:
+			case e := <-eventChan:
 				//log.Println("event got", string(event.Data.Key))
-				if ed.deleteEventType != "" && event.Type == ed.deleteEventType {
-					ed.data.Delete(event.Data.Key)
-					transactionChan <- event.Transaction
+				if e.Type == event.Delete {
+					ed.data.Delete(e.Data.Key)
+					transactionChan <- e.Transaction
 					continue
 				}
-				ed.data.Store(event.Data.Key, dmd[DT, MT]{
-					Data:     event.Data.Value,
-					Metadata: event.Metadata,
+				ed.data.Store(e.Data.Key, dmd[DT, MT]{
+					Data:     e.Data.Value,
+					Metadata: e.Metadata,
 				})
-				transactionChan <- event.Transaction
+				transactionChan <- e.Transaction
 				//log.Printf("stored (%s) %s", d.Key, d.Data)
 			}
 		}
@@ -187,12 +182,12 @@ func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
 }
 
 func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.Event[kv[DT], MT], err error) {
-	eventType := m.createEventType
+	eventType := event.Create
 	if m.Exists(key) {
-		eventType = m.setEventType
+		eventType = event.Update
 	}
 
-	return event.EventBuilder[kv[DT], MT]().
+	return event.NewBuilder[kv[DT], MT]().
 		WithType(eventType).
 		WithData(kv[DT]{
 			Key:   key,
@@ -208,8 +203,8 @@ func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.
 }
 
 func (m *mapData[DT, MT]) Delete(key string) (err error) {
-	e, err := event.EventBuilder[kv[DT], MT]().
-		WithType(m.deleteEventType).
+	e, err := event.NewBuilder[kv[DT], MT]().
+		WithType(event.Delete).
 		WithData(kv[DT]{
 			Key: key,
 		}).

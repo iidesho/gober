@@ -1,18 +1,18 @@
-package gober
+package stream
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"github.com/cantara/gober/crypto"
 	"time"
 
 	log "github.com/cantara/bragi"
 
+	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
+	"github.com/cantara/gober/stream/event"
 )
 
-type EventService[DT, MT any] struct {
+type eventService[DT, MT any] struct {
 	store      Persistence
 	streamName string
 	writeChan  chan eventWrite
@@ -28,27 +28,26 @@ type eventWriteReturn struct {
 	err           error
 }
 
-type Filter[MT any] func(md Metadata[MT]) bool
+type Filter[MT any] func(md event.Metadata[MT]) bool
 
 type CryptoKeyProvider func(key string) string
 
-var MissingTypeError = fmt.Errorf("Event type is missing")
-
 func ReadAll[MT any]() Filter[MT] {
-	return func(_ Metadata[MT]) bool { return false }
+	return func(_ event.Metadata[MT]) bool { return false }
 }
-func ReadType[MT any](t string) Filter[MT] {
-	return func(md Metadata[MT]) bool { return md.Type != t }
+func ReadType[MT any](t event.Type) Filter[MT] {
+	return func(md event.Metadata[MT]) bool { return md.EventType != t }
 }
 
 const BATCH_SIZE = 5000 //5000 is an arbitrary number, should probably be based on something else.
 
-func Init[DT, MT any](st Persistence, stream string, ctx context.Context) (es EventService[DT, MT], err error) {
-	es = EventService[DT, MT]{
+func Init[DT, MT any](st Persistence, stream string, ctx context.Context) (out Stream[DT, MT], err error) {
+	es := eventService[DT, MT]{
 		store:      st,
 		streamName: stream,
 		writeChan:  make(chan eventWrite, BATCH_SIZE),
 	}
+	out = es
 	go func() {
 		var events []store.Event
 		var returnChans []chan eventWriteReturn
@@ -56,17 +55,17 @@ func Init[DT, MT any](st Persistence, stream string, ctx context.Context) (es Ev
 			select {
 			case <-ctx.Done():
 				return
-			case event := <-es.writeChan:
-				events = append(events, event.event)
-				returnChans = append(returnChans, event.returnChan)
+			case e := <-es.writeChan:
+				events = append(events, e.event)
+				returnChans = append(returnChans, e.returnChan)
 				for {
 					done := false
 					select {
 					case <-ctx.Done():
 						return
-					case event := <-es.writeChan:
-						events = append(events, event.event)
-						returnChans = append(returnChans, event.returnChan)
+					case e = <-es.writeChan:
+						events = append(events, e.event)
+						returnChans = append(returnChans, e.returnChan)
 					default:
 						done = true
 					}
@@ -90,31 +89,31 @@ func Init[DT, MT any](st Persistence, stream string, ctx context.Context) (es Ev
 	return
 }
 
-func (es EventService[DT, MT]) Store(event Event[DT, MT], cryptoKey CryptoKeyProvider) (transactionId uint64, err error) {
-	if event.Type == "" {
-		err = MissingTypeError
+func (es eventService[DT, MT]) Store(e event.Event[DT, MT], cryptoKey CryptoKeyProvider) (transactionId uint64, err error) {
+	if e.Type == "" {
+		err = event.MissingTypeError
 		return
 	}
-	event.Metadata.Stream = es.streamName
-	event.Metadata.Type = event.Type
-	event.Metadata.Created = time.Now()
-	metadataByte, err := json.Marshal(event.Metadata)
+	e.Metadata.Stream = es.streamName
+	e.Metadata.EventType = e.Type
+	e.Metadata.Created = time.Now()
+	metadataByte, err := json.Marshal(e.Metadata)
 	if err != nil {
 		return
 	}
 
-	data, err := json.Marshal(event.Data)
+	data, err := json.Marshal(e.Data)
 	if err != nil {
 		return
 	}
-	edata, err := crypto.Encrypt(data, cryptoKey(event.Metadata.Key))
+	edata, err := crypto.Encrypt(data, cryptoKey(e.Metadata.Key))
 	if err != nil {
 		return
 	}
 
 	eventData := store.Event{
-		Id:       event.Id,
-		Type:     event.Type,
+		Id:       e.Id,
+		Type:     e.Type,
 		Data:     edata,
 		Metadata: metadataByte,
 	}
@@ -131,9 +130,9 @@ func (es EventService[DT, MT]) Store(event Event[DT, MT], cryptoKey CryptoKeyPro
 	return writeReturn.transactionId, writeReturn.err
 }
 
-func (es EventService[DT, MT]) Stream(eventTypes []string, from store.StreamPosition, filter Filter[MT], cryptKey CryptoKeyProvider, ctx context.Context) (out <-chan Event[DT, MT], err error) {
+func (es eventService[DT, MT]) Stream(eventTypes []event.Type, from store.StreamPosition, filter Filter[MT], cryptKey CryptoKeyProvider, ctx context.Context) (out <-chan event.Event[DT, MT], err error) {
 	filterEventTypes := len(eventTypes) > 0
-	ets := make(map[string]struct{})
+	ets := make(map[event.Type]struct{})
 	for _, eventType := range eventTypes {
 		ets[eventType] = struct{}{}
 	}
@@ -141,7 +140,7 @@ func (es EventService[DT, MT]) Stream(eventTypes []string, from store.StreamPosi
 	if err != nil {
 		return
 	}
-	eventChan := make(chan Event[DT, MT], BATCH_SIZE)
+	eventChan := make(chan event.Event[DT, MT], BATCH_SIZE)
 	out = eventChan
 	go func() {
 		defer close(eventChan)
@@ -149,14 +148,14 @@ func (es EventService[DT, MT]) Stream(eventTypes []string, from store.StreamPosi
 			select {
 			case <-ctx.Done():
 				return
-			case event := <-stream:
+			case e := <-stream:
 				if filterEventTypes {
-					if _, ok := ets[event.Type]; !ok {
+					if _, ok := ets[e.Type]; !ok {
 						continue
 					}
 				}
-				var metadata Metadata[MT]
-				err := json.Unmarshal(event.Metadata, &metadata)
+				var metadata event.Metadata[MT]
+				err := json.Unmarshal(e.Metadata, &metadata)
 				if err != nil {
 					log.AddError(err).Warning("Unmarshaling event metadata error")
 					continue
@@ -164,7 +163,7 @@ func (es EventService[DT, MT]) Stream(eventTypes []string, from store.StreamPosi
 				if filter(metadata) {
 					continue
 				}
-				dataJson, err := crypto.Decrypt(event.Data, cryptKey(metadata.Key))
+				dataJson, err := crypto.Decrypt(e.Data, cryptKey(metadata.Key))
 				if err != nil {
 					log.AddError(err).Warning("Decrypting event data error")
 					return
@@ -176,19 +175,23 @@ func (es EventService[DT, MT]) Stream(eventTypes []string, from store.StreamPosi
 					continue
 				}
 
-				log.Debug("Read event: ", event.Position)
-				eventChan <- Event[DT, MT]{
-					Id:       event.Id,
-					Type:     event.Type,
+				log.Debug("Read event: ", e.Position)
+				eventChan <- event.Event[DT, MT]{
+					Id:       e.Id,
+					Type:     e.Type,
 					Data:     data,
 					Metadata: metadata,
 
-					Transaction: event.Transaction,
-					Position:    event.Position,
-					Created:     event.Created,
+					Transaction: e.Transaction,
+					Position:    e.Position,
+					Created:     e.Created,
 				}
 			}
 		}
 	}()
 	return
+}
+
+func (s eventService[DT, MT]) Name() string {
+	return s.streamName
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/cantara/gober/store/inmemory"
+	"github.com/cantara/gober/stream/event"
 	"testing"
 
 	"github.com/google/uuid"
@@ -69,7 +70,7 @@ func TestGet(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	if meta.Type != "create_setandwait" {
+	if meta.EventType != event.Create {
 		t.Error(fmt.Errorf("missmatch event types"))
 		return
 	}
