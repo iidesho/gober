@@ -84,7 +84,7 @@ func TestStoreOrder(t *testing.T) {
 func TestStreamOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := es.Stream([]event.Type{event.Create}, store.STREAM_START, ReadType[md](event.Create), cryptKeyProvider, ctx)
+	stream, err := es.Stream([]event.Type{event.Create}, store.STREAM_START, ReadEventType[md](event.Create), cryptKeyProvider, ctx)
 	if err != nil {
 		t.Error(err)
 		return

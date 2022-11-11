@@ -56,13 +56,6 @@ type dmd[DT, MT any] struct {
 }
 
 func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
-	//ctxES, cancel := context.WithCancel(ctx)
-	/*
-		es, err := stream.Init[kv[DT], MT](pers, streamName, ctxES)
-		if err != nil {
-			return
-		}
-	*/
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
 	if err != nil {
 		return
@@ -95,7 +88,7 @@ func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion str
 		return nil
 	})
 	eventTypes := event.AllTypes()
-	eventChan, err := s.Stream(eventTypes, from, stream.ReadAll[MT](), p, ctx)
+	eventChan, err := s.Stream(eventTypes, from, stream.ReadDataType[MT](dataTypeName), p, ctx)
 	if err != nil {
 		return
 	}

@@ -35,8 +35,13 @@ type CryptoKeyProvider func(key string) string
 func ReadAll[MT any]() Filter[MT] {
 	return func(_ event.Metadata[MT]) bool { return false }
 }
-func ReadType[MT any](t event.Type) Filter[MT] {
+
+func ReadEventType[MT any](t event.Type) Filter[MT] {
 	return func(md event.Metadata[MT]) bool { return md.EventType != t }
+}
+
+func ReadDataType[MT any](t string) Filter[MT] {
+	return func(md event.Metadata[MT]) bool { return md.DataType != t }
 }
 
 const BATCH_SIZE = 5000 //5000 is an arbitrary number, should probably be based on something else.
