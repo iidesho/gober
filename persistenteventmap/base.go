@@ -24,7 +24,7 @@ type EventMap[DT, MT any] interface {
 	Keys() (keys []string)
 	Range(f func(key, value any) bool)
 	Delete(data DT, metadata MT) (err error)
-	Set(key string, data DT, metadata MT) (err error)
+	Set(data DT, metadata MT) (err error)
 }
 
 type transactionCheck struct {
@@ -280,7 +280,8 @@ func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
 	return
 }
 
-func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.Event[DT, MT], err error) {
+func (m mapData[DT, MT]) createEvent(data DT, metadata MT) (e event.Event[DT, MT], err error) {
+	key := m.getKey(data)
 	eventType := event.Create
 	if m.Exists(key) {
 		eventType = event.Update
@@ -329,9 +330,9 @@ func (m *mapData[DT, MT]) setAndWait(e event.Event[DT, MT]) (err error) {
 	return
 }
 
-func (m *mapData[DT, MT]) Set(key string, data DT, metadata MT) (err error) {
+func (m *mapData[DT, MT]) Set(data DT, metadata MT) (err error) {
 	log.Println("Set and wait start")
-	e, err := m.createEvent(key, data, metadata)
+	e, err := m.createEvent(data, metadata)
 	if err != nil {
 		return
 	}

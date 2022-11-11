@@ -57,7 +57,7 @@ func TestStore(t *testing.T) {
 	meta := md{
 		Extra: "extra metadata test",
 	}
-	err := ed.Set("1_test", data, meta)
+	err := ed.Set(data, meta)
 	if err != nil {
 		t.Error(err)
 		return
