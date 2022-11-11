@@ -22,7 +22,7 @@ type EventMap[DT, MT any] interface {
 	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
-	Range(f func(key, value any) bool)
+	Range(f func(key string, data DT, meta MT) error)
 	Delete(data DT, metadata MT) (err error)
 	Set(data DT, metadata MT) (err error)
 }
@@ -262,17 +262,44 @@ func (m mapData[DT, MT]) Len() (l int) {
 
 func (m mapData[DT, MT]) Keys() (keys []string) {
 	keys = make([]string, 0)
-	/*
-		m.data.Range(func(k, _ any) bool {
-			keys = append(keys, k.(string))
-			return true
-		})
-	*/
+	m.data.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			k := item.Key()
+			keys = append(keys, string(k))
+		}
+		return nil
+	})
 	return
 }
 
-func (m mapData[DT, MT]) Range(f func(key, value any) bool) {
-	//m.data.Range(f)
+func (m mapData[DT, MT]) Range(f func(key string, data DT, meta MT) error) {
+	m.data.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = 10
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			k := item.Key()
+			err := item.Value(func(v []byte) error {
+				var tmp dmd[DT, MT]
+				err := json.Unmarshal(v, &tmp)
+				if err != nil {
+					return err
+				}
+				return f(string(k), tmp.Data, tmp.Metadata.Event)
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
