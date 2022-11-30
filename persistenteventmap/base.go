@@ -5,16 +5,17 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
 	"time"
+
+	"github.com/dgraph-io/badger"
+	"github.com/google/uuid"
 
 	log "github.com/cantara/bragi"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
-	"github.com/dgraph-io/badger"
-	"github.com/google/uuid"
+	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event"
 )
 
 type EventMap[DT, MT any] interface {

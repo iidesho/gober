@@ -7,9 +7,10 @@ import (
 	"sync"
 	"time"
 
-	event "github.com/cantara/gober"
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
+	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event"
 	"github.com/gofrs/uuid"
 )
 
@@ -17,7 +18,6 @@ type Tasks[DT, MT any] interface {
 	Create(DT, MT) error
 	Select() (TaskData[DT], MT, error)
 	Finish(uuid.UUID) error
-	Close()
 }
 
 type transactionCheck struct {
@@ -31,13 +31,9 @@ type tasks[DT, MT any] struct {
 	transactionChan  chan transactionCheck
 	eventTypeName    string
 	eventTypeVersion string
-	createEventType  string
-	selectEventType  string
-	finishEventType  string
 	timeout          time.Duration
-	provider         event.CryptoKeyProvider
-	es               event.EventService[TaskData[DT], MT]
-	closeES          func()
+	provider         stream.CryptoKeyProvider
+	es               stream.Stream[TaskData[DT], MT]
 }
 
 type selectionStatus string
@@ -63,34 +59,21 @@ type dmd[DT, MT any] struct {
 	//Readable *sync.Mutex
 }
 
-func Init[DT, MT any](pers event.Persistence, dataTypeVersion, stream string, p event.CryptoKeyProvider, ctx context.Context) (ed *tasks[DT, MT], err error) {
-	eventType := fmt.Sprintf("%s-tasks", stream)
-	ctxES, cancel := context.WithCancel(ctx)
-	es, err := event.Init[TaskData[DT], MT](pers, stream, ctxES)
-	if err != nil {
-		cancel()
-		return
-	}
+func Init[DT, MT any](s stream.Stream[TaskData[DT], MT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed *tasks[DT, MT], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
-		cancel()
 		return
 	}
 	ed = &tasks[DT, MT]{
 		name:             name.String(),
 		data:             sync.Map{},
 		transactionChan:  make(chan transactionCheck),
-		eventTypeName:    eventType,
+		eventTypeName:    dataTypeName,
 		eventTypeVersion: dataTypeVersion,
-		createEventType:  fmt.Sprintf("create_%s", eventType),
-		selectEventType:  fmt.Sprintf("select_%s", eventType),
-		finishEventType:  fmt.Sprintf("finish_%s", eventType),
 		provider:         p,
-		es:               es,
-		closeES:          cancel,
+		es:               s,
 	}
-	eventTypes := []string{ed.createEventType, ed.selectEventType, ed.finishEventType}
-	eventChan, err := ed.es.Stream(eventTypes, store.STREAM_START, event.ReadAll[MT](), ed.provider, ctxES)
+	eventChan, err := s.Stream(event.AllTypes(), store.STREAM_START, stream.ReadDataType[MT](dataTypeName), p, ctx)
 	if err != nil {
 		return
 	}
@@ -101,7 +84,7 @@ func Init[DT, MT any](pers event.Persistence, dataTypeVersion, stream string, p 
 		case <-ctx.Done():
 			return
 		case e := <-eventChan:
-			if e.Type == ed.finishEventType {
+			if e.Type == event.Delete {
 				ed.data.Delete(e.Data.Id)
 				continue
 			}
@@ -124,7 +107,7 @@ func Init[DT, MT any](pers event.Persistence, dataTypeVersion, stream string, p 
 			case e := <-eventChan:
 				//d, _ := json.MarshalIndent(e, "", "    ")
 				//log.Printf("Stream read: \n%s\n", d)
-				if ed.finishEventType != "" && e.Type == ed.finishEventType {
+				if e.Type == event.Delete {
 					ed.data.Delete(e.Data.Id)
 					transactionChan <- e.Transaction
 					continue
@@ -212,7 +195,7 @@ func (t *tasks[DT, MT]) Select() (outDT TaskData[DT], outMT MT, err error) {
 		task.Selector = t.name
 		//task.Id = task.Next
 		var e event.Event[TaskData[DT], MT]
-		e, err = t.event(task.Next, t.selectEventType, *task)
+		e, err = t.event(task.Next, event.Update, *task)
 		if err != nil {
 			return false
 		}
@@ -244,9 +227,9 @@ func (t *tasks[DT, MT]) Select() (outDT TaskData[DT], outMT MT, err error) {
 	return
 }
 
-func (t *tasks[DT, MT]) event(id uuid.UUID, eventType string, data TaskData[DT]) (e event.Event[TaskData[DT], MT], err error) {
+func (t *tasks[DT, MT]) event(id uuid.UUID, eventType event.Type, data TaskData[DT]) (e event.Event[TaskData[DT], MT], err error) {
 	data.Next = uuid.Must(uuid.NewV7())
-	return event.EventBuilder[TaskData[DT], MT]().
+	return event.NewBuilder[TaskData[DT], MT]().
 		WithId(id).
 		WithType(eventType).
 		WithData(data).
@@ -279,7 +262,7 @@ func (t *tasks[DT, MT]) Finish(id uuid.UUID) (err error) {
 	}
 	task.Status = Finished
 
-	e, err := t.event(task.Next, t.finishEventType, *task)
+	e, err := t.event(task.Next, event.Delete, *task)
 	if err != nil {
 		return
 	}
@@ -292,7 +275,7 @@ func (t *tasks[DT, MT]) Create(dt DT, mt MT) (err error) {
 	if err != nil {
 		return
 	}
-	e, err := t.event(id, t.createEventType, TaskData[DT]{
+	e, err := t.event(id, event.Create, TaskData[DT]{
 		Id:       id,
 		Data:     dt,
 		Status:   Created,
@@ -326,10 +309,6 @@ func (t *tasks[DT, MT]) setAndWait(e event.Event[TaskData[DT], MT]) (err error) 
 	//return true
 	//})
 	return
-}
-
-func (t *tasks[DT, MT]) Close() {
-	t.closeES()
 }
 
 var NothingToSelectError = fmt.Errorf("nothing to select")

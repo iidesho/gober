@@ -6,6 +6,7 @@ import (
 	"fmt"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/store/inmemory"
+	"github.com/cantara/gober/stream"
 	"github.com/gofrs/uuid"
 	"testing"
 )
@@ -38,7 +39,11 @@ func TestInit(t *testing.T) {
 		return
 	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := Init[dd, md](store, "1.0.0", STREAM_NAME, cryptKeyProvider, ctxGlobal)
+	s, err := stream.Init[TaskData[dd], md](store, STREAM_NAME, ctxGlobal)
+	if err != nil {
+		return
+	}
+	edt, err := Init[dd, md](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -100,7 +105,6 @@ func TestSelectAfterFinish(t *testing.T) {
 
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
-	ts.Close()
 }
 
 func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
@@ -112,13 +116,15 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	}
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
-	edt, err := Init[dd, md](store, "1.0.0",
-		fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), cryptKeyProvider, ctx) //FIXME: There seems to be an issue with reusing streams
+	s, err := stream.Init[TaskData[dd], md](store, fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	if err != nil {
+		return
+	}
+	edt, err := Init[dd, md](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	defer edt.Close()
 	data := dd{
 		Id:   1,
 		Name: "test",
