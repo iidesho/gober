@@ -12,7 +12,7 @@ import (
 	"github.com/cantara/gober/stream/event"
 )
 
-type eventService[DT, MT any] struct {
+type eventService struct {
 	store      Persistence
 	streamName string
 	writeChan  chan eventWrite
@@ -28,26 +28,26 @@ type eventWriteReturn struct {
 	err           error
 }
 
-type Filter[MT any] func(md event.Metadata[MT]) bool
+type Filter func(md event.Metadata) bool
 
 type CryptoKeyProvider func(key string) string
 
-func ReadAll[MT any]() Filter[MT] {
-	return func(_ event.Metadata[MT]) bool { return false }
+func ReadAll() Filter {
+	return func(_ event.Metadata) bool { return false }
 }
 
-func ReadEventType[MT any](t event.Type) Filter[MT] {
-	return func(md event.Metadata[MT]) bool { return md.EventType != t }
+func ReadEventType(t event.Type) Filter {
+	return func(md event.Metadata) bool { return md.EventType != t }
 }
 
-func ReadDataType[MT any](t string) Filter[MT] {
-	return func(md event.Metadata[MT]) bool { return md.DataType != t }
+func ReadDataType(t string) Filter {
+	return func(md event.Metadata) bool { return md.DataType != t }
 }
 
 const BATCH_SIZE = 5000 //5000 is an arbitrary number, should probably be based on something else.
 
-func Init[DT, MT any](st Persistence, stream string, ctx context.Context) (out Stream[DT, MT], err error) {
-	es := eventService[DT, MT]{
+func Init(st Persistence, stream string, ctx context.Context) (out Stream, err error) {
+	es := eventService{
 		store:      st,
 		streamName: stream,
 		writeChan:  make(chan eventWrite, BATCH_SIZE),
@@ -94,7 +94,7 @@ func Init[DT, MT any](st Persistence, stream string, ctx context.Context) (out S
 	return
 }
 
-func (es eventService[DT, MT]) Store(e event.Event[DT, MT], cryptoKey CryptoKeyProvider) (transactionId uint64, err error) {
+func (es eventService) Store(e event.StoreEvent, cryptoKey CryptoKeyProvider) (transactionId uint64, err error) {
 	if e.Type == "" {
 		err = event.MissingTypeError
 		return
@@ -135,17 +135,23 @@ func (es eventService[DT, MT]) Store(e event.Event[DT, MT], cryptoKey CryptoKeyP
 	return writeReturn.transactionId, writeReturn.err
 }
 
-func (es eventService[DT, MT]) Stream(eventTypes []event.Type, from store.StreamPosition, filter Filter[MT], cryptKey CryptoKeyProvider, ctx context.Context) (out <-chan event.Event[DT, MT], err error) {
+func (es eventService) Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
+	return es.store.Stream(es.streamName, from, ctx)
+}
+
+func NewStream[DT any](es Stream, eventTypes []event.Type, from store.StreamPosition, filter Filter,
+	cryptKey CryptoKeyProvider, ctx context.Context) (out <-chan event.Event[DT], err error) {
+
 	filterEventTypes := len(eventTypes) > 0
 	ets := make(map[event.Type]struct{})
 	for _, eventType := range eventTypes {
 		ets[eventType] = struct{}{}
 	}
-	stream, err := es.store.Stream(es.streamName, from, ctx)
+	stream, err := es.Stream(from, ctx)
 	if err != nil {
 		return
 	}
-	eventChan := make(chan event.Event[DT, MT], BATCH_SIZE)
+	eventChan := make(chan event.Event[DT], BATCH_SIZE)
 	out = eventChan
 	go func() {
 		defer close(eventChan)
@@ -159,7 +165,7 @@ func (es eventService[DT, MT]) Stream(eventTypes []event.Type, from store.Stream
 						continue
 					}
 				}
-				var metadata event.Metadata[MT]
+				var metadata event.Metadata
 				err := json.Unmarshal(e.Metadata, &metadata)
 				if err != nil {
 					log.AddError(err).Warning("Unmarshaling event metadata error")
@@ -181,7 +187,7 @@ func (es eventService[DT, MT]) Stream(eventTypes []event.Type, from store.Stream
 				}
 
 				log.Debug("Read event: ", e.Position)
-				eventChan <- event.Event[DT, MT]{
+				eventChan <- event.Event[DT]{
 					Id:       e.Id,
 					Type:     e.Type,
 					Data:     data,
@@ -197,6 +203,6 @@ func (es eventService[DT, MT]) Stream(eventTypes []event.Type, from store.Stream
 	return
 }
 
-func (s eventService[DT, MT]) Name() string {
-	return s.streamName
+func (es eventService) Name() string {
+	return es.streamName
 }

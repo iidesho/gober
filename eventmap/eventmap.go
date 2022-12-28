@@ -15,15 +15,14 @@ import (
 	"github.com/google/uuid"
 )
 
-type EventMap[DT, MT any] interface {
-	Get(key string) (data DT, metadata event.Metadata[MT], err error)
+type EventMap[DT any] interface {
+	Get(key string) (data DT, err error)
 	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
 	Range(f func(key, value any) bool)
 	Delete(key string) (err error)
-	Set(key string, data DT, metadata MT) (err error)
-	Close()
+	Set(key string, data DT) (err error)
 }
 
 type transactionCheck struct {
@@ -31,14 +30,13 @@ type transactionCheck struct {
 	completeChan chan struct{}
 }
 
-type mapData[DT, MT any] struct {
+type mapData[DT any] struct {
 	data             sync.Map
 	transactionChan  chan transactionCheck
 	eventTypeName    string
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
-	es               stream.Stream[kv[DT], MT]
-	closeES          func()
+	es               stream.Stream
 }
 
 type kv[DT any] struct {
@@ -46,28 +44,21 @@ type kv[DT any] struct {
 	Value DT     `json:"value"`
 }
 
-type dmd[DT, MT any] struct {
-	Data     DT
-	Metadata event.Metadata[MT]
-}
-
-func Init[DT, MT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed *mapData[DT, MT], err error) {
-	ctxES, cancel := context.WithCancel(ctx)
-	es, err := stream.Init[kv[DT], MT](pers, streamName, ctxES)
+func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed *mapData[DT], err error) {
+	es, err := stream.Init(pers, streamName, ctx)
 	if err != nil {
 		return
 	}
-	ed = &mapData[DT, MT]{
+	ed = &mapData[DT]{
 		data:             sync.Map{},
 		transactionChan:  make(chan transactionCheck),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
 		es:               es,
-		closeES:          cancel,
 	}
 	eventTypes := []event.Type{event.Create, event.Update, event.Delete}
-	eventChan, err := ed.es.Stream(eventTypes, store.STREAM_START, stream.ReadAll[MT](), ed.provider, ctxES)
+	eventChan, err := stream.NewStream[kv[DT]](es, eventTypes, store.STREAM_START, stream.ReadAll(), ed.provider, ctx)
 	if err != nil {
 		return
 	}
@@ -82,10 +73,7 @@ func Init[DT, MT any](pers stream.Persistence, eventType, dataTypeVersion, strea
 				ed.data.Delete(e.Data.Key)
 				continue
 			}
-			ed.data.Store(e.Data.Key, dmd[DT, MT]{
-				Data:     e.Data.Value,
-				Metadata: e.Metadata,
-			})
+			ed.data.Store(e.Data.Key, e.Data.Value)
 		default:
 			upToDate = true
 		}
@@ -104,10 +92,7 @@ func Init[DT, MT any](pers stream.Persistence, eventType, dataTypeVersion, strea
 					transactionChan <- e.Transaction
 					continue
 				}
-				ed.data.Store(e.Data.Key, dmd[DT, MT]{
-					Data:     e.Data.Value,
-					Metadata: e.Metadata,
-				})
+				ed.data.Store(e.Data.Key, e.Data.Value)
 				transactionChan <- e.Transaction
 				//log.Printf("stored (%s) %s", d.Key, d.Data)
 			}
@@ -149,21 +134,20 @@ func Init[DT, MT any](pers stream.Persistence, eventType, dataTypeVersion, strea
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("Provided key does not exist")
 
-func (m mapData[DT, MT]) Get(key string) (data DT, metadata event.Metadata[MT], err error) {
+func (m *mapData[DT]) Get(key string) (data DT, err error) {
 	ed, ok := m.data.Load(key)
 	if !ok {
 		err = ERROR_KEY_NOT_FOUND
 		return
 	}
-	tmp := ed.(dmd[DT, MT])
-	return tmp.Data, tmp.Metadata, nil
+	return ed.(DT), nil
 }
 
-func (m mapData[DT, MT]) Len() (l int) {
+func (m *mapData[DT]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m mapData[DT, MT]) Keys() (keys []string) {
+func (m *mapData[DT]) Keys() (keys []string) {
 	keys = make([]string, 0)
 	m.data.Range(func(k, _ any) bool {
 		keys = append(keys, k.(string))
@@ -172,54 +156,53 @@ func (m mapData[DT, MT]) Keys() (keys []string) {
 	return
 }
 
-func (m mapData[DT, MT]) Range(f func(key, value any) bool) {
+func (m *mapData[DT]) Range(f func(key, value any) bool) {
 	m.data.Range(f)
 }
 
-func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
+func (m *mapData[DT]) Exists(key string) (exists bool) {
 	_, exists = m.data.Load(key)
 	return
 }
 
-func (m mapData[DT, MT]) createEvent(key string, data DT, metadata MT) (e event.Event[kv[DT], MT], err error) {
+func (m *mapData[DT]) createEvent(key string, data DT) (e event.StoreEvent, err error) {
 	eventType := event.Create
 	if m.Exists(key) {
 		eventType = event.Update
 	}
 
-	return event.NewBuilder[kv[DT], MT]().
+	return event.NewBuilder[kv[DT]]().
 		WithType(eventType).
 		WithData(kv[DT]{
 			Key:   key,
 			Value: data,
 		}).
-		WithMetadata(event.Metadata[MT]{
+		WithMetadata(event.Metadata{
 			Version:  m.eventTypeVersion,
 			DataType: m.eventTypeName,
-			Event:    metadata,
 			Key:      crypto.SimpleHash(key),
 		}).
-		Build()
+		BuildStore()
 }
 
-func (m *mapData[DT, MT]) Delete(key string) (err error) {
-	e, err := event.NewBuilder[kv[DT], MT]().
+func (m *mapData[DT]) Delete(key string) (err error) {
+	e, err := event.NewBuilder[kv[DT]]().
 		WithType(event.Delete).
 		WithData(kv[DT]{
 			Key: key,
 		}).
-		WithMetadata(event.Metadata[MT]{
+		WithMetadata(event.Metadata{
 			Version:  m.eventTypeVersion,
 			DataType: m.eventTypeName,
 			Key:      crypto.SimpleHash(key),
 		}).
-		Build()
+		BuildStore()
 
 	err = m.setAndWait(e)
 	return
 }
 
-func (m *mapData[DT, MT]) setAndWait(e event.Event[kv[DT], MT]) (err error) {
+func (m *mapData[DT]) setAndWait(e event.StoreEvent) (err error) {
 	transaction, err := m.es.Store(e, m.provider)
 	if err != nil {
 		return
@@ -235,17 +218,13 @@ func (m *mapData[DT, MT]) setAndWait(e event.Event[kv[DT], MT]) (err error) {
 	return
 }
 
-func (m *mapData[DT, MT]) Set(key string, data DT, metadata MT) (err error) {
+func (m *mapData[DT]) Set(key string, data DT) (err error) {
 	log.Println("Set and wait start")
-	e, err := m.createEvent(key, data, metadata)
+	e, err := m.createEvent(key, data)
 	if err != nil {
 		return
 	}
 	err = m.setAndWait(e)
 	log.Println("Set and wait end")
 	return
-}
-
-func (m mapData[DT, MT]) Close() {
-	m.closeES()
 }

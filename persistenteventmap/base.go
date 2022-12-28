@@ -18,14 +18,14 @@ import (
 	"github.com/cantara/gober/stream/event"
 )
 
-type EventMap[DT, MT any] interface {
-	Get(key string) (data DT, metadata event.Metadata[MT], err error)
+type EventMap[DT any] interface {
+	Get(key string) (data DT, metadata event.Metadata, err error)
 	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
-	Range(f func(key string, data DT, meta MT) error)
-	Delete(data DT, metadata MT) (err error)
-	Set(data DT, metadata MT) (err error)
+	Range(f func(key string, data DT) error)
+	Delete(data DT) (err error)
+	Set(data DT) (err error)
 }
 
 type transactionCheck struct {
@@ -33,13 +33,13 @@ type transactionCheck struct {
 	completeChan chan struct{}
 }
 
-type mapData[DT, MT any] struct {
+type mapData[DT any] struct {
 	data            *badger.DB
 	transactionChan chan transactionCheck
 	dataTypeName    string
 	dataTypeVersion string
 	provider        stream.CryptoKeyProvider
-	es              stream.Stream[DT, MT]
+	es              stream.Stream
 	ctx             context.Context
 	getKey          func(dt DT) string
 }
@@ -51,17 +51,17 @@ type kv[DT any] struct {
 }
 */
 
-type dmd[DT, MT any] struct {
-	Data     DT                 `json:"data"`
-	Metadata event.Metadata[MT] `json:"metadata"`
+type dmd[DT any] struct {
+	Data     DT             `json:"data"`
+	Metadata event.Metadata `json:"metadata"`
 }
 
-func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
 	if err != nil {
 		return
 	}
-	ed = &mapData[DT, MT]{
+	ed = &mapData[DT]{
 		data:            db,
 		transactionChan: make(chan transactionCheck),
 		dataTypeName:    dataTypeName,
@@ -89,7 +89,7 @@ func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion str
 		return nil
 	})
 	eventTypes := event.AllTypes()
-	eventChan, err := s.Stream(eventTypes, from, stream.ReadDataType[MT](dataTypeName), p, ctx)
+	eventChan, err := stream.NewStream[DT](s, eventTypes, from, stream.ReadDataType(dataTypeName), p, ctx)
 	if err != nil {
 		return
 	}
@@ -117,7 +117,7 @@ func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion str
 				}
 				continue
 			}
-			data, err := json.Marshal(dmd[DT, MT]{
+			data, err := json.Marshal(dmd[DT]{
 				Data:     e.Data,
 				Metadata: e.Metadata,
 			})
@@ -170,7 +170,7 @@ func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion str
 					continue
 				}
 				err := db.Update(func(txn *badger.Txn) error {
-					data, err := json.Marshal(dmd[DT, MT]{
+					data, err := json.Marshal(dmd[DT]{
 						Data:     e.Data,
 						Metadata: e.Metadata,
 					})
@@ -203,7 +203,7 @@ func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion str
 			case <-ctx.Done():
 				db.Close()
 				return
-			case completeChan := <-ed.(*mapData[DT, MT]).transactionChan:
+			case completeChan := <-ed.(*mapData[DT]).transactionChan:
 				log.Println("Check pre: ", completeChan.transaction, currentTransaction)
 				if currentTransaction >= completeChan.transaction {
 					completeChan.completeChan <- struct{}{}
@@ -231,7 +231,7 @@ func Init[DT, MT any](s stream.Stream[DT, MT], dataTypeName, dataTypeVersion str
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
-func (m mapData[DT, MT]) Get(key string) (data DT, metadata event.Metadata[MT], err error) {
+func (m mapData[DT]) Get(key string) (data DT, metadata event.Metadata, err error) {
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
@@ -249,7 +249,7 @@ func (m mapData[DT, MT]) Get(key string) (data DT, metadata event.Metadata[MT], 
 		return
 	}
 
-	var tmp dmd[DT, MT]
+	var tmp dmd[DT]
 	err = json.Unmarshal(ed, &tmp)
 	if err != nil {
 		return
@@ -257,11 +257,11 @@ func (m mapData[DT, MT]) Get(key string) (data DT, metadata event.Metadata[MT], 
 	return tmp.Data, tmp.Metadata, nil
 }
 
-func (m mapData[DT, MT]) Len() (l int) {
+func (m mapData[DT]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m mapData[DT, MT]) Keys() (keys []string) {
+func (m mapData[DT]) Keys() (keys []string) {
 	keys = make([]string, 0)
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
@@ -278,7 +278,7 @@ func (m mapData[DT, MT]) Keys() (keys []string) {
 	return
 }
 
-func (m mapData[DT, MT]) Range(f func(key string, data DT, meta MT) error) {
+func (m mapData[DT]) Range(f func(key string, data DT) error) {
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
@@ -288,12 +288,12 @@ func (m mapData[DT, MT]) Range(f func(key string, data DT, meta MT) error) {
 			item := it.Item()
 			k := item.Key()
 			err := item.Value(func(v []byte) error {
-				var tmp dmd[DT, MT]
+				var tmp dmd[DT]
 				err := json.Unmarshal(v, &tmp)
 				if err != nil {
 					return err
 				}
-				return f(string(k), tmp.Data, tmp.Metadata.Event)
+				return f(string(k), tmp.Data)
 			})
 			if err != nil {
 				return err
@@ -303,46 +303,45 @@ func (m mapData[DT, MT]) Range(f func(key string, data DT, meta MT) error) {
 	})
 }
 
-func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
+func (m *mapData[DT]) Exists(key string) (exists bool) {
 	//_, exists = m.data.Load(key)
 	return
 }
 
-func (m mapData[DT, MT]) createEvent(data DT, metadata MT) (e event.Event[DT, MT], err error) {
+func (m mapData[DT]) createEvent(data DT) (e event.StoreEvent, err error) {
 	key := m.getKey(data)
 	eventType := event.Create
 	if m.Exists(key) {
 		eventType = event.Update
 	}
 
-	return event.NewBuilder[DT, MT]().
+	return event.NewBuilder[DT]().
 		WithType(eventType).
 		WithData(data).
-		WithMetadata(event.Metadata[MT]{
+		WithMetadata(event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
-			Event:    metadata,
 			Key:      crypto.SimpleHash(key),
 		}).
-		Build()
+		BuildStore()
 }
 
-func (m *mapData[DT, MT]) Delete(data DT, metadata MT) (err error) {
-	e, err := event.NewBuilder[DT, MT]().
+func (m *mapData[DT]) Delete(data DT) (err error) {
+	e, err := event.NewBuilder[DT]().
 		WithType(event.Delete).
 		WithData(data).
-		WithMetadata(event.Metadata[MT]{
+		WithMetadata(event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
 			Key:      crypto.SimpleHash(m.getKey(data)),
 		}).
-		Build()
+		BuildStore()
 
 	err = m.setAndWait(e)
 	return
 }
 
-func (m *mapData[DT, MT]) setAndWait(e event.Event[DT, MT]) (err error) {
+func (m *mapData[DT]) setAndWait(e event.StoreEvent) (err error) {
 	transaction, err := m.es.Store(e, m.provider)
 	if err != nil {
 		return
@@ -358,9 +357,9 @@ func (m *mapData[DT, MT]) setAndWait(e event.Event[DT, MT]) (err error) {
 	return
 }
 
-func (m *mapData[DT, MT]) Set(data DT, metadata MT) (err error) {
+func (m *mapData[DT]) Set(data DT) (err error) {
 	log.Println("Set and wait start")
-	e, err := m.createEvent(data, metadata)
+	e, err := m.createEvent(data)
 	if err != nil {
 		return
 	}

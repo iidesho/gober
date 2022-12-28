@@ -13,11 +13,6 @@ import (
 	"github.com/gofrs/uuid"
 )
 
-/*
-Tasks
-there is a issue within the implementation of the tasks. It is not consistent when running concurrent.
-Temp fix is to use the new implementation found in taskssingle.
-*/
 type Tasks[DT any] interface {
 	Create(DT) error
 	Add(uuid.UUID, DT) error
@@ -38,7 +33,10 @@ type tasks[DT any] struct {
 	eventTypeVersion string
 	timeout          time.Duration
 	provider         stream.CryptoKeyProvider
+	completeChans    map[string]transactionCheck
+	ctx              context.Context
 	es               stream.Stream
+	ec               <-chan event.Event[TaskData[DT]]
 }
 
 type selectionStatus string
@@ -63,85 +61,75 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	if err != nil {
 		return
 	}
-	ed = &tasks[DT]{
-		name:             name.String(),
-		data:             New[TaskData[DT]](),
-		transactionChan:  make(chan transactionCheck),
-		eventTypeName:    dataTypeName,
-		eventTypeVersion: dataTypeVersion,
-		provider:         p,
-		es:               s,
-	}
 	eventChan, err := stream.NewStream[TaskData[DT]](s, event.AllTypes(), store.STREAM_START, stream.ReadDataType(dataTypeName), p, ctx)
 	if err != nil {
 		return
 	}
+	ed = &tasks[DT]{
+		name:             name.String(),
+		data:             New[TaskData[DT]](),
+		transactionChan:  make(chan transactionCheck, 100),
+		eventTypeName:    dataTypeName,
+		eventTypeVersion: dataTypeVersion,
+		provider:         p,
+		completeChans:    make(map[string]transactionCheck),
+		ctx:              ctx,
+		es:               s,
+		ec:               eventChan,
+	}
 
-	transactionChan := make(chan uint64, 5)
-	go func() {
-		completeChans := make(map[string]transactionCheck)
-		var currentTransaction uint64
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case completeChan := <-ed.transactionChan:
-				if currentTransaction >= completeChan.transaction {
-					completeChan.completeChan <- struct{}{}
-					continue
-				}
+	ed.readStream()
+	return
+}
 
-				completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
-			case transaction := <-transactionChan:
-				if currentTransaction < transaction {
-					currentTransaction = transaction
-				}
-				for id, completeChan := range completeChans {
-					if transaction < completeChan.transaction {
-						continue
-					}
-					completeChan.completeChan <- struct{}{}
-					delete(completeChans, id)
-				}
-			}
-		}
-	}()
+func (t *tasks[DT]) readStream() {
+	var currentTransaction uint64
 	upToDate := false
 	for !upToDate {
 		time.Sleep(time.Millisecond)
 		select {
-		case <-ctx.Done():
+		case <-t.ctx.Done():
 			return
-		case e := <-eventChan:
-			if e.Type == event.Delete {
-				ed.data.Delete(e.Data.Id.String())
-			} else {
-				ed.data.Store(e.Data.Id.String(), e.Data)
+		case e := <-t.ec:
+			if e.Transaction > currentTransaction {
+				currentTransaction = e.Transaction
 			}
-			transactionChan <- e.Transaction
+			if e.Type == event.Delete {
+				t.data.Delete(e.Data.Id.String())
+				continue
+			}
+			t.data.Store(e.Data.Id.String(), e.Data)
 		default:
 			upToDate = true
 		}
 	}
+	t.verifyWrite(currentTransaction)
+}
 
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case e := <-eventChan:
-				//d, _ := json.MarshalIndent(e, "", "    ")
-				//log.Printf("Stream read: \n%s\n", d)
-				if e.Type == event.Delete {
-					ed.data.Delete(e.Data.Id.String())
-				} else {
-					ed.data.Store(e.Data.Id.String(), e.Data)
-				}
-				transactionChan <- e.Transaction
+func (t *tasks[DT]) verifyWrite(currentTransaction uint64) {
+	upToDate := false
+	for !upToDate {
+		time.Sleep(time.Millisecond)
+		select {
+		case <-t.ctx.Done():
+			return
+		case completeChan := <-t.transactionChan:
+			if currentTransaction >= completeChan.transaction {
+				completeChan.completeChan <- struct{}{}
+				continue
 			}
+			t.completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
+		default:
+			upToDate = true
 		}
-	}()
-	return
+	}
+	for id, completeChan := range t.completeChans {
+		if currentTransaction < completeChan.transaction {
+			continue
+		}
+		completeChan.completeChan <- struct{}{}
+		delete(t.completeChans, id)
+	}
 }
 
 func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
@@ -264,13 +252,14 @@ func (t *tasks[DT]) setAndWait(e event.StoreEvent) (err error) {
 	if err != nil {
 		return
 	}
-	completeChan := make(chan struct{})
+	completeChan := make(chan struct{}, 1)
 	defer close(completeChan)
 	t.transactionChan <- transactionCheck{
 		transaction:  transaction,
 		completeChan: completeChan,
 	}
 	log.Debug("Set and wait waiting")
+	t.readStream()
 	<-completeChan
 	//t.data.Range(func(key, value any) bool {
 	//fmt.Println("Range print", key, value)

@@ -2,20 +2,23 @@ package tasks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/taskssingle"
 	"github.com/gofrs/uuid"
+	"sync"
 	"testing"
+	"time"
 )
 
 var ts Tasks[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
-var task TaskData[dd]
+var td dd
+var wg sync.WaitGroup
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -39,7 +42,12 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	tas, err := tasks.Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	edt, err := Init[dd](s, tas, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println("Executed after time ", d); defer wg.Done(); return true }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -53,7 +61,8 @@ func TestCreate(t *testing.T) {
 		Id:   1,
 		Name: "test",
 	}
-	err := ts.Create(data)
+	wg.Add(1)
+	err := ts.Create(time.Now(), NoInterval, data)
 	if err != nil {
 		t.Error(err)
 		return
@@ -61,26 +70,35 @@ func TestCreate(t *testing.T) {
 	return
 }
 
+/*
 func TestSelect(t *testing.T) {
-	data, err := ts.Select()
+	data, metad, err := ts.Select()
 	fmt.Println(data)
+	fmt.Println(metad)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	task = data
+	td = data
 }
+*/
 
 func TestFinish(t *testing.T) {
-	err := ts.Finish(task.Id)
-	if err != nil {
-		t.Error(err)
-		return
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-time.After(5 * time.Second):
+		t.Error("timeout on task finish")
+	case <-c:
 	}
 }
 
+/*
 func TestSelectAfterFinish(t *testing.T) {
-	_, err := ts.Select()
+	_, _, err := ts.Select()
 	if err == nil {
 		t.Error("no error when there shouldn't be anything to select")
 		return
@@ -90,6 +108,7 @@ func TestSelectAfterFinish(t *testing.T) {
 		return
 	}
 }
+*/
 
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
@@ -108,7 +127,13 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
+
+	tas, err := tasks.Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	edt, err := Init[dd](s, tas, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return
@@ -118,24 +143,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		Name: "test",
 	}
 	for i := 0; i < b.N; i++ {
-		err = edt.Create(data)
-		if err != nil {
-			b.Error(err)
-			return
-		}
-	}
-	ids := make([]uuid.UUID, b.N)
-	var td TaskData[dd]
-	for i := 0; i < b.N; i++ {
-		td, err = edt.Select()
-		if err != nil {
-			b.Error(err)
-			return
-		}
-		ids[i] = td.Id
-	}
-	for i := 0; i < b.N; i++ {
-		err = edt.Finish(ids[i])
+		err = edt.Create(time.Now(), NoInterval, data)
 		if err != nil {
 			b.Error(err)
 			return

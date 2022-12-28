@@ -9,16 +9,12 @@ import (
 	"testing"
 )
 
-var ed EventMap[dd, md]
+var ed EventMap[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
 
 var STREAM_NAME = "TestServiceStoreAndStream_" //+ uuid.New().String()
-
-type md struct {
-	Extra string `json:"extra"`
-}
 
 type dd struct {
 	Id   int    `json:"id"`
@@ -36,11 +32,11 @@ func TestInit(t *testing.T) {
 		return
 	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	s, err := stream.Init[dd, md](store, STREAM_NAME, ctxGlobal)
+	s, err := stream.Init(store, STREAM_NAME, ctxGlobal)
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd, md](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -54,10 +50,7 @@ func TestStore(t *testing.T) {
 		Id:   1,
 		Name: "test",
 	}
-	meta := md{
-		Extra: "extra metadata test",
-	}
-	err := ed.Set(data, meta)
+	err := ed.Set(data)
 	if err != nil {
 		t.Error(err)
 		return
@@ -83,10 +76,6 @@ func TestGet(t *testing.T) {
 	}
 	if data.Name != "test" {
 		t.Error(fmt.Errorf("missmatch data name"))
-		return
-	}
-	if meta.Event.Extra != "extra metadata test" {
-		t.Error(fmt.Errorf("missmatch event metadata extra"))
 		return
 	}
 }
