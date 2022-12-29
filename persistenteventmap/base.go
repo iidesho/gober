@@ -19,7 +19,7 @@ import (
 )
 
 type EventMap[DT any] interface {
-	Get(key string) (data DT, metadata event.Metadata, err error)
+	Get(key string) (data DT, err error)
 	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
@@ -50,11 +50,6 @@ type kv[DT any] struct {
 	Value DT     `json:"value"`
 }
 */
-
-type dmd[DT any] struct {
-	Data     DT             `json:"data"`
-	Metadata event.Metadata `json:"metadata"`
-}
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
@@ -117,10 +112,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 				}
 				continue
 			}
-			data, err := json.Marshal(dmd[DT]{
-				Data:     e.Data,
-				Metadata: e.Metadata,
-			})
+			data, err := json.Marshal(e.Data)
 			if err != nil {
 				continue
 			}
@@ -170,10 +162,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					continue
 				}
 				err := db.Update(func(txn *badger.Txn) error {
-					data, err := json.Marshal(dmd[DT]{
-						Data:     e.Data,
-						Metadata: e.Metadata,
-					})
+					data, err := json.Marshal(e.Data)
 					if err != nil {
 						return err
 					}
@@ -231,7 +220,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
-func (m mapData[DT]) Get(key string) (data DT, metadata event.Metadata, err error) {
+func (m mapData[DT]) Get(key string) (data DT, err error) {
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
@@ -249,12 +238,11 @@ func (m mapData[DT]) Get(key string) (data DT, metadata event.Metadata, err erro
 		return
 	}
 
-	var tmp dmd[DT]
-	err = json.Unmarshal(ed, &tmp)
+	err = json.Unmarshal(ed, &data)
 	if err != nil {
 		return
 	}
-	return tmp.Data, tmp.Metadata, nil
+	return
 }
 
 func (m mapData[DT]) Len() (l int) {
@@ -288,12 +276,12 @@ func (m mapData[DT]) Range(f func(key string, data DT) error) {
 			item := it.Item()
 			k := item.Key()
 			err := item.Value(func(v []byte) error {
-				var tmp dmd[DT]
-				err := json.Unmarshal(v, &tmp)
+				var data DT
+				err := json.Unmarshal(v, &data)
 				if err != nil {
 					return err
 				}
-				return f(string(k), tmp.Data)
+				return f(string(k), data)
 			})
 			if err != nil {
 				return err

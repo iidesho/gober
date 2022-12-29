@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
 	"testing"
 )
 
@@ -59,15 +58,10 @@ func TestStore(t *testing.T) {
 }
 
 func TestGet(t *testing.T) {
-	data, meta, err := ed.Get("1_test")
+	data, err := ed.Get("1_test")
 	fmt.Println(data)
-	fmt.Println(meta)
 	if err != nil {
 		t.Error(err)
-		return
-	}
-	if meta.EventType != event.Create {
-		t.Error(fmt.Errorf("missmatch event types"))
 		return
 	}
 	if data.Id != 1 {
