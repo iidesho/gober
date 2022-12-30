@@ -119,7 +119,9 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 						log.AddError(err.(error)).Error("panic recovered while creating scheduled task")
 					}
 				}()
-				time.Sleep(task.Metadata.After.Sub(time.Now()))
+				waitingFor := task.Metadata.After.Sub(time.Now())
+				log.Debug("Waiting for ", waitingFor.Minutes(), " minutes")
+				time.Sleep(waitingFor)
 				err := t.Add(task.Metadata.Id, task.Task)
 				if err != nil {
 					log.AddError(err).Error("while creating scheduled task")

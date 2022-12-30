@@ -56,7 +56,7 @@ type TaskData[DT any] struct {
 	Next     uuid.UUID       `json:"next_id"`
 }
 
-func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed *tasks[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed *tasks[DT], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
