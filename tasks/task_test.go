@@ -39,7 +39,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -108,7 +108,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

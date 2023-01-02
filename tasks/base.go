@@ -25,20 +25,17 @@ type Tasks[DT any] interface {
 	Finish(uuid.UUID) error
 }
 
-type transactionCheck struct {
-	transaction  uint64
-	completeChan chan struct{}
-}
-
 type tasks[DT any] struct {
 	name             string
 	data             Map[TaskData[DT]]
-	transactionChan  chan transactionCheck
 	eventTypeName    string
 	eventTypeVersion string
 	timeout          time.Duration
 	provider         stream.CryptoKeyProvider
+	ctx              context.Context
 	es               stream.Stream
+	ec               <-chan event.Event[TaskData[DT]]
+	esh              stream.SetHelper
 }
 
 type selectionStatus string
@@ -58,96 +55,37 @@ type TaskData[DT any] struct {
 	Next     uuid.UUID       `json:"next_id"`
 }
 
-func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed *tasks[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed *tasks[DT], err error) {
 	name, err := uuid.NewV7()
+	if err != nil {
+		return
+	}
+	eventChan, err := stream.NewStream[TaskData[DT]](s, event.AllTypes(), store.STREAM_START, stream.ReadDataType(dataTypeName), p, ctx)
 	if err != nil {
 		return
 	}
 	ed = &tasks[DT]{
 		name:             name.String(),
 		data:             New[TaskData[DT]](),
-		transactionChan:  make(chan transactionCheck),
 		eventTypeName:    dataTypeName,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
+		ctx:              ctx,
 		es:               s,
+		ec:               eventChan,
 	}
-	eventChan, err := stream.NewStream[TaskData[DT]](s, event.AllTypes(), store.STREAM_START, stream.ReadDataType(dataTypeName), p, ctx)
-	if err != nil {
-		return
-	}
+	ed.esh = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
+		ed.data.Store(e.Data.Id.String(), e.Data)
+	}, func(e event.Event[TaskData[DT]]) {
+		ed.data.Delete(e.Data.Id.String())
+	}, ed.es, ed.provider, ed.ec, ed.ctx)
 
-	transactionChan := make(chan uint64, 5)
-	go func() {
-		completeChans := make(map[string]transactionCheck)
-		var currentTransaction uint64
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case completeChan := <-ed.transactionChan:
-				if currentTransaction >= completeChan.transaction {
-					completeChan.completeChan <- struct{}{}
-					continue
-				}
-
-				completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
-			case transaction := <-transactionChan:
-				if currentTransaction < transaction {
-					currentTransaction = transaction
-				}
-				for id, completeChan := range completeChans {
-					if transaction < completeChan.transaction {
-						continue
-					}
-					completeChan.completeChan <- struct{}{}
-					delete(completeChans, id)
-				}
-			}
-		}
-	}()
-	upToDate := false
-	for !upToDate {
-		time.Sleep(time.Millisecond)
-		select {
-		case <-ctx.Done():
-			return
-		case e := <-eventChan:
-			if e.Type == event.Delete {
-				ed.data.Delete(e.Data.Id.String())
-			} else {
-				ed.data.Store(e.Data.Id.String(), e.Data)
-			}
-			transactionChan <- e.Transaction
-		default:
-			upToDate = true
-		}
-	}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case e := <-eventChan:
-				//d, _ := json.MarshalIndent(e, "", "    ")
-				//log.Printf("Stream read: \n%s\n", d)
-				if e.Type == event.Delete {
-					ed.data.Delete(e.Data.Id.String())
-				} else {
-					ed.data.Store(e.Data.Id.String(), e.Data)
-				}
-				transactionChan <- e.Transaction
-			}
-		}
-	}()
 	return
 }
 
 func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
 	now := time.Now()
-	t.data.Range(func(k, v any) bool {
-		task := v.(TaskData[DT])
+	t.data.Range(func(k string, task TaskData[DT]) bool {
 		if task.Status == Finished {
 			return true
 		}
@@ -166,7 +104,7 @@ func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
 		}
 		//e.Metadata.Event = ev.Metadata.Event
 		//ev.Readable.Lock()
-		err = t.setAndWait(e)
+		err = t.esh.SetAndWait(e)
 		//ev.Readable.Unlock()
 		if err != nil {
 			return false
@@ -230,7 +168,7 @@ func (t *tasks[DT]) Finish(id uuid.UUID) (err error) {
 	if err != nil {
 		return
 	}
-	err = t.setAndWait(e)
+	err = t.esh.SetAndWait(e)
 	return
 }
 
@@ -253,29 +191,7 @@ func (t *tasks[DT]) Add(id uuid.UUID, dt DT) (err error) {
 		return
 	}
 	//e.Metadata.Event = mt
-	err = t.setAndWait(e)
-	return
-}
-
-func (t *tasks[DT]) setAndWait(e event.StoreEvent) (err error) {
-	//d, _ := json.MarshalIndent(e, "", "    ")
-	//log.Printf("Stream write: \n%s\n", d)
-	transaction, err := t.es.Store(e, t.provider)
-	if err != nil {
-		return
-	}
-	completeChan := make(chan struct{})
-	defer close(completeChan)
-	t.transactionChan <- transactionCheck{
-		transaction:  transaction,
-		completeChan: completeChan,
-	}
-	log.Debug("Set and wait waiting")
-	<-completeChan
-	//t.data.Range(func(key, value any) bool {
-	//fmt.Println("Range print", key, value)
-	//return true
-	//})
+	err = t.esh.SetAndWait(e)
 	return
 }
 

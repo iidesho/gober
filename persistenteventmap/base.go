@@ -5,10 +5,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/dgraph-io/badger"
-	"github.com/google/uuid"
 
 	log "github.com/cantara/bragi"
 
@@ -29,8 +27,6 @@ type EventMap[DT any] interface {
 }
 
 type transactionCheck struct {
-	transaction  uint64
-	completeChan chan struct{}
 }
 
 type mapData[DT any] struct {
@@ -42,21 +38,15 @@ type mapData[DT any] struct {
 	es              stream.Stream
 	ctx             context.Context
 	getKey          func(dt DT) string
+	esh             stream.SetHelper
 }
-
-/*
-type kv[DT any] struct {
-	Key   string `json:"key"`
-	Value DT     `json:"value"`
-}
-*/
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
 	if err != nil {
 		return
 	}
-	ed = &mapData[DT]{
+	m := mapData[DT]{
 		data:            db,
 		transactionChan: make(chan transactionCheck),
 		dataTypeName:    dataTypeName,
@@ -88,133 +78,41 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	if err != nil {
 		return
 	}
-	upToDate := false
-	for !upToDate {
-		time.Sleep(time.Millisecond)
-		select {
-		case <-ctx.Done():
-			db.Close()
+	m.esh = stream.InitSetHelper(func(e event.Event[DT]) {
+		data, err := json.Marshal(e.Data)
+		if err != nil {
 			return
-		case e := <-eventChan:
-			if e.Type == event.Delete {
-				err := db.Update(func(txn *badger.Txn) error {
-					err = txn.Delete([]byte(getKey(e.Data)))
-					if err != nil {
-						return err
-					}
-
-					pos := make([]byte, 8)
-					binary.LittleEndian.PutUint64(pos, e.Position)
-					return txn.Set(positionKey, pos)
-				})
-				if err != nil {
-					log.AddError(err).Warning("Delete error")
-				}
-				continue
-			}
-			data, err := json.Marshal(e.Data)
+		}
+		err = db.Update(func(txn *badger.Txn) error {
+			err = txn.Set([]byte(getKey(e.Data)), data)
 			if err != nil {
-				continue
+				return err
 			}
-			err = db.Update(func(txn *badger.Txn) error {
-				err = txn.Set([]byte(getKey(e.Data)), data)
-				if err != nil {
-					return err
-				}
 
-				pos := make([]byte, 8)
-				binary.LittleEndian.PutUint64(pos, e.Position)
-				return txn.Set(positionKey, pos)
-			})
+			pos := make([]byte, 8)
+			binary.LittleEndian.PutUint64(pos, e.Position)
+			return txn.Set(positionKey, pos)
+		})
+		if err != nil {
+			log.AddError(err).Warning("Update error")
+		}
+	}, func(e event.Event[DT]) {
+		err := db.Update(func(txn *badger.Txn) error {
+			err = txn.Delete([]byte(getKey(e.Data)))
 			if err != nil {
-				log.AddError(err).Warning("Update error")
+				return err
 			}
 
-		default:
-			upToDate = true
+			pos := make([]byte, 8)
+			binary.LittleEndian.PutUint64(pos, e.Position)
+			return txn.Set(positionKey, pos)
+		})
+		if err != nil {
+			log.AddError(err).Warning("Delete error")
 		}
-	}
+	}, m.es, p, eventChan, ctx)
 
-	transactionChan := make(chan uint64, 5)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				db.Close()
-				return
-			case e := <-eventChan:
-				//log.Println("event got", string(event.Data.Key))
-				if e.Type == event.Delete {
-					err := db.Update(func(txn *badger.Txn) error {
-						err := txn.Delete([]byte(getKey(e.Data)))
-						if err != nil {
-							return err
-						}
-
-						pos := make([]byte, 8)
-						binary.LittleEndian.PutUint64(pos, e.Position)
-						return txn.Set(positionKey, pos)
-					})
-					if err != nil {
-						log.AddError(err).Warning("Delete error")
-					}
-					transactionChan <- e.Transaction
-					continue
-				}
-				err := db.Update(func(txn *badger.Txn) error {
-					data, err := json.Marshal(e.Data)
-					if err != nil {
-						return err
-					}
-					err = txn.Set([]byte(getKey(e.Data)), data)
-					if err != nil {
-						return err
-					}
-
-					pos := make([]byte, 8)
-					binary.LittleEndian.PutUint64(pos, e.Position)
-					return txn.Set(positionKey, pos) //Sestting pos without reading can be done since events arrive in order
-				})
-				if err != nil {
-					log.AddError(err).Warning("Update error")
-				}
-				transactionChan <- e.Transaction
-				//log.Printf("stored (%s) %s", d.Key, d.Data)
-			}
-		}
-	}()
-
-	go func() {
-		completeChans := make(map[string]transactionCheck)
-		var currentTransaction uint64
-		for {
-			select {
-			case <-ctx.Done():
-				db.Close()
-				return
-			case completeChan := <-ed.(*mapData[DT]).transactionChan:
-				log.Println("Check pre: ", completeChan.transaction, currentTransaction)
-				if currentTransaction >= completeChan.transaction {
-					completeChan.completeChan <- struct{}{}
-					continue
-				}
-				completeChans[uuid.New().String()] = completeChan
-			case transaction := <-transactionChan:
-				log.Println("Check ins: ", transaction, currentTransaction)
-				if currentTransaction < transaction {
-					currentTransaction = transaction
-				}
-				for id, completeChan := range completeChans {
-					log.Println("Check deep: ", completeChan.transaction, transaction)
-					if transaction < completeChan.transaction {
-						continue
-					}
-					completeChan.completeChan <- struct{}{}
-					delete(completeChans, id)
-				}
-			}
-		}
-	}()
+	ed = &m
 	return
 }
 
@@ -325,23 +223,7 @@ func (m *mapData[DT]) Delete(data DT) (err error) {
 		}).
 		BuildStore()
 
-	err = m.setAndWait(e)
-	return
-}
-
-func (m *mapData[DT]) setAndWait(e event.StoreEvent) (err error) {
-	transaction, err := m.es.Store(e, m.provider)
-	if err != nil {
-		return
-	}
-	completeChan := make(chan struct{})
-	defer close(completeChan)
-	m.transactionChan <- transactionCheck{
-		transaction:  transaction,
-		completeChan: completeChan,
-	}
-	log.Println("Set and wait waiting")
-	<-completeChan
+	err = m.esh.SetAndWait(e)
 	return
 }
 
@@ -351,7 +233,7 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 	if err != nil {
 		return
 	}
-	err = m.setAndWait(e)
+	err = m.esh.SetAndWait(e)
 	log.Println("Set and wait end")
 	return
 }

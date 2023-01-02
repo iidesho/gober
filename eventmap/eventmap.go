@@ -3,16 +3,13 @@ package eventmap
 import (
 	"context"
 	"fmt"
+	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event"
 	"sync"
-	"time"
-
-	log "github.com/cantara/bragi"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
-	"github.com/google/uuid"
 )
 
 type EventMap[DT any] interface {
@@ -37,6 +34,7 @@ type mapData[DT any] struct {
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
 	es               stream.Stream
+	esh              stream.SetHelper
 }
 
 type kv[DT any] struct {
@@ -44,12 +42,12 @@ type kv[DT any] struct {
 	Value DT     `json:"value"`
 }
 
-func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed *mapData[DT], err error) {
+func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
 	es, err := stream.Init(pers, streamName, ctx)
 	if err != nil {
 		return
 	}
-	ed = &mapData[DT]{
+	m := mapData[DT]{
 		data:             sync.Map{},
 		transactionChan:  make(chan transactionCheck),
 		eventTypeName:    eventType,
@@ -57,78 +55,17 @@ func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamNam
 		provider:         p,
 		es:               es,
 	}
-	eventTypes := []event.Type{event.Create, event.Update, event.Delete}
-	eventChan, err := stream.NewStream[kv[DT]](es, eventTypes, store.STREAM_START, stream.ReadAll(), ed.provider, ctx)
+	eventChan, err := stream.NewStream[kv[DT]](es, event.AllTypes(), store.STREAM_START, stream.ReadAll(), m.provider, ctx)
 	if err != nil {
 		return
 	}
-	upToDate := false
-	for !upToDate {
-		time.Sleep(time.Millisecond)
-		select {
-		case <-ctx.Done():
-			return
-		case e := <-eventChan:
-			if e.Type == event.Delete {
-				ed.data.Delete(e.Data.Key)
-				continue
-			}
-			ed.data.Store(e.Data.Key, e.Data.Value)
-		default:
-			upToDate = true
-		}
-	}
+	m.esh = stream.InitSetHelper(func(e event.Event[kv[DT]]) {
+		m.data.Store(e.Data.Key, e.Data.Value)
+	}, func(e event.Event[kv[DT]]) {
+		m.data.Delete(e.Data.Key)
+	}, m.es, p, eventChan, ctx)
 
-	transactionChan := make(chan uint64, 5)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case e := <-eventChan:
-				//log.Println("event got", string(event.Data.Key))
-				if e.Type == event.Delete {
-					ed.data.Delete(e.Data.Key)
-					transactionChan <- e.Transaction
-					continue
-				}
-				ed.data.Store(e.Data.Key, e.Data.Value)
-				transactionChan <- e.Transaction
-				//log.Printf("stored (%s) %s", d.Key, d.Data)
-			}
-		}
-	}()
-
-	go func() {
-		completeChans := make(map[string]transactionCheck)
-		var currentTransaction uint64
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case completeChan := <-ed.transactionChan:
-				log.Println("Check pre: ", completeChan.transaction, currentTransaction)
-				if currentTransaction >= completeChan.transaction {
-					completeChan.completeChan <- struct{}{}
-					continue
-				}
-				completeChans[uuid.New().String()] = completeChan
-			case transaction := <-transactionChan:
-				log.Println("Check ins: ", transaction, currentTransaction)
-				if currentTransaction < transaction {
-					currentTransaction = transaction
-				}
-				for id, completeChan := range completeChans {
-					log.Println("Check deep: ", completeChan.transaction, transaction)
-					if transaction < completeChan.transaction {
-						continue
-					}
-					completeChan.completeChan <- struct{}{}
-					delete(completeChans, id)
-				}
-			}
-		}
-	}()
+	ed = &m
 	return
 }
 
@@ -198,23 +135,7 @@ func (m *mapData[DT]) Delete(key string) (err error) {
 		}).
 		BuildStore()
 
-	err = m.setAndWait(e)
-	return
-}
-
-func (m *mapData[DT]) setAndWait(e event.StoreEvent) (err error) {
-	transaction, err := m.es.Store(e, m.provider)
-	if err != nil {
-		return
-	}
-	completeChan := make(chan struct{})
-	defer close(completeChan)
-	m.transactionChan <- transactionCheck{
-		transaction:  transaction,
-		completeChan: completeChan,
-	}
-	log.Println("Set and wait waiting")
-	<-completeChan
+	err = m.esh.SetAndWait(e)
 	return
 }
 
@@ -224,7 +145,7 @@ func (m *mapData[DT]) Set(key string, data DT) (err error) {
 	if err != nil {
 		return
 	}
-	err = m.setAndWait(e)
+	err = m.esh.SetAndWait(e)
 	log.Println("Set and wait end")
 	return
 }

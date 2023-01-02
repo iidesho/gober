@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/taskssingle"
+	"github.com/cantara/gober/tasks"
 	"sync"
 	"time"
 

@@ -2,12 +2,11 @@ package inmemory
 
 import (
 	"context"
-	"encoding/binary"
 	log "github.com/cantara/bragi"
 	"sync"
+	"time"
 
 	"github.com/cantara/gober/store"
-	"github.com/gofrs/uuid"
 )
 
 type Stream struct {
@@ -39,11 +38,7 @@ func (es *EventStore) Store(streamName string, ctx context.Context, events ...st
 	defer stream.dbLock.Unlock()
 	streamAny, _ = es.streams.Load(streamName)
 
-	u, err := uuid.NewV7()
-	if err != nil {
-		panic(err)
-	}
-	trans := binary.LittleEndian.Uint64(u.Bytes())
+	trans := uint64(time.Now().UnixNano())
 
 	curPos := len(stream.db)
 

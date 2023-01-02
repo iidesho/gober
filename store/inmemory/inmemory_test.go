@@ -104,8 +104,14 @@ func TestStreamMultiple(t *testing.T) {
 		t.Error(err)
 		return
 	}
+	var trans uint64
 	for i := 0; i < 10; i++ {
 		e := <-stream
+		if trans < e.Transaction {
+			trans = e.Transaction
+		} else {
+			t.Errorf("previous transaction id was bigger than current transaction id. %d >= %d", trans, e.Transaction)
+		}
 		fmt.Println(e)
 		if e.Type != "test" {
 			t.Error(fmt.Errorf("missmatch event types"))

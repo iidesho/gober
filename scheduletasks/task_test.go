@@ -6,7 +6,7 @@ import (
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/taskssingle"
+	"github.com/cantara/gober/tasks"
 	"github.com/gofrs/uuid"
 	"sync"
 	"testing"
