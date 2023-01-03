@@ -62,7 +62,7 @@ type tm[DT any] struct {
 	Metadata TaskMetadata
 }
 
-func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed *scheduledtasks[DT], err error) {
+func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
@@ -85,7 +85,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 	createdTasksChan := make(chan uuid.UUID, 10)
 	go func() {
 		for id := range createdTasksChan {
-			taskAny, loaded := ed.data.Load(id)
+			taskAny, loaded := t.data.Load(id)
 			if !loaded {
 				log.Warning("tried loading " + id.String() + " but failed. unable to operate on the new task.")
 				continue
@@ -116,7 +116,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					log.AddError(err).Crit("while creating uuid for next action in scheduled task")
 					return
 				}
-				e, err := ed.event(task.Metadata.Next, event.Update, tm[DT]{
+				e, err := t.event(task.Metadata.Next, event.Update, tm[DT]{
 					Task: task.Task,
 					Metadata: TaskMetadata{
 						Id:       task.Metadata.Id,
@@ -131,7 +131,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					log.AddError(err).Error("while creating event for next action in scheduled task")
 					return
 				}
-				err = ed.esh.SetAndWait(e)
+				err = t.esh.SetAndWait(e)
 				if err != nil {
 					log.AddError(err).Error("while storing event for next action in scheduled task")
 					return
@@ -169,7 +169,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					}
 				}()
 				log.Debug("selected task: ", tsk)
-				taskAny, loaded := ed.data.Load(tsk.Id)
+				taskAny, loaded := t.data.Load(tsk.Id)
 				if !loaded {
 					log.Warning("tried loading " + tsk.Id.String() + " but failed. unable to execute task.")
 					return
@@ -190,14 +190,14 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 				}
 
 				if task.Metadata.Interval != NoInterval {
-					err = ed.create(task.Metadata.NextTask, task.Metadata.After.Add(task.Metadata.Interval), task.Metadata.Interval, task.Task)
+					err = t.create(task.Metadata.NextTask, task.Metadata.After.Add(task.Metadata.Interval), task.Metadata.Interval, task.Task)
 					if err != nil {
 						log.AddError(err).Crit("while creating event for finished action in scheduled task")
 						return
 					}
 				}
 
-				e, err := ed.event(task.Metadata.Next, event.Delete, tm[DT]{
+				e, err := t.event(task.Metadata.Next, event.Delete, tm[DT]{
 					Task: tsk.Data, // not sure if i want to use the one from the select or the base from scheduletask
 					Metadata: TaskMetadata{
 						Id:       task.Metadata.Id,
@@ -211,7 +211,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					log.AddError(err).Error("while creating event for finished action in scheduled task")
 					return
 				}
-				err = ed.esh.SetAndWait(e)
+				err = t.esh.SetAndWait(e)
 				if err != nil {
 					log.AddError(err).Error("while storing event for finished action in scheduled task")
 					return
