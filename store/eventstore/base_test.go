@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cantara/gober/stream/event"
 	"testing"
 
 	"github.com/cantara/gober/store"
@@ -38,7 +39,7 @@ func TestStore(t *testing.T) {
 	defer cancel()
 	_, err = es.Store(STREAM_NAME, ctx, store.Event{
 		Id:   uuid.Must(uuid.NewV7()),
-		Type: "test",
+		Type: event.Create,
 		Data: bytes,
 	})
 	if err != nil {
@@ -57,8 +58,8 @@ func TestStream(t *testing.T) {
 		return
 	}
 	e := <-stream
-	if e.Type != "test" {
-		t.Error(fmt.Errorf("Missmatch event types"))
+	if e.Type != event.Create {
+		t.Error(fmt.Errorf("missmatch event types"))
 		return
 	}
 	return

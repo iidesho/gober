@@ -102,7 +102,7 @@ func (e builder[DT]) WithMetadata(data Metadata) builder[DT] {
 
 func (e builder[DT]) Build() (ev Event[DT], err error) {
 	if e.Type == "" {
-		err = MissingTypeError
+		err = InvalidTypeError
 		return
 	}
 	e.Metadata.EventType = e.Type
@@ -117,7 +117,7 @@ func (e builder[DT]) Build() (ev Event[DT], err error) {
 
 func (e builder[DT]) BuildStore() (ev StoreEvent, err error) {
 	if e.Type == "" {
-		err = MissingTypeError
+		err = InvalidTypeError
 		return
 	}
 	e.Metadata.EventType = e.Type
@@ -130,4 +130,4 @@ func (e builder[DT]) BuildStore() (ev StoreEvent, err error) {
 	return
 }
 
-var MissingTypeError = fmt.Errorf("event type is missing")
+var InvalidTypeError = fmt.Errorf("event type is invalid")

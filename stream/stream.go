@@ -95,8 +95,8 @@ func Init(st Persistence, stream string, ctx context.Context) (out Stream, err e
 }
 
 func (es eventService) Store(e event.StoreEvent, cryptoKey CryptoKeyProvider) (transactionId uint64, err error) {
-	if e.Type == "" {
-		err = event.MissingTypeError
+	if event.TypeFromString(string(e.Type)) == event.Invalid {
+		err = event.InvalidTypeError
 		return
 	}
 	e.Metadata.Stream = es.streamName
