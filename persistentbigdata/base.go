@@ -17,20 +17,20 @@ import (
 	"github.com/cantara/gober/stream/event"
 )
 
-type EventMap[DT any] interface {
+type EventMap[DT, MT any] interface {
 	Get(key string) (data DT, err error)
 	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
 	Range(f func(key string, data DT) error)
-	Delete(data DT) (err error)
-	Set(data DT) (err error)
+	Delete(data MT) (err error)
+	Set(data DT, meta MT) (err error)
 }
 
 type transactionCheck struct {
 }
 
-type mapData[DT any] struct {
+type mapData[DT, MT any] struct {
 	data            *badger.DB
 	transactionChan chan transactionCheck
 	dataTypeName    string
@@ -38,28 +38,29 @@ type mapData[DT any] struct {
 	provider        stream.CryptoKeyProvider
 	es              stream.Stream
 	ctx             context.Context
-	getKey          func(dt DT) string
+	getKey          func(d MT) string
 	esh             stream.SetHelper
 }
 
-type metadata struct {
+type metadata[MT any] struct {
 	OldId uuid.UUID `json:"old_id"`
 	NewId uuid.UUID `json:"new_id"`
+	Data  MT        `json:"data"`
 }
 
-func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
+func Init[DT, MT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
 	if err != nil {
 		return
 	}
-	m := mapData[DT]{
+	m := mapData[DT, MT]{
 		data:            db,
 		transactionChan: make(chan transactionCheck),
 		dataTypeName:    dataTypeName,
 		dataTypeVersion: dataTypeVersion,
 		provider:        p,
 		es:              s,
-		getKey: func(d DT) string {
+		getKey: func(d MT) string {
 			return "metadata_" + getKey(d)
 		},
 	}
@@ -81,30 +82,17 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	eventChan, err := stream.NewStream[metadata](s, event.AllTypes(), from, stream.ReadDataType(dataTypeName), p, ctx)
+	eventChan, err := stream.NewStream[metadata[MT]](s, event.AllTypes(), from, stream.ReadDataType(dataTypeName), p, ctx)
 	if err != nil {
 		return
 	}
-	m.esh = stream.InitSetHelper(func(e event.Event[metadata]) {
+	m.esh = stream.InitSetHelper(func(e event.Event[metadata[MT]]) {
 		data, err := json.Marshal(e.Data)
 		if err != nil {
 			return
 		}
 		err = db.Update(func(txn *badger.Txn) error {
-			item, err := txn.Get([]byte(e.Data.NewId.Bytes()))
-			if err != nil {
-				return err
-			}
-			bd, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			var d DT
-			err = json.Unmarshal(bd, &d)
-			if err != nil {
-				return err
-			}
-			err = txn.Set([]byte(getKey(d)), data)
+			err = txn.Set([]byte(m.getKey(e.Data.Data)), data)
 			if err != nil {
 				return err
 			}
@@ -122,30 +110,14 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		if err != nil {
 			log.AddError(err).Warning("Update error")
 		}
-	}, func(e event.Event[metadata]) {
+	}, func(e event.Event[metadata[MT]]) {
 		err := db.Update(func(txn *badger.Txn) error {
-			item, err := txn.Get([]byte(e.Data.OldId.Bytes()))
-			if err != nil {
-				return err
-			}
-			if err != nil {
-				return err
-			}
-			bd, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			var d DT
-			err = json.Unmarshal(bd, &d)
-			if err != nil {
-				return err
-			}
 
 			err = txn.Delete([]byte(e.Data.OldId.Bytes()))
 			if err != nil {
 				return err
 			}
-			err = txn.Delete([]byte(getKey(d)))
+			err = txn.Delete([]byte(m.getKey(e.Data.Data)))
 			if err != nil {
 				return err
 			}
@@ -165,10 +137,24 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
-func (m mapData[DT]) Get(key string) (data DT, err error) {
+func (m mapData[DT, MT]) Get(key string) (data DT, err error) {
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
+		item, err := txn.Get([]byte("metadata_" + key))
+		if err != nil {
+			return err
+		}
+
+		edt, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		var md metadata[MT]
+		err = json.Unmarshal(edt, &md)
+		if err != nil {
+			return err
+		}
+		item, err = txn.Get(md.NewId.Bytes())
 		if err != nil {
 			return err
 		}
@@ -177,6 +163,7 @@ func (m mapData[DT]) Get(key string) (data DT, err error) {
 		if err != nil {
 			return err
 		}
+
 		return nil
 	})
 	if err != nil {
@@ -190,11 +177,11 @@ func (m mapData[DT]) Get(key string) (data DT, err error) {
 	return
 }
 
-func (m mapData[DT]) Len() (l int) {
+func (m mapData[DT, MT]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m mapData[DT]) Keys() (keys []string) {
+func (m mapData[DT, MT]) Keys() (keys []string) {
 	keys = make([]string, 0)
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
@@ -211,7 +198,7 @@ func (m mapData[DT]) Keys() (keys []string) {
 	return
 }
 
-func (m mapData[DT]) Range(f func(key string, data DT) error) {
+func (m mapData[DT, MT]) Range(f func(key string, data DT) error) {
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
@@ -236,12 +223,12 @@ func (m mapData[DT]) Range(f func(key string, data DT) error) {
 	})
 }
 
-func (m *mapData[DT]) Exists(key string) (exists bool) {
+func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
 	//_, exists = m.data.Load(key)
 	return
 }
 
-func (m *mapData[DT]) Delete(data DT) (err error) {
+func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(m.getKey(data)))
@@ -259,12 +246,12 @@ func (m *mapData[DT]) Delete(data DT) (err error) {
 		return
 	}
 
-	var md metadata
+	var md metadata[MT]
 	err = json.Unmarshal(ed, &m)
 	if err != nil {
 		return
 	}
-	e, err := event.NewBuilder[metadata]().
+	e, err := event.NewBuilder[metadata[MT]]().
 		WithType(event.Delete).
 		WithData(md).
 		WithMetadata(event.Metadata{
@@ -278,20 +265,21 @@ func (m *mapData[DT]) Delete(data DT) (err error) {
 	return
 }
 
-func (m *mapData[DT]) Set(data DT) (err error) {
+func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 	log.Println("Set and wait start")
 	newId, err := uuid.NewV7()
 	if err != nil {
 		return
 	}
 	eventType := event.Create
-	md := metadata{
+	md := metadata[MT]{
 		NewId: newId,
+		Data:  meta,
 	}
 
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(m.getKey(data)))
+		item, err := txn.Get([]byte(m.getKey(meta)))
 		if err != nil {
 			return err
 		}
@@ -302,7 +290,7 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 		}
 		return nil
 	})
-	var smd metadata
+	var smd metadata[MT]
 	if err == nil {
 		err = json.Unmarshal(ed, &smd)
 	}
@@ -311,7 +299,7 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 		md.OldId = smd.NewId
 	}
 
-	e, err := event.NewBuilder[metadata]().
+	e, err := event.NewBuilder[metadata[MT]]().
 		WithType(eventType).
 		WithData(md).
 		WithMetadata(event.Metadata{
@@ -323,7 +311,16 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 	if err != nil {
 		return
 	}
-
+	d, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	err = m.data.Update(func(txn *badger.Txn) error {
+		return txn.Set(md.NewId.Bytes(), d)
+	})
+	if err != nil {
+		return
+	}
 	err = m.esh.SetAndWait(e)
 	log.Println("Set and wait end")
 	return

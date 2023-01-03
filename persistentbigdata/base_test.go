@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-var ed EventMap[dd]
+var ed EventMap[dd, dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -35,7 +35,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd, dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -49,7 +49,7 @@ func TestStore(t *testing.T) {
 		Id:   1,
 		Name: "test",
 	}
-	err := ed.Set(data)
+	err := ed.Set(data, data)
 	if err != nil {
 		t.Error(err)
 		return
