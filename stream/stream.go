@@ -193,9 +193,9 @@ func NewStream[DT any](es Stream, eventTypes []event.Type, from store.StreamPosi
 					Data:     data,
 					Metadata: metadata,
 
-					Transaction: e.Transaction,
-					Position:    e.Position,
-					Created:     e.Created,
+					//Transaction: e.Transaction,
+					Position: e.Position,
+					Created:  e.Created,
 				}
 			}
 		}

@@ -104,13 +104,13 @@ func TestStreamMultiple(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	var trans uint64
+	var position uint64
 	for i := 0; i < 10; i++ {
 		e := <-stream
-		if trans < e.Transaction {
-			trans = e.Transaction
+		if position < e.Position {
+			position = e.Position
 		} else {
-			t.Errorf("previous transaction id was bigger than current transaction id. %d >= %d", trans, e.Transaction)
+			t.Errorf("previous transaction id was bigger than current position id. %d >= %d", position, e.Position)
 		}
 		fmt.Println(e)
 		if e.Type != "test" {

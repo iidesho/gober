@@ -13,9 +13,9 @@ type Event struct {
 	Data     []byte     `json:"data"`
 	Metadata []byte     `json:"metadata"`
 
-	Transaction uint64    `json:"transaction"`
-	Position    uint64    `json:"position"`
-	Created     time.Time `json:"created"`
+	//Transaction uint64    `json:"transaction"`
+	Position uint64    `json:"position"`
+	Created  time.Time `json:"created"`
 }
 
 type StreamPosition uint64

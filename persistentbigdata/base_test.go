@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
+	"os"
 	"testing"
 )
 
@@ -22,6 +23,10 @@ type dd struct {
 
 func cryptKeyProvider(_ string) string {
 	return testCryptKey
+}
+
+func TestPre(t *testing.T) {
+	os.RemoveAll("./eventmap/testdata")
 }
 
 func TestInit(t *testing.T) {

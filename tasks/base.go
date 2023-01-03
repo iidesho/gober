@@ -13,11 +13,6 @@ import (
 	"github.com/gofrs/uuid"
 )
 
-/*
-Tasks
-there is a issue within the implementation of the tasks. It is not consistent when running concurrent.
-Temp fix is to use the new implementation found in taskssingle.
-*/
 type Tasks[DT any] interface {
 	Create(DT) error
 	Add(uuid.UUID, DT) error
@@ -55,7 +50,7 @@ type TaskData[DT any] struct {
 	Next     uuid.UUID       `json:"next_id"`
 }
 
-func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed *tasks[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed Tasks[DT], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
@@ -64,7 +59,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	if err != nil {
 		return
 	}
-	ed = &tasks[DT]{
+	t := tasks[DT]{
 		name:             name.String(),
 		data:             New[TaskData[DT]](),
 		eventTypeName:    dataTypeName,
@@ -74,12 +69,13 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		es:               s,
 		ec:               eventChan,
 	}
-	ed.esh = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
-		ed.data.Store(e.Data.Id.String(), e.Data)
+	t.esh = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
+		t.data.Store(e.Data.Id.String(), e.Data)
 	}, func(e event.Event[TaskData[DT]]) {
-		ed.data.Delete(e.Data.Id.String())
-	}, ed.es, ed.provider, ed.ec, ed.ctx)
+		t.data.Delete(e.Data.Id.String())
+	}, t.es, t.provider, t.ec, t.ctx)
 
+	ed = &t
 	return
 }
 

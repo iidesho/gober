@@ -3,10 +3,8 @@ package inmemory
 import (
 	"context"
 	log "github.com/cantara/bragi"
-	"sync"
-	"time"
-
 	"github.com/cantara/gober/store"
+	"sync"
 )
 
 type Stream struct {
@@ -38,13 +36,12 @@ func (es *EventStore) Store(streamName string, ctx context.Context, events ...st
 	defer stream.dbLock.Unlock()
 	streamAny, _ = es.streams.Load(streamName)
 
-	trans := uint64(time.Now().UnixNano())
+	//trans := uint64(time.Now().UnixNano())
 
 	curPos := len(stream.db)
-
 	for i := range events {
-		events[i].Transaction = trans
-		events[i].Position = uint64(curPos + i)
+		//events[i].Transaction = trans
+		events[i].Position = uint64(curPos + i + 1)
 	}
 
 	stream.db = append(stream.db, events...)
@@ -54,7 +51,7 @@ func (es *EventStore) Store(streamName string, ctx context.Context, events ...st
 	//stream.dbLock.Unlock()
 	es.streams.Store(streamName, stream)
 	stream.newData.Broadcast()
-	return trans, nil
+	return *stream.position, nil
 }
 
 func (es *EventStore) Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {

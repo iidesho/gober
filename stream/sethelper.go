@@ -64,7 +64,7 @@ func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, k
 }
 
 type transactionCheck struct {
-	transaction  uint64
+	position     uint64
 	completeChan chan struct{}
 }
 
@@ -84,8 +84,8 @@ func (t *transaction[DT]) readStream(finishedTransactionChan chan<- uint64) {
 
 func (t *transaction[DT]) handleTransaction(e event.Event[DT], finishedTransactionChan chan<- uint64) {
 	defer func() {
-		log.Debug("written transaction ", e.Transaction)
-		finishedTransactionChan <- e.Transaction
+		log.Debug("written position ", e.Position)
+		finishedTransactionChan <- e.Position
 	}()
 	if e.Type == event.Delete {
 		t.delete(e)
@@ -101,23 +101,23 @@ func (t *transaction[DT]) verifyWrite(finishedTransactionChan <-chan uint64) {
 		case <-t.ctx.Done():
 			return
 		case completeChan := <-t.newTransactionChan:
-			if t.currentTransaction >= completeChan.transaction {
-				log.Debug("since we have already read this transaction before it wanted to be verified we say that it is completed")
+			if t.currentTransaction >= completeChan.position {
+				log.Debug("since we have already read this position before it wanted to be verified we say that it is completed", t.currentTransaction, completeChan.position)
 				completeChan.completeChan <- struct{}{}
 				return
 			}
 			log.Debug("storing the new comple chans")
 			t.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
 			//completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
-		case trans := <-finishedTransactionChan:
-			if t.currentTransaction < trans {
-				t.currentTransaction = trans
+		case position := <-finishedTransactionChan:
+			if t.currentTransaction < position {
+				t.currentTransaction = position
 			} else {
-				log.Crit("Seems that the new transaction was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, trans))
+				log.Crit("Seems that the new position was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, position))
 			}
 			t.completeChans.Range(func(id string, completeChan transactionCheck) bool {
-				log.Debug(trans, completeChan.transaction)
-				if trans < completeChan.transaction {
+				log.Debug(position, completeChan.position)
+				if position < completeChan.position {
 					return true
 				}
 				completeChan.completeChan <- struct{}{}
@@ -131,14 +131,14 @@ func (t *transaction[DT]) verifyWrite(finishedTransactionChan <-chan uint64) {
 }
 
 func (t *transaction[DT]) SetAndWait(e event.StoreEvent) (err error) {
-	transaction, err := t.stream.Store(e, t.keyProvider)
+	position, err := t.stream.Store(e, t.keyProvider)
 	if err != nil {
 		return
 	}
 	completeChan := make(chan struct{})
 	defer close(completeChan)
 	t.newTransactionChan <- transactionCheck{
-		transaction:  transaction,
+		position:     position,
 		completeChan: completeChan,
 	}
 	log.Debug("Set and wait waiting")

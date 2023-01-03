@@ -10,6 +10,7 @@ import (
 	"github.com/cantara/gober/store"
 )
 
+// EventStore Adding an arbitrary 1 all revisions so revision 0 is reserved for the null condition.
 type EventStore struct {
 	db *esdb.Client
 }
@@ -29,12 +30,12 @@ func Init() (es EventStore, err error) {
 	return
 }
 
-func (es EventStore) Store(streamName string, ctx context.Context, events ...store.Event) (transactionId uint64, err error) {
+func (es EventStore) Store(streamName string, ctx context.Context, events ...store.Event) (position uint64, err error) {
 	eventDatas := make([]esdb.EventData, len(events))
 	for i, e := range events {
 		eventDatas[i] = esdb.EventData{
 			EventID:     e.Id,
-			ContentType: esdb.BinaryContentType, //Teknically json on the back end of it
+			ContentType: esdb.BinaryContentType,
 			EventType:   string(e.Type),
 			Data:        e.Data,
 			Metadata:    e.Metadata,
@@ -42,7 +43,7 @@ func (es EventStore) Store(streamName string, ctx context.Context, events ...sto
 	}
 
 	wr, err := es.db.AppendToStream(ctx, streamName, esdb.AppendToStreamOptions{}, eventDatas...)
-	return wr.CommitPosition, err //To get "true" position within local stream, the store and wait method could be moved closer to the metal, aka here rather than in the outer implementation.
+	return wr.NextExpectedVersion + 1, err
 }
 
 func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
@@ -93,16 +94,13 @@ func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx co
 
 					e := subEvent.EventAppeared.OriginalEvent()
 					eventChan <- store.Event{
-						Id:          e.EventID,
-						Type:        event.TypeFromString(e.EventType),
-						Transaction: e.Position.Commit,
-						Position:    e.EventNumber,
-						Data:        e.Data,
-						Metadata:    e.UserMetadata,
-						Created:     e.CreatedDate,
-					}
-					if from < store.StreamPosition(e.EventNumber) { // This could potentially be a bottleneck, the only reason to have this is so that if stream end was selected, then we won't catch up the missing events in the time we were down.
-						from = store.StreamPosition(e.EventNumber)
+						Id:   e.EventID,
+						Type: event.TypeFromString(e.EventType),
+						//Transaction: e.Position.Commit,
+						Position: e.EventNumber + 1,
+						Data:     e.Data,
+						Metadata: e.UserMetadata,
+						Created:  e.CreatedDate,
 					}
 				}
 			}

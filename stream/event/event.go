@@ -20,9 +20,9 @@ type Event[DT any] struct {
 	Data     DT        `json:"data"`
 	Metadata Metadata  `json:"metadata"`
 
-	Transaction uint64    `json:"transaction"`
-	Position    uint64    `json:"position"`
-	Created     time.Time `json:"created"`
+	//Transaction uint64    `json:"transaction"`
+	Position uint64    `json:"position"`
+	Created  time.Time `json:"created"`
 }
 
 type Type string

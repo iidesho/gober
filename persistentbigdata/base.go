@@ -137,7 +137,7 @@ func Init[DT, MT any](s stream.Stream, dataTypeName, dataTypeVersion string, p s
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
-func (m mapData[DT, MT]) Get(key string) (data DT, err error) {
+func (m *mapData[DT, MT]) Get(key string) (data DT, err error) {
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte("metadata_" + key))
@@ -177,11 +177,11 @@ func (m mapData[DT, MT]) Get(key string) (data DT, err error) {
 	return
 }
 
-func (m mapData[DT, MT]) Len() (l int) {
+func (m *mapData[DT, MT]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m mapData[DT, MT]) Keys() (keys []string) {
+func (m *mapData[DT, MT]) Keys() (keys []string) {
 	keys = make([]string, 0)
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
@@ -198,7 +198,7 @@ func (m mapData[DT, MT]) Keys() (keys []string) {
 	return
 }
 
-func (m mapData[DT, MT]) Range(f func(key string, data DT) error) {
+func (m *mapData[DT, MT]) Range(f func(key string, data DT) error) {
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10

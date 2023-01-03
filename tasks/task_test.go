@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/store/inmemory"
+	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/stream"
 	"github.com/gofrs/uuid"
 	"testing"
@@ -29,7 +29,7 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	store, err := inmemory.Init()
+	store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return
@@ -97,7 +97,7 @@ func TestTairdown(t *testing.T) {
 
 func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	log.SetLevel(log.ERROR)
-	store, err := inmemory.Init()
+	store, err := eventstore.Init()
 	if err != nil {
 		b.Error(err)
 		return
@@ -108,7 +108,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

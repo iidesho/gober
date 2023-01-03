@@ -22,14 +22,8 @@ type EventMap[DT any] interface {
 	Set(key string, data DT) (err error)
 }
 
-type transactionCheck struct {
-	transaction  uint64
-	completeChan chan struct{}
-}
-
 type mapData[DT any] struct {
 	data             sync.Map
-	transactionChan  chan transactionCheck
 	eventTypeName    string
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
@@ -49,7 +43,6 @@ func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamNam
 	}
 	m := mapData[DT]{
 		data:             sync.Map{},
-		transactionChan:  make(chan transactionCheck),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
@@ -69,7 +62,7 @@ func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamNam
 	return
 }
 
-var ERROR_KEY_NOT_FOUND = fmt.Errorf("Provided key does not exist")
+var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
 func (m *mapData[DT]) Get(key string) (data DT, err error) {
 	ed, ok := m.data.Load(key)

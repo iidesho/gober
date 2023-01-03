@@ -166,11 +166,11 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 				id := e.Data.Metadata.Id
 				if e.Type == event.Delete {
 					ed.data.Delete(id)
-					transactionChan <- e.Transaction
+					transactionChan <- e.Position
 					continue
 				}
 				ed.data.Store(id, e.Data)
-				transactionChan <- e.Transaction
+				transactionChan <- e.Position
 				if e.Data.Metadata.Status == Created {
 					createdTasksChan <- id
 				}
