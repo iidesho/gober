@@ -35,6 +35,7 @@ type scheduledtasks[DT any] struct {
 	timeout          time.Duration
 	provider         stream.CryptoKeyProvider
 	es               stream.Stream
+	esh              stream.SetHelper
 }
 
 type selectionStatus string
@@ -61,12 +62,12 @@ type tm[DT any] struct {
 	Metadata TaskMetadata
 }
 
-func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed *scheduledtasks[DT], err error) {
+func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed *scheduledtasks[DT], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
 	}
-	ed = &scheduledtasks[DT]{
+	t := scheduledtasks[DT]{
 		name:             name.String(),
 		data:             sync.Map{},
 		transactionChan:  make(chan transactionCheck),
@@ -79,23 +80,6 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 		stream.ReadDataType(dataTypeName), p, ctx)
 	if err != nil {
 		return
-	}
-	upToDate := false
-	for !upToDate {
-		time.Sleep(time.Millisecond)
-		select {
-		case <-ctx.Done():
-			return
-		case e := <-eventChan:
-			id := e.Data.Metadata.Id
-			if e.Type == event.Delete {
-				ed.data.Delete(id)
-				continue
-			}
-			ed.data.Store(id, e.Data)
-		default:
-			upToDate = true
-		}
 	}
 
 	createdTasksChan := make(chan uuid.UUID, 10)
@@ -122,7 +106,7 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 				waitingFor := task.Metadata.After.Sub(time.Now())
 				log.Debug("Waiting for ", waitingFor.Minutes(), " minutes")
 				time.Sleep(waitingFor)
-				err := t.Add(task.Metadata.Id, task.Task)
+				err := tsks.Add(task.Metadata.Id, task.Task)
 				if err != nil {
 					log.AddError(err).Error("while creating scheduled task")
 					return
@@ -147,7 +131,7 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 					log.AddError(err).Error("while creating event for next action in scheduled task")
 					return
 				}
-				err = ed.setAndWait(e)
+				err = ed.esh.SetAndWait(e)
 				if err != nil {
 					log.AddError(err).Error("while storing event for next action in scheduled task")
 					return
@@ -156,60 +140,18 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 		}
 	}()
 
-	transactionChan := make(chan uint64, 5)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case e := <-eventChan:
-				id := e.Data.Metadata.Id
-				if e.Type == event.Delete {
-					ed.data.Delete(id)
-					transactionChan <- e.Position
-					continue
-				}
-				ed.data.Store(id, e.Data)
-				transactionChan <- e.Position
-				if e.Data.Metadata.Status == Created {
-					createdTasksChan <- id
-				}
-			}
+	t.esh = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
+		t.data.Store(e.Data.Metadata.Id, e.Data)
+		if e.Type == event.Create {
+			createdTasksChan <- e.Data.Metadata.Id
 		}
-	}()
-
-	go func() {
-		completeChans := make(map[string]transactionCheck)
-		var currentTransaction uint64
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case completeChan := <-ed.transactionChan:
-				if currentTransaction >= completeChan.transaction {
-					completeChan.completeChan <- struct{}{}
-					continue
-				}
-
-				completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
-			case transaction := <-transactionChan:
-				if currentTransaction < transaction {
-					currentTransaction = transaction
-				}
-				for id, completeChan := range completeChans {
-					if transaction < completeChan.transaction {
-						continue
-					}
-					completeChan.completeChan <- struct{}{}
-					delete(completeChans, id)
-				}
-			}
-		}
-	}()
+	}, func(e event.Event[tm[DT]]) {
+		t.data.Delete(e.Data.Metadata.Id)
+	}, t.es, t.provider, eventChan, ctx)
 
 	go func() {
 		for {
-			tsk, err := t.Select()
+			tsk, err := tsks.Select()
 			if err != nil {
 				if errors.Is(err, tasks.NothingToSelectError) {
 					time.Sleep(500 * time.Millisecond)
@@ -242,7 +184,7 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 					return
 				}
 				log.Debug("executed task:", task)
-				terr := t.Finish(tsk.Id)
+				terr := tsks.Finish(tsk.Id)
 				if terr != nil {
 					log.AddError(terr).Crit("while finishing task")
 				}
@@ -269,7 +211,7 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 					log.AddError(err).Error("while creating event for finished action in scheduled task")
 					return
 				}
-				err = ed.setAndWait(e)
+				err = ed.esh.SetAndWait(e)
 				if err != nil {
 					log.AddError(err).Error("while storing event for finished action in scheduled task")
 					return
@@ -277,6 +219,8 @@ func Init[DT any](s stream.Stream, t tasks.Tasks[DT], dataTypeName, dataTypeVers
 			}()
 		}
 	}()
+
+	ed = &t
 	return
 }
 
@@ -328,23 +272,7 @@ func (t *scheduledtasks[DT]) create(id uuid.UUID, a time.Time, i time.Duration, 
 	if err != nil {
 		return
 	}
-	err = t.setAndWait(e)
-	return
-}
-
-func (t *scheduledtasks[DT]) setAndWait(e event.StoreEvent) (err error) {
-	transaction, err := t.es.Store(e, t.provider)
-	if err != nil {
-		return
-	}
-	completeChan := make(chan struct{})
-	defer close(completeChan)
-	t.transactionChan <- transactionCheck{
-		transaction:  transaction,
-		completeChan: completeChan,
-	}
-	log.Println("Set and wait waiting")
-	<-completeChan
+	err = t.esh.SetAndWait(e)
 	return
 }
 

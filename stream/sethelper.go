@@ -88,10 +88,14 @@ func (t *transaction[DT]) handleTransaction(e event.Event[DT], finishedTransacti
 		finishedTransactionChan <- e.Position
 	}()
 	if e.Type == event.Delete {
+		log.Debug("starting delete for ", e.Position)
 		t.delete(e)
+		log.Debug("finished delete for ", e.Position)
 		return
 	}
+	log.Debug("starting store for ", e.Position)
 	t.store(e)
+	log.Debug("finished store for ", e.Position)
 }
 
 func (t *transaction[DT]) verifyWrite(finishedTransactionChan <-chan uint64) {
@@ -141,7 +145,7 @@ func (t *transaction[DT]) SetAndWait(e event.StoreEvent) (err error) {
 		position:     position,
 		completeChan: completeChan,
 	}
-	log.Debug("Set and wait waiting")
+	log.Debug("Set and wait waiting for", position)
 	<-completeChan
 	return
 }
