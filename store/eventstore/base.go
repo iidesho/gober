@@ -93,7 +93,7 @@ func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx co
 					}
 
 					e := subEvent.EventAppeared.OriginalEvent()
-					eventChan <- store.Event{
+					s := store.Event{
 						Id:   e.EventID,
 						Type: event.TypeFromString(e.EventType),
 						//Transaction: e.Position.Commit,
@@ -102,6 +102,7 @@ func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx co
 						Metadata: e.UserMetadata,
 						Created:  e.CreatedDate,
 					}
+					eventChan <- s
 				}
 			}
 		}

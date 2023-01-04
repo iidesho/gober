@@ -105,19 +105,21 @@ func (t *transaction[DT]) verifyWrite(finishedTransactionChan <-chan uint64) {
 		case <-t.ctx.Done():
 			return
 		case completeChan := <-t.newTransactionChan:
+			log.Debug("cur ", t.currentTransaction, " pos ", completeChan.position)
 			if t.currentTransaction >= completeChan.position {
 				log.Debug("since we have already read this position before it wanted to be verified we say that it is completed", t.currentTransaction, completeChan.position)
 				completeChan.completeChan <- struct{}{}
 				return
 			}
-			log.Debug("storing the new comple chans")
+			log.Debug("storing the new complete chan")
 			t.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
 			//completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
 		case position := <-finishedTransactionChan:
 			if t.currentTransaction < position {
 				t.currentTransaction = position
+				log.Debug("new cur ", t.currentTransaction, " pos ", position)
 			} else {
-				log.Crit("Seems that the new position was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, position))
+				log.Warning("Seems that the new position was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, position))
 			}
 			t.completeChans.Range(func(id string, completeChan transactionCheck) bool {
 				log.Debug(position, completeChan.position)
@@ -145,7 +147,7 @@ func (t *transaction[DT]) SetAndWait(e event.StoreEvent) (err error) {
 		position:     position,
 		completeChan: completeChan,
 	}
-	log.Debug("Set and wait waiting for", position)
+	log.Debug("Set and wait waiting for ", position)
 	<-completeChan
 	return
 }

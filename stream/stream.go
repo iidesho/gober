@@ -24,8 +24,8 @@ type eventWrite struct {
 }
 
 type eventWriteReturn struct {
-	transactionId uint64
-	err           error
+	position uint64
+	err      error
 }
 
 type Filter func(md event.Metadata) bool
@@ -79,11 +79,11 @@ func Init(st Persistence, stream string, ctx context.Context) (out Stream, err e
 					}
 				}
 
-				transactionId, err := es.store.Store(es.streamName, ctx, events...)
+				position, err := es.store.Store(es.streamName, ctx, events...)
 				for _, returnChan := range returnChans {
 					returnChan <- eventWriteReturn{
-						transactionId: transactionId,
-						err:           err,
+						position: position,
+						err:      err,
 					}
 				}
 				events = nil
@@ -132,7 +132,7 @@ func (es eventService) Store(e event.StoreEvent, cryptoKey CryptoKeyProvider) (t
 	}
 	writeReturn := <-returnChan
 
-	return writeReturn.transactionId, writeReturn.err
+	return writeReturn.position, writeReturn.err
 }
 
 func (es eventService) Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
@@ -168,7 +168,7 @@ func NewStream[DT any](es Stream, eventTypes []event.Type, from store.StreamPosi
 				var metadata event.Metadata
 				err := json.Unmarshal(e.Metadata, &metadata)
 				if err != nil {
-					log.AddError(err).Warning("Unmarshaling event metadata error")
+					log.AddError(err).Warning("Unmarshalling event metadata error")
 					continue
 				}
 				if filter(metadata) {
@@ -182,7 +182,7 @@ func NewStream[DT any](es Stream, eventTypes []event.Type, from store.StreamPosi
 				var data DT
 				err = json.Unmarshal(dataJson, &data)
 				if err != nil {
-					log.AddError(err).Warning("Unmarshaling event data error")
+					log.AddError(err).Warning("Unmarshalling event data error")
 					continue
 				}
 

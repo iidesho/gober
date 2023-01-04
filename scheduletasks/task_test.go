@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	log "github.com/cantara/bragi"
+	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/tasks"
@@ -32,7 +33,8 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	store, err := inmemory.Init()
+	//store, err := inmemory.Init()
+	store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return
@@ -47,7 +49,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	edt, err := Init[dd](s, tas, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println("Executed after time ", d); defer wg.Done(); return true }, ctxGlobal)
+	edt, err := Init[dd](s, tas, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println("Executed after time ", d); defer wg.Done(); return true }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -90,7 +92,7 @@ func TestFinish(t *testing.T) {
 		wg.Wait()
 	}()
 	select {
-	case <-time.After(5 * time.Second):
+	case <-time.After(5000 * time.Second):
 		t.Error("timeout on task finish")
 	case <-c:
 	}

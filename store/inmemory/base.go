@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+// Stream Need to add a way to not store multiple events with the same id in the same stream.
 type Stream struct {
 	db       []store.Event
 	dbLock   *sync.Mutex

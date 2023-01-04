@@ -34,7 +34,9 @@ type scheduledtasks[DT any] struct {
 	eventTypeVersion string
 	timeout          time.Duration
 	provider         stream.CryptoKeyProvider
+	ctx              context.Context
 	es               stream.Stream
+	ec               <-chan event.Event[tm[DT]]
 	esh              stream.SetHelper
 }
 
@@ -48,8 +50,10 @@ const (
 
 const NoInterval time.Duration = 0
 
+// TaskMetadata temp changed task to be the id that is used for strong and id seems to now only be used for events.
 type TaskMetadata struct {
 	Id       uuid.UUID       `json:"id"`
+	Task     uuid.UUID       `json:"task"` //Needs to be added because both sheduledtask and task can run in the same stream.
 	Next     uuid.UUID       `json:"next_id"`
 	NextTask uuid.UUID       `json:"next_task_id"`
 	After    time.Time       `json:"after"`
@@ -67,6 +71,11 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 	if err != nil {
 		return
 	}
+	eventChan, err := stream.NewStream[tm[DT]](s, event.AllTypes(), store.STREAM_START,
+		stream.ReadDataType(dataTypeName), p, ctx)
+	if err != nil {
+		return
+	}
 	t := scheduledtasks[DT]{
 		name:             name.String(),
 		data:             sync.Map{},
@@ -74,12 +83,9 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 		eventTypeName:    dataTypeName,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
+		ctx:              ctx,
 		es:               s,
-	}
-	eventChan, err := stream.NewStream[tm[DT]](s, event.AllTypes(), store.STREAM_START,
-		stream.ReadDataType(dataTypeName), p, ctx)
-	if err != nil {
-		return
+		ec:               eventChan,
 	}
 
 	createdTasksChan := make(chan uuid.UUID, 10)
@@ -106,7 +112,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 				waitingFor := task.Metadata.After.Sub(time.Now())
 				log.Debug("Waiting for ", waitingFor.Minutes(), " minutes")
 				time.Sleep(waitingFor)
-				err := tsks.Add(task.Metadata.Id, task.Task)
+				err := tsks.Add(task.Metadata.Task, task.Task)
 				if err != nil {
 					log.AddError(err).Error("while creating scheduled task")
 					return
@@ -120,6 +126,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					Task: task.Task,
 					Metadata: TaskMetadata{
 						Id:       task.Metadata.Id,
+						Task:     task.Metadata.Task,
 						Next:     nextid,
 						NextTask: task.Metadata.NextTask,
 						Status:   Selected,
@@ -141,13 +148,13 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 	}()
 
 	t.esh = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
-		t.data.Store(e.Data.Metadata.Id, e.Data)
+		t.data.Store(e.Data.Metadata.Task, e.Data)
 		if e.Type == event.Create {
-			createdTasksChan <- e.Data.Metadata.Id
+			createdTasksChan <- e.Data.Metadata.Task
 		}
 	}, func(e event.Event[tm[DT]]) {
-		t.data.Delete(e.Data.Metadata.Id)
-	}, t.es, t.provider, eventChan, ctx)
+		t.data.Delete(e.Data.Metadata.Task)
+	}, t.es, t.provider, t.ec, t.ctx)
 
 	go func() {
 		for {
@@ -169,6 +176,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					}
 				}()
 				log.Debug("selected task: ", tsk)
+				// This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
 				taskAny, loaded := t.data.Load(tsk.Id)
 				if !loaded {
 					log.Warning("tried loading " + tsk.Id.String() + " but failed. unable to execute task.")
@@ -184,7 +192,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					return
 				}
 				log.Debug("executed task:", task)
-				terr := tsks.Finish(tsk.Id)
+				terr := tsks.Finish(task.Metadata.Task)
 				if terr != nil {
 					log.AddError(terr).Crit("while finishing task")
 				}
@@ -201,6 +209,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					Task: tsk.Data, // not sure if i want to use the one from the select or the base from scheduletask
 					Metadata: TaskMetadata{
 						Id:       task.Metadata.Id,
+						Task:     task.Metadata.Task,
 						NextTask: task.Metadata.NextTask,
 						Status:   Finished,
 						After:    task.Metadata.After,
@@ -250,11 +259,15 @@ func (t *scheduledtasks[DT]) Create(a time.Time, i time.Duration, dt DT) (err er
 }
 
 func (t *scheduledtasks[DT]) create(id uuid.UUID, a time.Time, i time.Duration, dt DT) (err error) {
-	nextid, err := uuid.NewV7()
+	taskId, err := uuid.NewV7()
 	if err != nil {
 		return
 	}
-	nextTaskid, err := uuid.NewV7()
+	nextId, err := uuid.NewV7()
+	if err != nil {
+		return
+	}
+	nextTaskId, err := uuid.NewV7()
 	if err != nil {
 		return
 	}
@@ -262,8 +275,9 @@ func (t *scheduledtasks[DT]) create(id uuid.UUID, a time.Time, i time.Duration, 
 		Task: dt,
 		Metadata: TaskMetadata{
 			Id:       id,
-			Next:     nextid,
-			NextTask: nextTaskid,
+			Task:     taskId,
+			Next:     nextId,
+			NextTask: nextTaskId,
 			Status:   Created,
 			After:    a,
 			Interval: i,
