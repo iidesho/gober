@@ -43,7 +43,10 @@ func (es EventStore) Store(streamName string, ctx context.Context, events ...sto
 	}
 
 	wr, err := es.db.AppendToStream(ctx, streamName, esdb.AppendToStreamOptions{}, eventDatas...)
-	return wr.NextExpectedVersion + 1, err
+	if err != nil {
+		return
+	}
+	return wr.NextExpectedVersion + 1, err //wr can be nil
 }
 
 func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
