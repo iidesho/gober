@@ -32,6 +32,12 @@ type Filter func(md event.Metadata) bool
 
 type CryptoKeyProvider func(key string) string
 
+func StaticProvider(key string) func(_ string) string {
+	return func(_ string) string {
+		return key
+	}
+}
+
 func ReadAll() Filter {
 	return func(_ event.Metadata) bool { return false }
 }

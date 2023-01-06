@@ -31,7 +31,12 @@ type Report struct {
 	Now       time.Time `json:"now"`
 }
 
+var ip net.IP
+
 func GetOutboundIP() net.IP {
+	if ip != nil {
+		return ip
+	}
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		log.Fatal(err)
@@ -39,8 +44,9 @@ func GetOutboundIP() net.IP {
 	defer conn.Close()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	ip = localAddr.IP
 
-	return localAddr.IP
+	return ip
 }
 
 func (h health) GetHealthReport() Report {

@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/webserver/health"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"net/http"
-	"os"
+	"net/url"
 )
 
 var Name string
@@ -20,14 +21,17 @@ const (
 )
 
 type Server struct {
-	r   *gin.Engine
-	API *gin.RouterGroup
+	r    *gin.Engine
+	port uint16
+	Base *gin.RouterGroup
+	API  *gin.RouterGroup
 }
 
-func Init() *Server {
+func Init(port uint16) (*Server, error) {
 	h := health.Init()
 	s := &Server{
-		r: gin.New(),
+		r:    gin.New(),
+		port: port,
 	}
 	if Name == "" {
 		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
@@ -42,19 +46,38 @@ func Init() *Server {
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{"*"}
 	s.r.Use(cors.New(config))
-	base := s.r.Group("/" + Name)
-	s.API = base.Group("")
+	s.Base = s.r.Group("")
+	s.API = s.Base.Group("/" + Name)
 	s.API.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, h.GetHealthReport())
 	})
-	return s
+	return s, nil
 }
 
 func (s Server) Run() {
-	s.r.Run(":" + os.Getenv("webserver.port"))
+	err := s.r.Run(fmt.Sprintf(":%d", s.Port()))
+	if err != nil {
+		log.AddError(err).Crit("while starting or running webserver")
+	}
+}
+
+func (s Server) Port() uint16 {
+	return s.port
+}
+
+func (s Server) Url() (u *url.URL) {
+	u = &url.URL{}
+	u.Scheme = "http"
+	u.Host = fmt.Sprintf("%s:%d", health.GetOutboundIP(), s.Port())
+	u.Path = s.Base.BasePath()
+	return
 }
 
 func UnmarshalBody[bodyT any](c *gin.Context) (v bodyT, err error) {
+	if c.GetHeader(CONTENT_TYPE) != CONTENT_TYPE_JSON {
+		err = ErrIncorrectContentType
+		return
+	}
 	var unmarshalErr *json.UnmarshalTypeError
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
@@ -82,3 +105,5 @@ func GetAuthHeader(c *gin.Context) (header string) {
 	}
 	return
 }
+
+var ErrIncorrectContentType = fmt.Errorf("http header did not contain key %s with value %s", CONTENT_TYPE, CONTENT_TYPE_JSON)
