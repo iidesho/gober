@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 var Name string
@@ -69,7 +70,7 @@ func (s Server) Url() (u *url.URL) {
 	u = &url.URL{}
 	u.Scheme = "http"
 	u.Host = fmt.Sprintf("%s:%d", health.GetOutboundIP(), s.Port())
-	u.Path = s.Base.BasePath()
+	u.Path = strings.TrimSuffix(s.Base.BasePath(), "/")
 	return
 }
 
