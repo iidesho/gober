@@ -9,7 +9,9 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -52,6 +54,25 @@ func Init(port uint16) (*Server, error) {
 	s.API.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, h.GetHealthReport())
 	})
+	user := os.Getenv("debug.user")
+	pass := os.Getenv("debug.pass")
+	if user != "" && pass != "" {
+		debug := s.API.Group("/debug")
+		debug.Use(gin.BasicAuth(gin.Accounts{user: pass}))
+		debug.GET("/pprof/*type", func(c *gin.Context) {
+			fmt.Println(c.Param("type"))
+			switch c.Param("type") {
+			case "/profile":
+				pprof.Profile(c.Writer, c.Request)
+			case "/trace":
+				pprof.Trace(c.Writer, c.Request)
+			case "/symbol":
+				pprof.Symbol(c.Writer, c.Request)
+			default:
+				pprof.Index(c.Writer, c.Request)
+			}
+		})
+	}
 	return s, nil
 }
 
