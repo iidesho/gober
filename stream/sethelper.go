@@ -42,8 +42,10 @@ func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, k
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				t.verifyWrite(finishedTransactionChan)
+			case completeChan := <-t.newTransactionChan:
+				t.completeTransaction(completeChan)
+			case position := <-finishedTransactionChan:
+				t.finishedPosition(position)
 			}
 		}
 	}()
@@ -54,8 +56,8 @@ func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, k
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				t.readStream(finishedTransactionChan)
+			case e := <-t.eventChannel:
+				t.handleTransaction(e, finishedTransactionChan)
 			}
 		}
 	}()
@@ -98,38 +100,45 @@ func (t *transaction[DT]) handleTransaction(e event.Event[DT], finishedTransacti
 	log.Debug("finished store for ", e.Position)
 }
 
-func (t *transaction[DT]) verifyWrite(finishedTransactionChan <-chan uint64) {
+func (t *transaction[DT]) completeTransaction(completeChan transactionCheck) {
+	log.Debug("cur ", t.currentTransaction, " pos ", completeChan.position)
+	if t.currentTransaction >= completeChan.position {
+		log.Debug("since we have already read this position before it wanted to be verified we say that it is completed", t.currentTransaction, completeChan.position)
+		completeChan.completeChan <- struct{}{}
+		return
+	}
+	log.Debug("storing the new complete chan")
+	t.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
+}
+
+func (t *transaction[DT]) finishedPosition(position uint64) {
+	if t.currentTransaction < position {
+		t.currentTransaction = position
+		log.Debug("new cur ", t.currentTransaction, " pos ", position)
+	} else {
+		log.Warning("Seems that the new position was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, position))
+	}
+	t.completeChans.Range(func(id string, completeChan transactionCheck) bool {
+		log.Debug(position, completeChan.position)
+		if position < completeChan.position {
+			return true
+		}
+		completeChan.completeChan <- struct{}{}
+		t.completeChans.Delete(id)
+		return true
+	})
+}
+
+func (t *transaction[DT]) verifyAllWrites(finishedTransactionChan <-chan uint64) {
 	upToDate := false
 	for !upToDate {
 		select {
 		case <-t.ctx.Done():
 			return
 		case completeChan := <-t.newTransactionChan:
-			log.Debug("cur ", t.currentTransaction, " pos ", completeChan.position)
-			if t.currentTransaction >= completeChan.position {
-				log.Debug("since we have already read this position before it wanted to be verified we say that it is completed", t.currentTransaction, completeChan.position)
-				completeChan.completeChan <- struct{}{}
-				return
-			}
-			log.Debug("storing the new complete chan")
-			t.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
-			//completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
+			t.completeTransaction(completeChan)
 		case position := <-finishedTransactionChan:
-			if t.currentTransaction < position {
-				t.currentTransaction = position
-				log.Debug("new cur ", t.currentTransaction, " pos ", position)
-			} else {
-				log.Warning("Seems that the new position was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, position))
-			}
-			t.completeChans.Range(func(id string, completeChan transactionCheck) bool {
-				log.Debug(position, completeChan.position)
-				if position < completeChan.position {
-					return true
-				}
-				completeChan.completeChan <- struct{}{}
-				t.completeChans.Delete(id)
-				return true
-			})
+			t.finishedPosition(position)
 		default:
 			upToDate = true
 		}
