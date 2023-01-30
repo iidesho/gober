@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/dgraph-io/badger/options"
 
 	"github.com/dgraph-io/badger"
 
@@ -42,7 +43,9 @@ type mapData[DT any] struct {
 }
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
-	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName))
+	opt := badger.DefaultOptions("./eventmap/" + dataTypeName)
+	opt.ValueLogLoadingMode = options.FileIO
+	db, err := badger.Open(opt)
 	if err != nil {
 		return
 	}
