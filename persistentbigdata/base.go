@@ -77,9 +77,10 @@ type discoveryMetadata[MT any] struct {
 }
 
 func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
-	opt := badger.DefaultOptions("./eventmap/" + dataTypeName)
-	opt.ValueLogLoadingMode = options.FileIO
-	db, err := badger.Open(opt)
+	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName).
+		WithMaxTableSize(1024 * 1024 * 8).
+		WithValueLogFileSize(1024 * 1024 * 8).
+		WithValueLogLoadingMode(options.FileIO))
 	if err != nil {
 		return
 	}
