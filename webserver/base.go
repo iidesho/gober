@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	_ "net/http/pprof"
 )
 
 var Name string
@@ -56,7 +58,7 @@ func Init(port uint16) (*Server, error) {
 	})
 	user := os.Getenv("debug.user")
 	pass := os.Getenv("debug.pass")
-	if user != "" && pass != "" {
+	if user != "" && pass != "" && Name != "" {
 		debug := s.API.Group("/debug")
 		debug.Use(gin.BasicAuth(gin.Accounts{user: pass}))
 		debug.GET("/pprof/*type", func(c *gin.Context) {
