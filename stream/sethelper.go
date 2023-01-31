@@ -94,40 +94,40 @@ func (t *transaction[DT]) readStream(finishedTransactionChan chan<- uint64) {
 
 func (t *transaction[DT]) handleTransaction(e event.Event[DT], finishedTransactionChan chan<- uint64) {
 	defer func() {
-		log.Debug("written position ", e.Position)
+		//log.Debug("written position ", e.Position)
 		finishedTransactionChan <- e.Position
 	}()
 	if e.Type == event.Delete {
-		log.Debug("starting delete for ", e.Position)
+		//log.Debug("starting delete for ", e.Position)
 		t.delete(e)
-		log.Debug("finished delete for ", e.Position)
+		//log.Debug("finished delete for ", e.Position)
 		return
 	}
-	log.Debug("starting store for ", e.Position)
+	//log.Debug("starting store for ", e.Position)
 	t.store(e)
-	log.Debug("finished store for ", e.Position)
+	//log.Debug("finished store for ", e.Position)
 }
 
 func (t *transaction[DT]) completeTransaction(completeChan transactionCheck) {
-	log.Debug("cur ", t.currentTransaction, " pos ", completeChan.position)
+	//log.Debug("cur ", t.currentTransaction, " pos ", completeChan.position)
 	if t.currentTransaction >= completeChan.position {
-		log.Debug("since we have already read this position before it wanted to be verified we say that it is completed", t.currentTransaction, completeChan.position)
+		//log.Debug("since we have already read this position before it wanted to be verified we say that it is completed", t.currentTransaction, completeChan.position)
 		completeChan.completeChan <- struct{}{}
 		return
 	}
-	log.Debug("storing the new complete chan")
+	//log.Debug("storing the new complete chan")
 	t.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
 }
 
 func (t *transaction[DT]) finishedPosition(position uint64) {
 	if t.currentTransaction < position {
 		t.currentTransaction = position
-		log.Debug("new cur ", t.currentTransaction, " pos ", position)
+		//log.Debug("new cur ", t.currentTransaction, " pos ", position)
 	} else {
 		log.Warning("Seems that the new position was not newer than the previous one. ", fmt.Sprintf("%d < %d", t.currentTransaction, position))
 	}
 	t.completeChans.Range(func(id string, completeChan transactionCheck) bool {
-		log.Debug(position, completeChan.position)
+		//log.Debug(position, completeChan.position)
 		if position < completeChan.position {
 			return true
 		}
@@ -164,7 +164,7 @@ func (t *transaction[DT]) SetAndWait(e event.StoreEvent) (err error) {
 		position:     position,
 		completeChan: completeChan,
 	}
-	log.Debug("Set and wait waiting for ", position)
+	//log.Debug("Set and wait waiting for ", position)
 	<-completeChan
 	return
 }
