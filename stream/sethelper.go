@@ -6,6 +6,7 @@ import (
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream/event"
 	"github.com/gofrs/uuid"
+	"time"
 )
 
 type SetHelper interface {
@@ -72,13 +73,20 @@ type transactionCheck struct {
 
 func (t *transaction[DT]) readStream(finishedTransactionChan chan<- uint64) {
 	upToDate := false
+	readOut := false
 	for !upToDate {
 		select {
 		case <-t.ctx.Done():
 			return
 		case e := <-t.eventChannel:
 			t.handleTransaction(e, finishedTransactionChan)
+			readOut = false
 		default:
+			time.Sleep(10 * time.Millisecond)
+			if !readOut {
+				readOut = true
+				continue
+			}
 			upToDate = true
 		}
 	}
