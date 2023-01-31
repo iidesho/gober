@@ -192,7 +192,7 @@ func NewStream[DT any](es Stream, eventTypes []event.Type, from store.StreamPosi
 					continue
 				}
 
-				log.Debug("Read event: ", e.Position)
+				//log.Debug("Read event: ", e.Position)
 				eventChan <- event.Event[DT]{
 					Id:       e.Id,
 					Type:     e.Type,
