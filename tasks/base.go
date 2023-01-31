@@ -3,7 +3,7 @@ package tasks
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
+	"sync"
 	"time"
 
 	"github.com/cantara/gober/crypto"
@@ -14,8 +14,7 @@ import (
 )
 
 type Tasks[DT any] interface {
-	Create(DT) error
-	Add(uuid.UUID, DT) error
+	Create(uuid.UUID, DT) error
 	Select() (TaskData[DT], error)
 	Finish(uuid.UUID) error
 }
@@ -31,6 +30,7 @@ type tasks[DT any] struct {
 	es               stream.Stream
 	ec               <-chan event.Event[TaskData[DT]]
 	esh              stream.SetHelper
+	selectLock       sync.Mutex
 }
 
 type selectionStatus string
@@ -55,7 +55,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	if err != nil {
 		return
 	}
-	eventChan, err := stream.NewStream[TaskData[DT]](s, event.AllTypes(), store.STREAM_START, stream.ReadDataType(dataTypeName), p, ctx)
+	eventChan, err := stream.NewStream[TaskData[DT]](s, event.AllTypes(), store.STREAM_START, stream.ReadDataType(dataTypeName), p, ctx) //Should not be start stream!
 	if err != nil {
 		return
 	}
@@ -68,6 +68,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		ctx:              ctx,
 		es:               s,
 		ec:               eventChan,
+		selectLock:       sync.Mutex{},
 	}
 	t.esh = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
 		t.data.Store(e.Data.Id.String(), e.Data)
@@ -80,6 +81,8 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 }
 
 func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
+	t.selectLock.Lock()
+	defer t.selectLock.Unlock()
 	now := time.Now()
 	t.data.Range(func(k string, task TaskData[DT]) bool {
 		if task.Status == Finished {
@@ -92,16 +95,12 @@ func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
 		task.Status = Selected
 		task.TimeOut = time.Now().Add(5 * time.Minute)
 		task.Selector = t.name
-		//task.Id = task.Next
 		var e event.StoreEvent
 		e, err = t.event(task.Next, event.Update, task)
 		if err != nil {
 			return false
 		}
-		//e.Metadata.Event = ev.Metadata.Event
-		//ev.Readable.Lock()
 		err = t.esh.SetAndWait(e)
-		//ev.Readable.Unlock()
 		if err != nil {
 			return false
 		}
@@ -110,11 +109,10 @@ func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
 			err = fmt.Errorf("unselectable as it does not exist, %s", k)
 			return false
 		}
-		outTask := taskAny //.(TaskData[DT])
+		outTask := taskAny
 		if outTask.Selector != t.name {
 			return true
 		}
-		log.Debug(outTask)
 		outDT = outTask
 		return false
 	})
@@ -168,6 +166,7 @@ func (t *tasks[DT]) Finish(id uuid.UUID) (err error) {
 	return
 }
 
+/* Deprecating oversimplified helper
 func (t *tasks[DT]) Create(dt DT) (err error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -175,8 +174,9 @@ func (t *tasks[DT]) Create(dt DT) (err error) {
 	}
 	return t.Add(id, dt)
 }
+*/
 
-func (t *tasks[DT]) Add(id uuid.UUID, dt DT) (err error) {
+func (t *tasks[DT]) Create(id uuid.UUID, dt DT) (err error) {
 	e, err := t.event(id, event.Create, TaskData[DT]{
 		Id:       id,
 		Data:     dt,

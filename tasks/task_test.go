@@ -53,7 +53,7 @@ func TestCreate(t *testing.T) {
 		Id:   1,
 		Name: "test",
 	}
-	err := ts.Create(data)
+	err := ts.Create(uuid.Must(uuid.NewV7()), data)
 	if err != nil {
 		t.Error(err)
 		return
@@ -118,7 +118,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		Name: "test",
 	}
 	for i := 0; i < b.N; i++ {
-		err = edt.Create(data)
+		err = edt.Create(uuid.Must(uuid.NewV7()), data)
 		if err != nil {
 			b.Error(err)
 			return
