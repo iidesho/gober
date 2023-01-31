@@ -2,6 +2,7 @@ package eventstore
 
 import (
 	"context"
+	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream/event"
 	"time"
 
@@ -52,7 +53,7 @@ func (es EventStore) Store(streamName string, ctx context.Context, events ...sto
 func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
 	var esFrom esdb.StreamPosition
 
-	eventChan := make(chan store.Event, 0)
+	eventChan := make(chan store.Event, 10)
 	out = eventChan
 	backoff := time.Duration(1)
 	go func() {
@@ -74,7 +75,8 @@ func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx co
 			stream, err := es.db.SubscribeToStream(ctx, streamName, esdb.SubscribeToStreamOptions{
 				From: esFrom,
 			})
-			if err != nil { // Should probably atleast log this error?
+			if err != nil {
+				log.AddError(err).Debug("while subscribing to stream ", streamName)
 				time.Sleep(backoff * time.Second)
 				continue
 			}
