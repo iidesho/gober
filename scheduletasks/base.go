@@ -201,6 +201,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	}, func(e event.Event[tm[DT]]) {
 		t.data.Delete(e.Data.Metadata.Task)
 	}, t.es, t.provider, t.ec, t.ctx)
+	upToDate = true
 
 	go func() {
 		for {
