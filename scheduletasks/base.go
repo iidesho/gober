@@ -2,9 +2,7 @@ package tasks
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/tasks"
 	"sync"
@@ -95,26 +93,38 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	}
 
 	upToDate := false
-	itsTimeChan := make(chan tm[DT], 0)
 	createdTasksChan := make(chan uuid.UUID, 10)
-	go func() {
-		//Handeling catchups
-		func() { //To garbage collect ids
-			var ids []uuid.UUID
-			for !upToDate {
-				select {
-				case id := <-createdTasksChan:
-					ids = append(ids, id)
-				default:
-					time.Sleep(5 * time.Millisecond)
-				}
+	go func() { //Handling catchup's
+		var ids []uuid.UUID
+		for !upToDate {
+			select {
+			case id := <-createdTasksChan:
+				ids = append(ids, id)
+			default:
+				time.Sleep(5 * time.Millisecond)
 			}
-			go func(ids []uuid.UUID) {
-				for _, id := range ids {
-					createdTasksChan <- id
-				}
-			}(ids)
-		}()
+		}
+		for _, id := range ids {
+			createdTasksChan <- id
+		}
+	}()
+
+	t.esh = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
+		c, cf := context.WithCancel(t.ctx)
+		task := e.Data
+		task.ctx = c
+		task.cancel = cf
+		t.data.Store(e.Data.Metadata.Task, task)
+		if e.Type == event.Create {
+			createdTasksChan <- e.Data.Metadata.Task
+		}
+	}, func(e event.Event[tm[DT]]) {
+		t.data.Delete(e.Data.Metadata.Task)
+	}, t.es, t.provider, t.ec, t.ctx)
+	upToDate = true
+
+	itsTimeChan := make(chan tm[DT], 0)
+	go func() {
 		for id := range createdTasksChan {
 			taskAny, loaded := t.data.Load(id)
 			if !loaded {
@@ -188,20 +198,6 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			}
 		}
 	}()
-
-	t.esh = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
-		c, cf := context.WithCancel(t.ctx)
-		task := e.Data
-		task.ctx = c
-		task.cancel = cf
-		t.data.Store(e.Data.Metadata.Task, task)
-		if e.Type == event.Create {
-			createdTasksChan <- e.Data.Metadata.Task
-		}
-	}, func(e event.Event[tm[DT]]) {
-		t.data.Delete(e.Data.Metadata.Task)
-	}, t.es, t.provider, t.ec, t.ctx)
-	upToDate = true
 
 	go func() {
 		for {
@@ -338,10 +334,3 @@ func (t *scheduledtasks[DT]) create(id uuid.UUID, a time.Time, i time.Duration, 
 	err = t.esh.SetAndWait(e)
 	return
 }
-
-func printJson(v any) {
-	o, _ := json.MarshalIndent(v, "", "  ")
-	log.Println(string(o))
-}
-
-var NothingToSelectError = fmt.Errorf("nothing to select")
