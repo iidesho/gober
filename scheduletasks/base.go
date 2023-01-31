@@ -94,8 +94,27 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		return
 	}
 
+	upToDate := false
+	itsTimeChan := make(chan tm[DT], 0)
 	createdTasksChan := make(chan uuid.UUID, 10)
 	go func() {
+		//Handeling catchups
+		func() { //To garbage collect ids
+			var ids []uuid.UUID
+			for !upToDate {
+				select {
+				case id := <-createdTasksChan:
+					ids = append(ids, id)
+				default:
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
+			go func(ids []uuid.UUID) {
+				for _, id := range ids {
+					createdTasksChan <- id
+				}
+			}(ids)
+		}()
 		for id := range createdTasksChan {
 			taskAny, loaded := t.data.Load(id)
 			if !loaded {
@@ -124,6 +143,17 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					case <-time.Tick(waitingFor):
 					}
 				}
+				itsTimeChan <- task
+			}()
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-t.ctx.Done():
+				return
+			case task := <-itsTimeChan:
 				err := tsks.Create(task.Metadata.Task, task)
 				if err != nil {
 					log.AddError(err).Error("while creating scheduled task")
@@ -155,7 +185,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					log.AddError(err).Error("while storing event for next action in scheduled task")
 					return
 				}
-			}()
+			}
 		}
 	}()
 
