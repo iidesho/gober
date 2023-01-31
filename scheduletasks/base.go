@@ -68,7 +68,7 @@ type tm[DT any] struct {
 	cancel   context.CancelFunc
 }
 
-func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
@@ -88,6 +88,10 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 		ctx:              ctx,
 		es:               s,
 		ec:               eventChan,
+	}
+	tsks, err := tasks.Init[tm[DT]](s, dataTypeName+"_scheduled", dataTypeVersion, p, ctx)
+	if err != nil {
+		return
 	}
 
 	createdTasksChan := make(chan uuid.UUID, 10)
@@ -120,7 +124,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					case <-time.Tick(waitingFor):
 					}
 				}
-				err := tsks.Create(task.Metadata.Task, task.Task)
+				err := tsks.Create(task.Metadata.Task, task)
 				if err != nil {
 					log.AddError(err).Error("while creating scheduled task")
 					return
@@ -188,7 +192,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					}
 				}()
 				log.Debug("selected task: ", tsk)
-				// This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
+				// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
 				taskAny, loaded := t.data.Load(tsk.Id)
 				if !loaded {
 					log.Warning("tried loading " + tsk.Id.String() + " but failed. unable to execute task.")
@@ -199,7 +203,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					log.Info("task in impossible stage when selected for execution. " + tsk.Id.String())
 					return
 				}
-				if !execute(tsk.Data) {
+				if !execute(tsk.Data.Task) {
 					log.Error("there was an error while executing task. not finishing")
 					return
 				}
@@ -218,7 +222,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 				}
 
 				e, err := t.event(task.Metadata.Next, event.Delete, tm[DT]{
-					Task: tsk.Data, // not sure if i want to use the one from the select or the base from scheduletask
+					Task: tsk.Data.Task, // not sure if I want to use the one from the select or the base from scheduletask
 					Metadata: TaskMetadata{
 						Id:       task.Metadata.Id,
 						Task:     task.Metadata.Task,

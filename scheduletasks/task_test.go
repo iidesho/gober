@@ -7,7 +7,6 @@ import (
 	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/tasks"
 	"github.com/gofrs/uuid"
 	"sync"
 	"testing"
@@ -44,12 +43,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		return
 	}
-	tas, err := tasks.Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, ctxGlobal)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	edt, err := Init[dd](s, tas, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println("Executed after time ", d); defer wg.Done(); return true }, ctxGlobal)
+	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println("Executed after time ", d); defer wg.Done(); return true }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -130,12 +124,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		return
 	}
 
-	tas, err := tasks.Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, ctxGlobal)
-	if err != nil {
-		b.Error(err)
-		return
-	}
-	edt, err := Init[dd](s, tas, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return
