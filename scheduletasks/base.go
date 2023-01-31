@@ -64,6 +64,8 @@ type TaskMetadata struct {
 type tm[DT any] struct {
 	Task     DT
 	Metadata TaskMetadata
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
@@ -111,8 +113,14 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 				}()
 				waitingFor := task.Metadata.After.Sub(time.Now())
 				log.Debug("Waiting for ", waitingFor.Minutes(), " minutes")
-				time.Sleep(waitingFor)
-				err := tsks.Add(task.Metadata.Task, task.Task)
+				if waitingFor > 0 {
+					select {
+					case <-task.ctx.Done():
+						return
+					case <-time.Tick(waitingFor):
+					}
+				}
+				err := tsks.Create(task.Metadata.Task, task.Task)
 				if err != nil {
 					log.AddError(err).Error("while creating scheduled task")
 					return
@@ -148,7 +156,11 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 	}()
 
 	t.esh = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
-		t.data.Store(e.Data.Metadata.Task, e.Data)
+		c, cf := context.WithCancel(t.ctx)
+		task := e.Data
+		task.ctx = c
+		task.cancel = cf
+		t.data.Store(e.Data.Metadata.Task, task)
 		if e.Type == event.Create {
 			createdTasksChan <- e.Data.Metadata.Task
 		}
@@ -161,7 +173,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 			tsk, err := tsks.Select()
 			if err != nil {
 				if errors.Is(err, tasks.NothingToSelectError) {
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(500 * time.Millisecond) //Could remove spin lock and use
 					continue
 				}
 				log.AddError(err).Crit("while selection task")
@@ -226,6 +238,7 @@ func Init[DT any](s stream.Stream, tsks tasks.Tasks[DT], dataTypeName, dataTypeV
 					return
 				}
 			}()
+			time.Sleep(50 * time.Millisecond) //Temporarily adding a short sleep here to decrease the likelihood of selecting more tasks than the server can handle and increase the likelihood that another server selects a task
 		}
 	}()
 
@@ -250,6 +263,7 @@ func (t *scheduledtasks[DT]) event(id uuid.UUID, eventType event.Type, data tm[D
 		BuildStore()
 }
 
+// To finish adding updatable tasks, should add task"name" and use that to store the task. Thus also checking if the that that is sent to delete is the one stored. Incase the next task comes before the delete for some reason.
 func (t *scheduledtasks[DT]) Create(a time.Time, i time.Duration, dt DT) (err error) {
 	id, err := uuid.NewV7()
 	if err != nil {
