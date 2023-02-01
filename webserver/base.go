@@ -8,13 +8,12 @@ import (
 	"github.com/cantara/gober/webserver/health"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
 	"os"
 	"strings"
-
-	_ "net/http/pprof"
 )
 
 var Name string
@@ -24,6 +23,30 @@ const (
 	CONTENT_TYPE_JSON = "application/json"
 	AUTHORIZATION     = "Authorization"
 )
+
+func init() {
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatalf("Error loading .env file: %s", err)
+	}
+	logDir := os.Getenv("log.dir")
+	if logDir != "" {
+		log.SetPrefix(Name)
+		cloaser := log.SetOutputFolder(logDir)
+		if cloaser == nil {
+			log.Fatal("Unable to sett logdir")
+		}
+		//defer cloaser()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
+		done := make(chan func())
+		log.StartRotate(done)
+		//defer close(done)  removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
+	}
+	if os.Getenv("debug.port") != "" {
+		go func() {
+			log.Println(http.ListenAndServe("localhost:"+os.Getenv("debug.port"), nil))
+		}()
+	}
+}
 
 type Server struct {
 	r    *gin.Engine
