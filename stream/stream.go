@@ -212,3 +212,7 @@ func NewStream[DT any](es Stream, eventTypes []event.Type, from store.StreamPosi
 func (es eventService) Name() string {
 	return es.streamName
 }
+
+func (es eventService) End() (pos uint64, err error) {
+	return es.store.EndPosition(es.streamName)
+}

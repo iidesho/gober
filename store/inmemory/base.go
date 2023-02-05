@@ -99,3 +99,16 @@ func (es *EventStore) Stream(streamName string, from store.StreamPosition, ctx c
 	}()
 	return
 }
+
+func (es *EventStore) EndPosition(streamName string) (pos uint64, err error) {
+	streamAny, ok := es.streams.Load(streamName)
+	if !ok {
+		return 0, nil
+	}
+	stream := streamAny.(Stream)
+	if stream.position == nil {
+		return 0, nil
+	}
+	pos = *stream.position
+	return
+}

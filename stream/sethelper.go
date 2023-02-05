@@ -6,7 +6,6 @@ import (
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream/event"
 	"github.com/gofrs/uuid"
-	"time"
 )
 
 type SetHelper interface {
@@ -25,7 +24,7 @@ type transaction[DT any] struct {
 	ctx                context.Context
 }
 
-func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, keyProvider CryptoKeyProvider, eventChannel <-chan event.Event[DT], ctx context.Context) (out SetHelper) {
+func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, keyProvider CryptoKeyProvider, eventChannel <-chan event.Event[DT], ctx context.Context) (out SetHelper, err error) {
 	t := transaction[DT]{
 		stream:             stream,
 		keyProvider:        keyProvider,
@@ -50,7 +49,13 @@ func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, k
 			}
 		}
 	}()
-	t.readStream(finishedTransactionChan)
+	newest, err := t.stream.End()
+	if err != nil {
+		return
+	}
+	if newest != 0 {
+		t.catchUpStream(finishedTransactionChan, newest)
+	}
 
 	go func() {
 		for {
@@ -63,7 +68,7 @@ func InitSetHelper[DT any](store, delete func(event.Event[DT]), stream Stream, k
 		}
 	}()
 
-	return &t
+	return &t, nil
 }
 
 type transactionCheck struct {
@@ -71,23 +76,20 @@ type transactionCheck struct {
 	completeChan chan struct{}
 }
 
-func (t *transaction[DT]) readStream(finishedTransactionChan chan<- uint64) {
+func (t *transaction[DT]) catchUpStream(finishedTransactionChan chan<- uint64, newest uint64) {
+	if newest == 0 {
+		return
+	}
 	upToDate := false
-	readOut := false
 	for !upToDate {
 		select {
 		case <-t.ctx.Done():
 			return
 		case e := <-t.eventChannel:
 			t.handleTransaction(e, finishedTransactionChan)
-			readOut = false
-		default:
-			time.Sleep(10 * time.Millisecond)
-			if !readOut {
-				readOut = true
-				continue
+			if e.Position >= newest {
+				upToDate = true
 			}
-			upToDate = true
 		}
 	}
 }
@@ -135,22 +137,6 @@ func (t *transaction[DT]) finishedPosition(position uint64) {
 		t.completeChans.Delete(id)
 		return true
 	})
-}
-
-func (t *transaction[DT]) verifyAllWrites(finishedTransactionChan <-chan uint64) {
-	upToDate := false
-	for !upToDate {
-		select {
-		case <-t.ctx.Done():
-			return
-		case completeChan := <-t.newTransactionChan:
-			t.completeTransaction(completeChan)
-		case position := <-finishedTransactionChan:
-			t.finishedPosition(position)
-		default:
-			upToDate = true
-		}
-	}
 }
 
 func (t *transaction[DT]) SetAndWait(e event.StoreEvent) (err error) {

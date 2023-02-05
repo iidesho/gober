@@ -2,6 +2,7 @@ package eventstore
 
 import (
 	"context"
+	"errors"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream/event"
 	"time"
@@ -16,7 +17,7 @@ type EventStore struct {
 	db *esdb.Client
 }
 
-func Init() (es EventStore, err error) {
+func Init() (es *EventStore, err error) {
 	settings, err := esdb.ParseConnectionString("esdb://localhost:2113?tls=false")
 	if err != nil {
 		return
@@ -25,13 +26,13 @@ func Init() (es EventStore, err error) {
 	if err != nil {
 		return
 	}
-	es = EventStore{
+	es = &EventStore{
 		db: db,
 	}
 	return
 }
 
-func (es EventStore) Store(streamName string, ctx context.Context, events ...store.Event) (position uint64, err error) {
+func (es *EventStore) Store(streamName string, ctx context.Context, events ...store.Event) (position uint64, err error) {
 	eventDatas := make([]esdb.EventData, len(events))
 	for i, e := range events {
 		eventDatas[i] = esdb.EventData{
@@ -50,7 +51,7 @@ func (es EventStore) Store(streamName string, ctx context.Context, events ...sto
 	return wr.NextExpectedVersion + 1, err //wr can be nil
 }
 
-func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
+func (es *EventStore) Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error) {
 	var esFrom esdb.StreamPosition
 
 	eventChan := make(chan store.Event, 10)
@@ -112,5 +113,29 @@ func (es EventStore) Stream(streamName string, from store.StreamPosition, ctx co
 			}
 		}
 	}()
+	return
+}
+
+func (es *EventStore) EndPosition(streamName string) (pos uint64, err error) {
+	//ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	//defer cancel()
+	rs, err := es.db.ReadStream(context.Background(), streamName, esdb.ReadStreamOptions{
+		Direction: esdb.Backwards,
+		From:      esdb.End{},
+	}, 1)
+	if err != nil {
+		if errors.Is(err, esdb.ErrStreamNotFound) {
+			return 0, nil
+		}
+		return
+	}
+	e, err := rs.Recv()
+	if err != nil {
+		if errors.Is(err, esdb.ErrStreamNotFound) {
+			return 0, nil
+		}
+		return
+	}
+	pos = e.Event.EventNumber
 	return
 }

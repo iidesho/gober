@@ -70,11 +70,14 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		ec:               eventChan,
 		selectLock:       sync.Mutex{},
 	}
-	t.esh = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
+	t.esh, err = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
 		t.data.Store(e.Data.Id.String(), e.Data)
 	}, func(e event.Event[TaskData[DT]]) {
 		t.data.Delete(e.Data.Id.String())
 	}, t.es, t.provider, t.ec, t.ctx)
+	if err != nil {
+		return
+	}
 
 	ed = &t
 	return

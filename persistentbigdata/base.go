@@ -167,7 +167,10 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 	if err != nil {
 		return
 	}
-	m.esh = stream.InitSetHelper(m.create, m.delete, m.es, p, eventChan, ctx)
+	m.esh, err = stream.InitSetHelper(m.create, m.delete, m.es, p, eventChan, ctx)
+	if err != nil {
+		return
+	}
 
 	ed = &m
 	return

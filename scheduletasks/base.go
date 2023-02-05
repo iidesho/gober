@@ -109,7 +109,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		}
 	}()
 
-	t.esh = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
+	t.esh, err = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
 		c, cf := context.WithCancel(t.ctx)
 		task := e.Data
 		task.ctx = c
@@ -121,6 +121,9 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	}, func(e event.Event[tm[DT]]) {
 		t.data.Delete(e.Data.Metadata.Task)
 	}, t.es, t.provider, t.ec, t.ctx)
+	if err != nil {
+		return
+	}
 	upToDate = true
 
 	itsTimeChan := make(chan tm[DT], 0)

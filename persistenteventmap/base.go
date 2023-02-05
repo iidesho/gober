@@ -82,7 +82,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	if err != nil {
 		return
 	}
-	m.esh = stream.InitSetHelper(func(e event.Event[DT]) {
+	m.esh, err = stream.InitSetHelper(func(e event.Event[DT]) {
 		data, err := json.Marshal(e.Data)
 		if err != nil {
 			return
@@ -115,6 +115,9 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			log.AddError(err).Warning("Delete error")
 		}
 	}, m.es, p, eventChan, ctx)
+	if err != nil {
+		return
+	}
 
 	ed = &m
 	return

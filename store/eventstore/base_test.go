@@ -11,7 +11,7 @@ import (
 	"github.com/gofrs/uuid"
 )
 
-var es EventStore
+var es *EventStore
 
 var STREAM_NAME = "TestStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 

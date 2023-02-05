@@ -52,11 +52,14 @@ func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamNam
 	if err != nil {
 		return
 	}
-	m.esh = stream.InitSetHelper(func(e event.Event[kv[DT]]) {
+	m.esh, err = stream.InitSetHelper(func(e event.Event[kv[DT]]) {
 		m.data.Store(e.Data.Key, e.Data.Value)
 	}, func(e event.Event[kv[DT]]) {
 		m.data.Delete(e.Data.Key)
 	}, m.es, p, eventChan, ctx)
+	if err != nil {
+		return
+	}
 
 	ed = &m
 	return

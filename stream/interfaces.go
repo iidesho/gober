@@ -8,13 +8,15 @@ import (
 )
 
 type Persistence interface {
-	Store(streamName string, ctx context.Context, events ...store.Event) (transactionId uint64, err error)
+	Store(streamName string, ctx context.Context, events ...store.Event) (position uint64, err error)
 	Stream(streamName string, from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error)
+	EndPosition(streamName string) (pos uint64, err error)
 }
 
 type Stream interface {
-	Store(event event.StoreEvent, cryptoKey CryptoKeyProvider) (transactionId uint64, err error)
+	Store(event event.StoreEvent, cryptoKey CryptoKeyProvider) (position uint64, err error)
 	Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error)
+	End() (pos uint64, err error)
 	Name() string
 }
 
