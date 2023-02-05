@@ -27,7 +27,7 @@ const (
 func init() {
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Fatalf("Error loading .env file: %s", err)
+		log.Warning("Error loading .env file: ", err)
 	}
 	logDir := os.Getenv("log.dir")
 	if logDir != "" {
