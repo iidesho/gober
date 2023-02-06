@@ -73,7 +73,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		es:               es,
 		ec:               eventChan,
 	}
-	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName), ctx)
+	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName+"_scheduled"), ctx)
 	//tsks, err := tasks.Init[tm[DT]](s, dataTypeName+"_scheduled", dataTypeVersion, p, ctx)
 	if err != nil {
 		return
@@ -97,7 +97,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 						Data: e.Data.Task,
 						Metadata: event.Metadata{
 							Version:  t.eventTypeVersion,
-							DataType: t.eventTypeName,
+							DataType: t.eventTypeName + "_scheduled",
 							Key:      crypto.SimpleHash(e.Data.Metadata.Task.String()),
 						},
 					})

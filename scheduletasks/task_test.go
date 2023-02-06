@@ -43,7 +43,12 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println("Executed after time ", d); defer wg.Done(); return true }, ctxGlobal)
+	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool {
+		log.Println("Executed after time ", d)
+		time.Sleep(10 * time.Second)
+		defer wg.Done()
+		return true
+	}, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
