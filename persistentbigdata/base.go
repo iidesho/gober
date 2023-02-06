@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/webserver"
 	"github.com/dgraph-io/badger"
 	"github.com/dgraph-io/badger/options"
@@ -44,10 +45,9 @@ type mapData[DT, MT any] struct {
 	instance          uuid.UUID
 	provider          stream.CryptoKeyProvider
 	discoveryProvider stream.CryptoKeyProvider
-	es                stream.Stream
+	es                consumer.Consumer[discoveryMetadata[MT]]
 	ctx               context.Context
 	getKey            func(d MT) string
-	esh               stream.SetHelper
 	discoveryPath     string
 	positionKey       []byte
 	server            *webserver.Server
@@ -96,13 +96,13 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 		instance:          instance,
 		provider:          p,
 		discoveryProvider: stream.StaticProvider("SkajsFNVOEV81k824LMxO1XCNi+mSpw+HtxKc/e+Xp4="),
-		es:                s,
 		getKey:            getKey,
 		discoveryPath:     fmt.Sprintf("/persistentbigdata/%s/:key", dataTypeName),
 		server:            serv,
 		positionKey:       []byte(fmt.Sprintf("%s_%s_position", s.Name(), dataTypeName)),
 		ctx:               ctx,
 	}
+
 	serv.Base.GET(m.discoveryPath, func(c *gin.Context) {
 		keyStr := c.Param("key")
 		if keyStr == "" {
@@ -163,20 +163,35 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	eventChan, err := stream.NewStream[discoveryMetadata[MT]](s, event.AllTypes(), from, stream.ReadDataType(dataTypeName), p, ctx)
+	es, eventChan, err := consumer.New[discoveryMetadata[MT]](s, m.provider, event.AllTypes(), from, stream.ReadDataType(dataTypeName), m.ctx)
 	if err != nil {
 		return
 	}
-	m.esh, err = stream.InitSetHelper(m.create, m.delete, m.es, p, eventChan, ctx)
-	if err != nil {
-		return
-	}
+	m.es = es
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case e := <-eventChan:
+				func() {
+					defer e.Acc()
+					if e.Type == event.Delete {
+						m.delete(e)
+						return
+					}
+					m.create(e)
+				}()
+			}
+		}
+	}()
 
 	ed = &m
 	return
 }
 
-func (m *mapData[DT, MT]) create(e event.Event[discoveryMetadata[MT]]) {
+func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 	dmd := e.Data
 	if dmd.Action == query {
 		if dmd.Instance == m.instance {
@@ -199,17 +214,17 @@ func (m *mapData[DT, MT]) create(e event.Event[discoveryMetadata[MT]]) {
 			Action:   response,
 		}
 
-		e, err := event.NewBuilder[discoveryMetadata[MT]]().
-			WithType(event.Update).
-			WithData(dmd).
-			WithMetadata(event.Metadata{
+		es := consumer.Event[discoveryMetadata[MT]]{
+			Type: event.Update,
+			Data: dmd,
+			Metadata: event.Metadata{
 				Version:  m.dataTypeVersion,
 				DataType: m.dataTypeName,
 				Key:      crypto.SimpleHash(dmd.Meta.NewId.String()),
 				Extra:    map[string]any{"instance": m.instance},
-			}).
-			BuildStore()
-		m.es.Store(e, m.provider)
+			},
+		}
+		_, err = m.es.Store(es)
 		if err != nil {
 			return
 		}
@@ -234,21 +249,21 @@ func (m *mapData[DT, MT]) create(e event.Event[discoveryMetadata[MT]]) {
 				Action:   query,
 			}
 
-			e, err := event.NewBuilder[discoveryMetadata[MT]]().
-				WithType(event.Update).
-				WithData(dmd).
-				WithMetadata(event.Metadata{
+			es := consumer.Event[discoveryMetadata[MT]]{
+				Type: event.Update,
+				Data: dmd,
+				Metadata: event.Metadata{
 					Version:  m.dataTypeVersion,
 					DataType: m.dataTypeName,
 					Key:      crypto.SimpleHash(dmd.Meta.NewId.String()),
 					Extra:    map[string]any{"instance": m.instance},
-				}).
-				BuildStore()
+				},
+			}
+			_, err = m.es.Store(es)
 			if err != nil {
-				log.AddError(err).Error("unable to create query event after get miss")
+				log.AddError(err).Error("unable to store query event after get miss")
 				return
 			}
-			m.es.Store(e, m.provider)
 			return
 		}
 		err = m.data.Update(func(txn *badger.Txn) error {
@@ -286,7 +301,7 @@ func (m *mapData[DT, MT]) create(e event.Event[discoveryMetadata[MT]]) {
 	}
 }
 
-func (m *mapData[DT, MT]) delete(e event.Event[discoveryMetadata[MT]]) {
+func (m *mapData[DT, MT]) delete(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 	err := m.data.Update(func(txn *badger.Txn) error {
 
 		err := txn.Delete([]byte(e.Data.Meta.OldId.Bytes()))
@@ -427,17 +442,19 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 	if err != nil {
 		return
 	}
-	e, err := event.NewBuilder[metadata[MT]]().
-		WithType(event.Delete).
-		WithData(md).
-		WithMetadata(event.Metadata{
+	e := consumer.Event[discoveryMetadata[MT]]{
+		Type: event.Delete,
+		Data: discoveryMetadata[MT]{
+			Meta: md,
+		},
+		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
 			Key:      crypto.SimpleHash(md.NewId.String()),
-		}).
-		BuildStore()
+		},
+	}
 
-	err = m.esh.SetAndWait(e)
+	_, err = m.es.Store(e)
 	return
 }
 
@@ -485,18 +502,15 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 		Action:   update,
 	}
 
-	e, err := event.NewBuilder[discoveryMetadata[MT]]().
-		WithType(eventType).
-		WithData(dmd).
-		WithMetadata(event.Metadata{
+	e := consumer.Event[discoveryMetadata[MT]]{
+		Type: eventType,
+		Data: dmd,
+		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
 			Key:      crypto.SimpleHash(md.NewId.String()),
 			Extra:    map[string]any{"instance": m.instance},
-		}).
-		BuildStore()
-	if err != nil {
-		return
+		},
 	}
 	d, err := json.Marshal(data)
 	if err != nil {
@@ -510,24 +524,10 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 	if err != nil {
 		return
 	}
-	err = m.esh.SetAndWait(e)
-	log.Println("Set and wait end")
+	_, err = m.es.Store(e)
 	if err != nil {
 		return
 	}
-	/*
-		se, err := event.NewBuilder[discoveryMetadata[MT]]().
-			WithType(eventType).
-			WithMetadata(event.Metadata{
-				Version:  m.dataTypeVersion,
-				DataType: m.dataTypeName + "_discovery",
-				Key:      crypto.SimpleHash(key),
-				Extra:    map[string]any{"instance": m.instance},
-			}).
-			WithData().
-			BuildStore()
-		_, err = m.es.Store(se, m.discoveryProvider)
-	*/
 	return
 }
 

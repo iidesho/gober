@@ -3,7 +3,7 @@ package eventmap
 import (
 	"context"
 	"fmt"
-	"github.com/cantara/gober/store/inmemory"
+	"github.com/cantara/gober/store/eventstore"
 	"testing"
 
 	"github.com/google/uuid"
@@ -26,7 +26,7 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	store, err := inmemory.Init()
+	store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return

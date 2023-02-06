@@ -5,6 +5,7 @@ import (
 	"fmt"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/stream/event"
 	"sync"
 
@@ -27,8 +28,7 @@ type mapData[DT any] struct {
 	eventTypeName    string
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
-	es               stream.Stream
-	esh              stream.SetHelper
+	es               consumer.Consumer[kv[DT]]
 }
 
 type kv[DT any] struct {
@@ -37,10 +37,11 @@ type kv[DT any] struct {
 }
 
 func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
-	es, err := stream.Init(pers, streamName, ctx)
+	s, err := stream.Init(pers, streamName, ctx)
 	if err != nil {
 		return
 	}
+	es, eventChan, err := consumer.New[kv[DT]](s, p, event.AllTypes(), store.STREAM_START, stream.ReadAll(), ctx)
 	m := mapData[DT]{
 		data:             sync.Map{},
 		eventTypeName:    eventType,
@@ -48,18 +49,26 @@ func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamNam
 		provider:         p,
 		es:               es,
 	}
-	eventChan, err := stream.NewStream[kv[DT]](es, event.AllTypes(), store.STREAM_START, stream.ReadAll(), m.provider, ctx)
 	if err != nil {
 		return
 	}
-	m.esh, err = stream.InitSetHelper(func(e event.Event[kv[DT]]) {
-		m.data.Store(e.Data.Key, e.Data.Value)
-	}, func(e event.Event[kv[DT]]) {
-		m.data.Delete(e.Data.Key)
-	}, m.es, p, eventChan, ctx)
-	if err != nil {
-		return
-	}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case e := <-eventChan:
+				func() {
+					defer e.Acc()
+					if e.Type == event.Delete {
+						m.data.Delete(e.Data.Key)
+						return
+					}
+					m.data.Store(e.Data.Key, e.Data.Value)
+				}()
+			}
+		}
+	}()
 
 	ed = &m
 	return
@@ -98,40 +107,41 @@ func (m *mapData[DT]) Exists(key string) (exists bool) {
 	return
 }
 
-func (m *mapData[DT]) createEvent(key string, data DT) (e event.StoreEvent, err error) {
+func (m *mapData[DT]) createEvent(key string, data DT) (e consumer.Event[kv[DT]], err error) {
 	eventType := event.Create
 	if m.Exists(key) {
 		eventType = event.Update
 	}
 
-	return event.NewBuilder[kv[DT]]().
-		WithType(eventType).
-		WithData(kv[DT]{
+	e = consumer.Event[kv[DT]]{
+		Type: eventType,
+		Data: kv[DT]{
 			Key:   key,
 			Value: data,
-		}).
-		WithMetadata(event.Metadata{
+		},
+		Metadata: event.Metadata{
 			Version:  m.eventTypeVersion,
 			DataType: m.eventTypeName,
 			Key:      crypto.SimpleHash(key),
-		}).
-		BuildStore()
+		},
+	}
+	return
 }
 
 func (m *mapData[DT]) Delete(key string) (err error) {
-	e, err := event.NewBuilder[kv[DT]]().
-		WithType(event.Delete).
-		WithData(kv[DT]{
+	e := consumer.Event[kv[DT]]{
+		Type: event.Delete,
+		Data: kv[DT]{
 			Key: key,
-		}).
-		WithMetadata(event.Metadata{
+		},
+		Metadata: event.Metadata{
 			Version:  m.eventTypeVersion,
 			DataType: m.eventTypeName,
 			Key:      crypto.SimpleHash(key),
-		}).
-		BuildStore()
+		},
+	}
 
-	err = m.esh.SetAndWait(e)
+	_, err = m.es.Store(e)
 	return
 }
 
@@ -141,7 +151,7 @@ func (m *mapData[DT]) Set(key string, data DT) (err error) {
 	if err != nil {
 		return
 	}
-	err = m.esh.SetAndWait(e)
+	_, err = m.es.Store(e)
 	log.Println("Set and wait end")
 	return
 }

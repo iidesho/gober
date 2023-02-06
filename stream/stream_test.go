@@ -1,10 +1,11 @@
 package stream
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/cantara/gober/store/eventstore"
-	"github.com/cantara/gober/store/inmemory"
 	"testing"
 
 	"github.com/gofrs/uuid"
@@ -18,7 +19,6 @@ import (
 var es Stream
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
-var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -31,12 +31,8 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) string {
-	return testCryptKey
-}
-
 func TestInit(t *testing.T) {
-	pers, err := inmemory.Init()
+	pers, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return
@@ -60,9 +56,14 @@ func TestStoreOrder(t *testing.T) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		e, err := event.NewBuilder[dd]().
+		bdata, err := json.Marshal(data)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		e, err := event.NewBuilder().
 			WithType(event.Create).
-			WithData(data).
+			WithData(bdata).
 			WithMetadata(event.Metadata{
 				Extra: map[string]any{"extra": meta.Extra},
 			}).
@@ -71,8 +72,7 @@ func TestStoreOrder(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, err = es.Store(e,
-			cryptKeyProvider)
+		_, err = es.Store(e)
 		if err != nil {
 			t.Error(err)
 			return
@@ -84,22 +84,28 @@ func TestStoreOrder(t *testing.T) {
 func TestStreamOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := NewStream[dd](es, []event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), cryptKeyProvider, ctx)
+	stream, err := es.Stream([]event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), ctx)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	for i := 1; i <= 5; i++ {
 		e := <-stream
+		var data dd
+		err = json.Unmarshal(e.Data, &data)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if e.Type != event.Create {
 			t.Error(fmt.Errorf("missmatch event types"))
 			return
 		}
-		if e.Data.Id != i {
+		if data.Id != i {
 			t.Error(fmt.Errorf("missmatch event data id"))
 			return
 		}
-		if e.Data.Name != "test" {
+		if data.Name != "test" {
 			t.Error(fmt.Errorf("missmatch event data name"))
 			return
 		}
@@ -125,10 +131,15 @@ func TestStoreDuplicate(t *testing.T) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		e, err := event.NewBuilder[dd]().
+		bdata, err := json.Marshal(data)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		e, err := event.NewBuilder().
 			WithId(id).
 			WithType(event.Create).
-			WithData(data).
+			WithData(bdata).
 			WithMetadata(event.Metadata{
 				Extra: map[string]any{"extra": meta.Extra},
 			}).
@@ -137,8 +148,7 @@ func TestStoreDuplicate(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, err = es.Store(e,
-			cryptKeyProvider)
+		_, err = es.Store(e)
 		if err != nil {
 			t.Error(err)
 			return
@@ -150,22 +160,28 @@ func TestStoreDuplicate(t *testing.T) {
 func TestStreamDuplicate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := NewStream[dd](es, []event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), cryptKeyProvider, ctx)
+	stream, err := es.Stream([]event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), ctx)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	for i := 1; i <= 5; i++ {
 		e := <-stream
+		var data dd
+		err = json.Unmarshal(e.Data, &data)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if e.Type != event.Create {
 			t.Error(fmt.Errorf("missmatch event types"))
 			return
 		}
-		if e.Data.Id != i {
+		if data.Id != i {
 			t.Error(fmt.Errorf("missmatch event data id"))
 			return
 		}
-		if e.Data.Name != "test" {
+		if data.Name != "test" {
 			t.Error(fmt.Errorf("missmatch event data name"))
 			return
 		}
@@ -199,12 +215,12 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	stream, err := NewStream[dd](est, []event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), cryptKeyProvider, ctx)
+	stream, err := est.Stream([]event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	events := make([]event.StoreEvent, b.N)
+	events := make([]event.Event, b.N)
 	for i := 0; i < b.N; i++ {
 		data := dd{
 			Id:   i,
@@ -213,9 +229,14 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		events[i], err = event.NewBuilder[dd]().
+		bdata, err := json.Marshal(data)
+		if err != nil {
+			b.Error(err)
+			return
+		}
+		events[i], err = event.NewBuilder().
 			WithType(event.Create).
-			WithData(data).
+			WithData(bdata).
 			WithMetadata(event.Metadata{
 				Extra: map[string]any{"extra": meta.Extra},
 			}).
@@ -229,8 +250,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		if i == 0 {
 			fmt.Println(events[i].Data)
 		}
-		_, err = est.Store(events[i],
-			cryptKeyProvider)
+		_, err = est.Store(events[i])
 		if err != nil {
 			b.Error(err)
 			return
@@ -246,7 +266,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			b.Error(fmt.Errorf("missing event id"))
 			return
 		}
-		if e.Data != events[i].Data {
+		if !bytes.Equal(e.Data, events[i].Data) {
 			b.Error(fmt.Errorf("missmatch event data, %v != %v", e.Data, events[i].Data))
 			return
 		}

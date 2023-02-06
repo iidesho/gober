@@ -3,7 +3,7 @@ package persistenteventmap
 import (
 	"context"
 	"fmt"
-	"github.com/cantara/gober/store/inmemory"
+	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/stream"
 	"os"
 	"testing"
@@ -30,7 +30,7 @@ func TestPre(t *testing.T) {
 }
 
 func TestInit(t *testing.T) {
-	store, err := inmemory.Init()
+	store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return

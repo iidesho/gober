@@ -2,10 +2,9 @@ package tasks
 
 import (
 	"context"
-	"errors"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/tasks"
-	"sync"
+	"github.com/cantara/gober/stream/consumer"
+	"github.com/cantara/gober/stream/consumer/competing"
 	"time"
 
 	"github.com/cantara/gober/crypto"
@@ -25,17 +24,13 @@ type transactionCheck struct {
 }
 
 type scheduledtasks[DT any] struct {
-	name             string
-	data             sync.Map
-	transactionChan  chan transactionCheck
 	eventTypeName    string
 	eventTypeVersion string
 	timeout          time.Duration
 	provider         stream.CryptoKeyProvider
 	ctx              context.Context
-	es               stream.Stream
-	ec               <-chan event.Event[tm[DT]]
-	esh              stream.SetHelper
+	es               consumer.Consumer[tm[DT]]
+	ec               <-chan consumer.ReadEvent[tm[DT]]
 }
 
 type selectionStatus string
@@ -67,97 +62,59 @@ type tm[DT any] struct {
 }
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
-	name, err := uuid.NewV7()
-	if err != nil {
-		return
-	}
-	eventChan, err := stream.NewStream[tm[DT]](s, event.AllTypes(), store.STREAM_START,
-		stream.ReadDataType(dataTypeName), p, ctx)
+	es, eventChan, err := competing.New[tm[DT]](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName), ctx)
 	if err != nil {
 		return
 	}
 	t := scheduledtasks[DT]{
-		name:             name.String(),
-		data:             sync.Map{},
-		transactionChan:  make(chan transactionCheck),
 		eventTypeName:    dataTypeName,
 		eventTypeVersion: dataTypeVersion,
-		provider:         p,
 		ctx:              ctx,
-		es:               s,
+		es:               es,
 		ec:               eventChan,
 	}
-	tsks, err := tasks.Init[tm[DT]](s, dataTypeName+"_scheduled", dataTypeVersion, p, ctx)
+	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName), ctx)
+	//tsks, err := tasks.Init[tm[DT]](s, dataTypeName+"_scheduled", dataTypeVersion, p, ctx)
 	if err != nil {
 		return
 	}
 
-	upToDate := false
-	createdTasksChan := make(chan uuid.UUID, 10)
-	go func() { //Handling catchup's
-		var ids []uuid.UUID
-		for !upToDate {
-			select {
-			case id := <-createdTasksChan:
-				ids = append(ids, id)
-			default:
-				time.Sleep(5 * time.Millisecond)
-			}
-		}
-		for _, id := range ids {
-			createdTasksChan <- id
-		}
-	}()
-
-	t.esh, err = stream.InitSetHelper(func(e event.Event[tm[DT]]) {
-		c, cf := context.WithCancel(t.ctx)
-		task := e.Data
-		task.ctx = c
-		task.cancel = cf
-		t.data.Store(e.Data.Metadata.Task, task)
-		if e.Type == event.Create {
-			createdTasksChan <- e.Data.Metadata.Task
-		}
-	}, func(e event.Event[tm[DT]]) {
-		t.data.Delete(e.Data.Metadata.Task)
-	}, t.es, t.provider, t.ec, t.ctx)
-	if err != nil {
-		return
-	}
-	upToDate = true
-
-	itsTimeChan := make(chan tm[DT], 0)
 	go func() {
-		for id := range createdTasksChan {
-			taskAny, loaded := t.data.Load(id)
-			if !loaded {
-				log.Warning("tried loading " + id.String() + " but failed. unable to operate on the new task.")
-				continue
-			}
-			task := taskAny.(tm[DT])
-			if task.Metadata.Status != Created {
-				log.Info("task already in or passed the selection stage. " + id.String())
-				continue
-			}
-			//This can create very many go routines, but it is a very simple solution.
-			go func() {
-				defer func() {
-					err := recover()
-					if err != nil {
-						log.AddError(err.(error)).Error("panic recovered while creating scheduled task")
-					}
-				}()
-				waitingFor := task.Metadata.After.Sub(time.Now())
-				log.Debug("Waiting for ", waitingFor.Minutes(), " minutes")
-				if waitingFor > 0 {
+		for {
+			select {
+			case <-t.ctx.Done():
+				return
+			case e := <-eventChan:
+				go func() {
 					select {
-					case <-task.ctx.Done():
+					case <-t.ctx.Done():
 						return
-					case <-time.Tick(waitingFor):
+					case <-e.CTX.Done():
+						return
+					case <-time.After(e.Data.Metadata.After.Sub(time.Now())):
 					}
-				}
-				itsTimeChan <- task
-			}()
+					_, err := esTasks.Store(consumer.Event[DT]{
+						Data: e.Data.Task,
+						Metadata: event.Metadata{
+							Version:  t.eventTypeVersion,
+							DataType: t.eventTypeName,
+							Key:      crypto.SimpleHash(e.Data.Metadata.Task.String()),
+						},
+					})
+					if err != nil {
+						log.AddError(err).Error("while creating scheduled task")
+						return
+					}
+					if e.Data.Metadata.Interval != NoInterval {
+						err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
+						if err != nil {
+							log.AddError(err).Crit("while creating event for finished action in scheduled task")
+							return
+						}
+					}
+					e.Acc()
+				}()
+			}
 		}
 	}()
 
@@ -166,113 +123,25 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			select {
 			case <-t.ctx.Done():
 				return
-			case task := <-itsTimeChan:
-				err := tsks.Create(task.Metadata.Task, task)
-				if err != nil {
-					log.AddError(err).Error("while creating scheduled task")
-					return
-				}
-				nextid, err := uuid.NewV7()
-				if err != nil {
-					log.AddError(err).Crit("while creating uuid for next action in scheduled task")
-					return
-				}
-				e, err := t.event(task.Metadata.Next, event.Update, tm[DT]{
-					Task: task.Task,
-					Metadata: TaskMetadata{
-						Id:       task.Metadata.Id,
-						Task:     task.Metadata.Task,
-						Next:     nextid,
-						NextTask: task.Metadata.NextTask,
-						Status:   Selected,
-						After:    task.Metadata.After,
-						Interval: task.Metadata.Interval,
-					},
-				})
-				if err != nil {
-					log.AddError(err).Error("while creating event for next action in scheduled task")
-					return
-				}
-				err = t.esh.SetAndWait(e)
-				if err != nil {
-					log.AddError(err).Error("while storing event for next action in scheduled task")
-					return
-				}
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			tsk, err := tsks.Select()
-			if err != nil {
-				if errors.Is(err, tasks.NothingToSelectError) {
-					time.Sleep(500 * time.Millisecond) //Could remove spin lock and use
-					continue
-				}
-				log.AddError(err).Crit("while selection task")
-				continue
-			}
-			go func() {
-				defer func() {
-					err := recover()
-					if err != nil {
-						log.AddError(err.(error)).Crit("panic while executing")
+			case e := <-taskEventChan:
+				go func() {
+					defer func() {
+						err := recover()
+						if err != nil {
+							log.AddError(err.(error)).Crit("panic while executing")
+							return
+						}
+					}()
+					log.Debug("selected task: ", e)
+					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
+					if !execute(e.Data) {
+						log.Error("there was an error while executing task. not finishing")
 						return
 					}
+					log.Debug("executed task:", e)
+					e.Acc()
 				}()
-				log.Debug("selected task: ", tsk)
-				// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
-				taskAny, loaded := t.data.Load(tsk.Id)
-				if !loaded {
-					log.Warning("tried loading " + tsk.Id.String() + " but failed. unable to execute task.")
-					return
-				}
-				task := taskAny.(tm[DT])
-				if task.Metadata.Status != Selected {
-					log.Info("task in impossible stage when selected for execution. " + tsk.Id.String())
-					return
-				}
-				if !execute(tsk.Data.Task) {
-					log.Error("there was an error while executing task. not finishing")
-					return
-				}
-				log.Debug("executed task:", task)
-				terr := tsks.Finish(task.Metadata.Task)
-				if terr != nil {
-					log.AddError(terr).Crit("while finishing task")
-				}
-
-				if task.Metadata.Interval != NoInterval {
-					err = t.create(task.Metadata.NextTask, task.Metadata.After.Add(task.Metadata.Interval), task.Metadata.Interval, task.Task)
-					if err != nil {
-						log.AddError(err).Crit("while creating event for finished action in scheduled task")
-						return
-					}
-				}
-
-				e, err := t.event(task.Metadata.Next, event.Delete, tm[DT]{
-					Task: tsk.Data.Task, // not sure if I want to use the one from the select or the base from scheduletask
-					Metadata: TaskMetadata{
-						Id:       task.Metadata.Id,
-						Task:     task.Metadata.Task,
-						NextTask: task.Metadata.NextTask,
-						Status:   Finished,
-						After:    task.Metadata.After,
-						Interval: task.Metadata.Interval,
-					},
-				})
-				if err != nil {
-					log.AddError(err).Error("while creating event for finished action in scheduled task")
-					return
-				}
-				err = t.esh.SetAndWait(e)
-				if err != nil {
-					log.AddError(err).Error("while storing event for finished action in scheduled task")
-					return
-				}
-			}()
-			time.Sleep(50 * time.Millisecond) //Temporarily adding a short sleep here to decrease the likelihood of selecting more tasks than the server can handle and increase the likelihood that another server selects a task
+			}
 		}
 	}()
 
@@ -280,21 +149,21 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	return
 }
 
-func (t *scheduledtasks[DT]) event(id uuid.UUID, eventType event.Type, data tm[DT]) (e event.StoreEvent, err error) {
+func (t *scheduledtasks[DT]) event(id uuid.UUID, eventType event.Type, data tm[DT]) (e consumer.Event[tm[DT]], err error) {
 	data.Metadata.Next = uuid.Must(uuid.NewV7())
-	return event.NewBuilder[tm[DT]]().
-		WithId(id).
-		WithType(eventType).
-		WithData(data).
-		WithMetadata(event.Metadata{
+	e = consumer.Event[tm[DT]]{
+		Type: eventType,
+		Data: data,
+		Metadata: event.Metadata{
 			Version:  t.eventTypeVersion,
 			DataType: t.eventTypeName,
 			Key:      crypto.SimpleHash(id.String()),
 			Extra: map[string]any{
 				"select_status": data.Metadata.Status,
 			},
-		}).
-		BuildStore()
+		},
+	}
+	return
 }
 
 // To finish adding updatable tasks, should add task"name" and use that to store the task. Thus also checking if the that that is sent to delete is the one stored. Incase the next task comes before the delete for some reason.
@@ -334,6 +203,6 @@ func (t *scheduledtasks[DT]) create(id uuid.UUID, a time.Time, i time.Duration, 
 	if err != nil {
 		return
 	}
-	err = t.esh.SetAndWait(e)
+	_, err = t.es.Store(e)
 	return
 }

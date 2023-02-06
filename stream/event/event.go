@@ -7,18 +7,15 @@ import (
 	"github.com/gofrs/uuid"
 )
 
-type StoreEvent struct {
+type Event struct {
 	Id       uuid.UUID `json:"id"`
 	Type     Type      `json:"type"`
-	Data     any       `json:"data"`
+	Data     []byte    `json:"data"`
 	Metadata Metadata  `json:"metadata"`
 }
 
-type Event[DT any] struct {
-	Id       uuid.UUID `json:"id"`
-	Type     Type      `json:"type"`
-	Data     DT        `json:"data"`
-	Metadata Metadata  `json:"metadata"`
+type ReadEvent struct {
+	Event
 
 	//Transaction uint64    `json:"transaction"`
 	Position uint64    `json:"position"`
@@ -60,68 +57,76 @@ type Metadata struct {
 	Created   time.Time      `json:"created"`
 }
 
-type builder[DT any] struct {
+type builder struct {
 	Id       uuid.UUID
 	Type     Type
-	Data     DT
+	Data     []byte
 	Metadata Metadata
 }
 
-type Builder[DT any] interface {
-	WithId(id uuid.UUID) builder[DT]
-	WithType(t Type) builder[DT]
-	WithData(data DT) builder[DT]
-	WithMetadata(data Metadata) builder[DT]
-	Build() (ev Event[DT], err error)
-	BuildStore() (ev StoreEvent, err error)
+type Builder interface {
+	WithId(id uuid.UUID) builder
+	WithType(t Type) builder
+	WithData(data []byte) builder
+	WithMetadata(data Metadata) builder
+	BuildRead() (ev ReadEvent, err error)
+	BuildStore() (ev Event, err error)
 }
 
-func NewBuilder[DT any]() Builder[DT] {
-	return builder[DT]{}
+func NewBuilder() Builder {
+	return builder{}
 }
 
-func (e builder[DT]) WithId(id uuid.UUID) builder[DT] { //This was a function that validated strings as uuids.
+func (e builder) WithId(id uuid.UUID) builder { //This was a function that validated strings as uuids.
 	e.Id = id
 	return e
 }
 
-func (e builder[DT]) WithType(t Type) builder[DT] {
+func (e builder) WithType(t Type) builder {
 	e.Type = t
 	return e
 }
 
-func (e builder[DT]) WithData(data DT) builder[DT] {
+func (e builder) WithData(data []byte) builder {
 	e.Data = data
 	return e
 }
 
-func (e builder[DT]) WithMetadata(data Metadata) builder[DT] {
+func (e builder) WithMetadata(data Metadata) builder {
 	e.Metadata = data
 	return e
 }
 
-func (e builder[DT]) Build() (ev Event[DT], err error) {
+func (e builder) BuildRead() (ev ReadEvent, err error) {
 	if e.Type == "" {
 		err = InvalidTypeError
 		return
 	}
 	e.Metadata.EventType = e.Type
-	ev = Event[DT]{
-		Id:       e.Id,
-		Type:     e.Type,
-		Data:     e.Data,
-		Metadata: e.Metadata,
+	ev = ReadEvent{
+		Event: Event{
+			Id:       e.Id,
+			Type:     e.Type,
+			Data:     e.Data,
+			Metadata: e.Metadata,
+		},
 	}
 	return
 }
 
-func (e builder[DT]) BuildStore() (ev StoreEvent, err error) {
+func (e builder) BuildStore() (ev Event, err error) {
 	if e.Type == "" {
 		err = InvalidTypeError
 		return
 	}
+	if e.Id.IsNil() {
+		e.Id, err = uuid.NewV7()
+		if err != nil {
+			return
+		}
+	}
 	e.Metadata.EventType = e.Type
-	ev = StoreEvent{
+	ev = Event{
 		Id:       e.Id,
 		Type:     e.Type,
 		Data:     e.Data,

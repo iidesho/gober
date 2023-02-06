@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/cantara/gober/stream/consumer"
 	"github.com/dgraph-io/badger/options"
 
 	"github.com/dgraph-io/badger"
@@ -36,10 +37,9 @@ type mapData[DT any] struct {
 	dataTypeName    string
 	dataTypeVersion string
 	provider        stream.CryptoKeyProvider
-	es              stream.Stream
+	es              consumer.Consumer[DT]
 	ctx             context.Context
 	getKey          func(dt DT) string
-	esh             stream.SetHelper
 }
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
@@ -49,15 +49,6 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		WithValueLogLoadingMode(options.FileIO))
 	if err != nil {
 		return
-	}
-	m := mapData[DT]{
-		data:            db,
-		transactionChan: make(chan transactionCheck),
-		dataTypeName:    dataTypeName,
-		dataTypeVersion: dataTypeVersion,
-		provider:        p,
-		es:              s,
-		getKey:          getKey,
 	}
 	from := store.STREAM_START
 	positionKey := []byte(fmt.Sprintf("%s_%s_position", s.Name(), dataTypeName))
@@ -77,47 +68,64 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	eventTypes := event.AllTypes()
-	eventChan, err := stream.NewStream[DT](s, eventTypes, from, stream.ReadDataType(dataTypeName), p, ctx)
+	es, eventChan, err := consumer.New[DT](s, p, event.AllTypes(), from, stream.ReadDataType(dataTypeName), ctx)
 	if err != nil {
 		return
 	}
-	m.esh, err = stream.InitSetHelper(func(e event.Event[DT]) {
-		data, err := json.Marshal(e.Data)
-		if err != nil {
-			return
-		}
-		err = db.Update(func(txn *badger.Txn) error {
-			err = txn.Set([]byte(getKey(e.Data)), data)
-			if err != nil {
-				return err
-			}
-
-			pos := make([]byte, 8)
-			binary.LittleEndian.PutUint64(pos, e.Position)
-			return txn.Set(positionKey, pos)
-		})
-		if err != nil {
-			log.AddError(err).Warning("Update error")
-		}
-	}, func(e event.Event[DT]) {
-		err := db.Update(func(txn *badger.Txn) error {
-			err = txn.Delete([]byte(getKey(e.Data)))
-			if err != nil {
-				return err
-			}
-
-			pos := make([]byte, 8)
-			binary.LittleEndian.PutUint64(pos, e.Position)
-			return txn.Set(positionKey, pos)
-		})
-		if err != nil {
-			log.AddError(err).Warning("Delete error")
-		}
-	}, m.es, p, eventChan, ctx)
-	if err != nil {
-		return
+	m := mapData[DT]{
+		data:            db,
+		transactionChan: make(chan transactionCheck),
+		dataTypeName:    dataTypeName,
+		dataTypeVersion: dataTypeVersion,
+		provider:        p,
+		es:              es,
+		getKey:          getKey,
 	}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case e := <-eventChan:
+				if e.Type == event.Delete {
+					err := db.Update(func(txn *badger.Txn) error {
+						err = txn.Delete([]byte(getKey(e.Data)))
+						if err != nil {
+							return err
+						}
+
+						pos := make([]byte, 8)
+						binary.LittleEndian.PutUint64(pos, e.Position)
+						return txn.Set(positionKey, pos)
+					})
+					if err != nil {
+						log.AddError(err).Error("Delete error")
+						continue
+					}
+					e.Acc()
+				}
+				data, err := json.Marshal(e.Data)
+				if err != nil {
+					return
+				}
+				err = db.Update(func(txn *badger.Txn) error {
+					err = txn.Set([]byte(getKey(e.Data)), data)
+					if err != nil {
+						return err
+					}
+
+					pos := make([]byte, 8)
+					binary.LittleEndian.PutUint64(pos, e.Position)
+					return txn.Set(positionKey, pos)
+				})
+				if err != nil {
+					log.AddError(err).Error("Update error")
+					continue
+				}
+				e.Acc()
+			}
+		}
+	}()
 
 	ed = &m
 	return
@@ -201,36 +209,37 @@ func (m *mapData[DT]) Exists(key string) (exists bool) {
 	return
 }
 
-func (m mapData[DT]) createEvent(data DT) (e event.StoreEvent, err error) {
+func (m mapData[DT]) createEvent(data DT) (e consumer.Event[DT], err error) {
 	key := m.getKey(data)
 	eventType := event.Create
 	if m.Exists(key) {
 		eventType = event.Update
 	}
 
-	return event.NewBuilder[DT]().
-		WithType(eventType).
-		WithData(data).
-		WithMetadata(event.Metadata{
+	e = consumer.Event[DT]{
+		Type: eventType,
+		Data: data,
+		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
 			Key:      crypto.SimpleHash(key),
-		}).
-		BuildStore()
+		},
+	}
+	return
 }
 
 func (m *mapData[DT]) Delete(data DT) (err error) {
-	e, err := event.NewBuilder[DT]().
-		WithType(event.Delete).
-		WithData(data).
-		WithMetadata(event.Metadata{
+	e := consumer.Event[DT]{
+		Type: event.Delete,
+		Data: data,
+		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
 			Key:      crypto.SimpleHash(m.getKey(data)),
-		}).
-		BuildStore()
+		},
+	}
 
-	err = m.esh.SetAndWait(e)
+	_, err = m.es.Store(e)
 	return
 }
 
@@ -240,7 +249,7 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 	if err != nil {
 		return
 	}
-	err = m.esh.SetAndWait(e)
+	_, err = m.es.Store(e)
 	log.Println("Set and wait end")
 	return
 }

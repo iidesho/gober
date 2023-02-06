@@ -3,13 +3,15 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"github.com/cantara/gober/crypto"
+	"github.com/cantara/gober/stream/consumer"
+	"github.com/cantara/gober/stream/consumer/competing"
+	"github.com/cantara/gober/stream/event"
 	"sync"
 	"time"
 
-	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/store"
 	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
 	"github.com/gofrs/uuid"
 )
 
@@ -21,15 +23,14 @@ type Tasks[DT any] interface {
 
 type tasks[DT any] struct {
 	name             string
-	data             Map[TaskData[DT]]
+	data             Map[consumer.ReadEvent[TaskData[DT]]]
 	eventTypeName    string
 	eventTypeVersion string
 	timeout          time.Duration
 	provider         stream.CryptoKeyProvider
 	ctx              context.Context
-	es               stream.Stream
-	ec               <-chan event.Event[TaskData[DT]]
-	esh              stream.SetHelper
+	es               consumer.Consumer[TaskData[DT]]
+	ec               <-chan consumer.ReadEvent[TaskData[DT]]
 	selectLock       sync.Mutex
 }
 
@@ -51,32 +52,18 @@ type TaskData[DT any] struct {
 }
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed Tasks[DT], err error) {
-	name, err := uuid.NewV7()
-	if err != nil {
-		return
-	}
-	eventChan, err := stream.NewStream[TaskData[DT]](s, event.AllTypes(), store.STREAM_START, stream.ReadDataType(dataTypeName), p, ctx) //Should not be start stream!
+	es, eventChan, err := competing.New[TaskData[DT]](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName), ctx) //Should not be start stream!
 	if err != nil {
 		return
 	}
 	t := tasks[DT]{
-		name:             name.String(),
-		data:             New[TaskData[DT]](),
+		data:             New[consumer.ReadEvent[TaskData[DT]]](),
 		eventTypeName:    dataTypeName,
 		eventTypeVersion: dataTypeVersion,
-		provider:         p,
 		ctx:              ctx,
-		es:               s,
+		es:               es,
 		ec:               eventChan,
 		selectLock:       sync.Mutex{},
-	}
-	t.esh, err = stream.InitSetHelper(func(e event.Event[TaskData[DT]]) {
-		t.data.Store(e.Data.Id.String(), e.Data)
-	}, func(e event.Event[TaskData[DT]]) {
-		t.data.Delete(e.Data.Id.String())
-	}, t.es, t.provider, t.ec, t.ctx)
-	if err != nil {
-		return
 	}
 
 	ed = &t
@@ -84,49 +71,59 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 }
 
 func (t *tasks[DT]) Select() (outDT TaskData[DT], err error) {
-	t.selectLock.Lock()
-	defer t.selectLock.Unlock()
-	now := time.Now()
-	t.data.Range(func(k string, task TaskData[DT]) bool {
-		if task.Status == Finished {
-			return true
-		}
-		if task.Status == Selected && task.TimeOut.After(now) {
-			return true
-		}
-
-		task.Status = Selected
-		task.TimeOut = time.Now().Add(5 * time.Minute)
-		task.Selector = t.name
-		var e event.StoreEvent
-		e, err = t.event(task.Next, event.Update, task)
-		if err != nil {
-			return false
-		}
-		err = t.esh.SetAndWait(e)
-		if err != nil {
-			return false
-		}
-		taskAny, ok := t.data.Load(task.Id.String())
-		if !ok {
-			err = fmt.Errorf("unselectable as it does not exist, %s", k)
-			return false
-		}
-		outTask := taskAny
-		if outTask.Selector != t.name {
-			return true
-		}
-		outDT = outTask
-		return false
-	})
-	if outDT.Id.IsNil() {
+	select {
+	case e := <-t.ec:
+		t.data.Store(e.Data.Id.String(), e)
+		outDT = e.Data
+	case <-time.Tick(time.Second):
 		err = NothingToSelectError
-		return
 	}
+	/*
+		t.selectLock.Lock()
+		defer t.selectLock.Unlock()
+		now := time.Now()
+		t.data.Range(func(k string, task TaskData[DT]) bool {
+			if task.Status == Finished {
+				return true
+			}
+			if task.Status == Selected && task.TimeOut.After(now) {
+				return true
+			}
+
+			task.Status = Selected
+			task.TimeOut = time.Now().Add(5 * time.Minute)
+			task.Selector = t.name
+			var e event.StoreEvent
+			e, err = t.event(task.Next, event.Update, task)
+			if err != nil {
+				return false
+			}
+			err = t.esh.SetAndWait(e)
+			if err != nil {
+				return false
+			}
+			taskAny, ok := t.data.Load(task.Id.String())
+			if !ok {
+				err = fmt.Errorf("unselectable as it does not exist, %s", k)
+				return false
+			}
+			outTask := taskAny
+			if outTask.Selector != t.name {
+				return true
+			}
+			outDT = outTask
+			return false
+		})
+		if outDT.Id.IsNil() {
+			err = NothingToSelectError
+			return
+		}
+	*/
 	return
 }
 
-func (t *tasks[DT]) event(id uuid.UUID, eventType event.Type, data TaskData[DT]) (e event.StoreEvent, err error) {
+/*
+func (t *tasks[DT]) event(id uuid.UUID, eventType event.Type, data TaskData[DT]) (e st, err error) {
 	data.Next = uuid.Must(uuid.NewV7())
 	return event.NewBuilder[TaskData[DT]]().
 		WithId(id).
@@ -139,6 +136,7 @@ func (t *tasks[DT]) event(id uuid.UUID, eventType event.Type, data TaskData[DT])
 		}).
 		BuildStore()
 }
+*/
 
 func (t *tasks[DT]) Finish(id uuid.UUID) (err error) {
 	taskAny, ok := t.data.Load(id.String())
@@ -146,26 +144,29 @@ func (t *tasks[DT]) Finish(id uuid.UUID) (err error) {
 		err = fmt.Errorf("unfinishable as it does not exist, %s", id)
 		return
 	}
-	task := taskAny //.(TaskData[DT])
-	if task.Status != Selected {
-		err = fmt.Errorf("unfinishable as it is not selected, %s: %v", id, task)
-		return
-	}
-	if task.Selector != t.name {
-		err = fmt.Errorf("unfinishable as someone else is the selector, %s: %v", id, task)
-		return
-	}
-	if task.TimeOut.Before(time.Now()) {
-		err = fmt.Errorf("unfinishable as it has timed out, %s: %v", id, task)
-		return
-	}
-	task.Status = Finished
+	taskAny.Acc()
+	/*
+		task := taskAny //.(TaskData[DT])
+		if task.Status != Selected {
+			err = fmt.Errorf("unfinishable as it is not selected, %s: %v", id, task)
+			return
+		}
+		if task.Selector != t.name {
+			err = fmt.Errorf("unfinishable as someone else is the selector, %s: %v", id, task)
+			return
+		}
+		if task.TimeOut.Before(time.Now()) {
+			err = fmt.Errorf("unfinishable as it has timed out, %s: %v", id, task)
+			return
+		}
+		task.Status = Finished
 
-	e, err := t.event(task.Next, event.Delete, task)
-	if err != nil {
-		return
-	}
-	err = t.esh.SetAndWait(e)
+		e, err := t.event(task.Next, event.Delete, task)
+		if err != nil {
+			return
+		}
+		err = t.esh.SetAndWait(e)
+	*/
 	return
 }
 
@@ -180,17 +181,33 @@ func (t *tasks[DT]) Create(dt DT) (err error) {
 */
 
 func (t *tasks[DT]) Create(id uuid.UUID, dt DT) (err error) {
-	e, err := t.event(id, event.Create, TaskData[DT]{
-		Id:       id,
-		Data:     dt,
-		Status:   Created,
-		Selector: "",
-	})
-	if err != nil {
-		return
-	}
+	/*
+		e, err := t.event(id, event.Create, TaskData[DT]{
+			Id:       id,
+			Data:     dt,
+			Status:   Created,
+			Selector: "",
+		})
+		if err != nil {
+			return
+		}
+	*/
 	//e.Metadata.Event = mt
-	err = t.esh.SetAndWait(e)
+	e := consumer.Event[TaskData[DT]]{
+		Type: event.Create,
+		Data: TaskData[DT]{
+			Id:       id,
+			Data:     dt,
+			Status:   Created,
+			Selector: "",
+		},
+		Metadata: event.Metadata{
+			DataType: t.eventTypeName,
+			Version:  t.eventTypeVersion,
+			Key:      crypto.SimpleHash(id.String()),
+		},
+	}
+	_, err = t.es.Store(e)
 	return
 }
 

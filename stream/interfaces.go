@@ -14,8 +14,8 @@ type Persistence interface {
 }
 
 type Stream interface {
-	Store(event event.StoreEvent, cryptoKey CryptoKeyProvider) (position uint64, err error)
-	Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.Event, err error)
+	Store(event event.Event) (position uint64, err error)
+	Stream(eventTypes []event.Type, from store.StreamPosition, filter Filter, ctx context.Context) (out <-chan event.ReadEvent, err error)
 	End() (pos uint64, err error)
 	Name() string
 }
