@@ -13,14 +13,16 @@ import (
 )
 
 type competing[T any] struct {
-	stream       stream.Stream
-	cryptoKey    stream.CryptoKeyProvider
-	accChan      chan uuid.UUID
-	timeoutChan  chan timeout
-	timedOutChan chan consumer.Event[handleType[T]]
-	competers    consumer.Map[consumer.Event[handleType[T]]]
-	timeout      time.Duration
-	name         uuid.UUID
+	stream         stream.Stream
+	cryptoKey      stream.CryptoKeyProvider
+	accChan        chan uuid.UUID
+	timeoutChan    chan timeout
+	timedOutChan   chan consumer.Event[handleType[T]]
+	competableChan chan uuid.UUID
+	competable     map[string]consumer.Event[handleType[T]]
+	competers      consumer.Map[consumer.Event[handleType[T]]]
+	timeout        time.Duration
+	name           uuid.UUID
 	//catchupPosition uint64
 	ctx context.Context
 }
@@ -36,24 +38,27 @@ type handleType[T any] struct {
 	Name uuid.UUID `json:"name"`
 }
 
-func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out consumer.Consumer[T], eventStream <-chan consumer.ReadEvent[T], err error) {
+func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, filter stream.Filter, timeoutDuration time.Duration, ctx context.Context) (out consumer.Consumer[T], outChan <-chan consumer.ReadEvent[T], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
 	}
 	c := competing[T]{
-		stream:       s,
-		cryptoKey:    cryptoKey,
-		accChan:      make(chan uuid.UUID, 0), //1000),
-		timedOutChan: make(chan consumer.Event[handleType[T]], 10),
-		timeoutChan:  make(chan timeout, 1000),
-		competers:    consumer.NewMap[consumer.Event[handleType[T]]](),
-		timeout:      time.Minute,
-		name:         name,
-		ctx:          ctx,
+		stream:         s,
+		cryptoKey:      cryptoKey,
+		accChan:        make(chan uuid.UUID, 0), //1000),
+		timedOutChan:   make(chan consumer.Event[handleType[T]], 10),
+		competableChan: make(chan uuid.UUID, 1000),
+		timeoutChan:    make(chan timeout, 1000),
+		competers:      consumer.NewMap[consumer.Event[handleType[T]]](),
+		competable:     make(map[string]consumer.Event[handleType[T]]),
+		timeout:        timeoutDuration,
+		name:           name,
+		ctx:            ctx,
 	}
 
-	eventStream, err = c.readStream(event.AllTypes(), from, filter)
+	eventChan := make(chan consumer.ReadEvent[T], 0)
+	eventStream, err := c.readStream(event.AllTypes(), from, filter)
 	if err != nil {
 		return
 	}
@@ -85,15 +90,67 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 							return
 						}
 						log.Println("TIMED OUT!! ", newTimeout.ID)
-						c.timedOutChan <- e
+						//c.timedOutChan <- e
+						c.competableChan <- newTimeout.ID
 					}
 				}()
-			case e := <-c.timedOutChan:
-				c.compete(e)
+				//case e := <-c.timedOutChan:
+				//c.competableChan <- e.Data.ID
+				//c.compete(e)
 			}
 		}
 	}()
 
+	go func() {
+		competing := false
+		for {
+			select {
+			case <-c.ctx.Done():
+				return
+			case competable := <-c.competableChan:
+				competer, ok := c.competers.Load(competable.String())
+				log.Println(ok, " ", competer)
+				if ok {
+					if time.Now().After(competer.Metadata.Created.Add(c.timeout)) || competer.Metadata.EventType == event.Create {
+						if competing {
+							c.competableChan <- competable
+							continue
+						}
+						log.Println("competing ", competable)
+						c.compete(competer)
+						competing = true
+					}
+				}
+			case current := <-eventStream:
+				currentctx, cancel := context.WithTimeout(c.ctx, c.timeout-time.Now().Sub(current.Metadata.Created)-(time.Second*5))
+				select {
+				case <-c.ctx.Done():
+					return
+				case <-currentctx.Done():
+					log.Println("write timeout ", current.Data.ID)
+					competing = false
+					//c.competableChan <- current.Data.ID
+				case eventChan <- consumer.ReadEvent[T]{
+					Event: consumer.Event[T]{
+						Type:     current.Type,
+						Data:     current.Data.Data,
+						Metadata: current.Metadata,
+					},
+					Position: current.Position,
+					Acc: func() {
+						c.accChan <- current.Data.ID
+						cancel()
+					},
+					CTX: currentctx,
+				}:
+					log.Println("wrote ", current.Data.ID)
+					competing = false
+				}
+			}
+		}
+	}()
+
+	outChan = eventChan
 	out = &c
 	return
 }
@@ -126,12 +183,12 @@ func (c *competing[T]) store(e consumer.Event[handleType[T]]) (position uint64, 
 	return c.stream.Store(es)
 }
 
-func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter) (out <-chan consumer.ReadEvent[T], err error) {
+func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter) (out <-chan consumer.ReadEvent[handleType[T]], err error) {
 	s, err := c.stream.Stream(eventTypes, from, filter, c.ctx)
 	if err != nil {
 		return
 	}
-	eventChan := make(chan consumer.ReadEvent[T], 0)
+	eventChan := make(chan consumer.ReadEvent[handleType[T]], 10)
 	out = eventChan
 	go func() {
 		for {
@@ -156,7 +213,8 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 				c.competers.Store(o.Data.ID.String(), o.Event)
 
 				if o.Type == event.Create {
-					c.compete(o.Event)
+					//c.compete(o.Event)
+					c.competableChan <- o.Event.Data.ID
 					continue
 				}
 
@@ -167,20 +225,7 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 				if o.Data.Name != c.name {
 					continue
 				}
-				ctx, cancel := context.WithTimeout(c.ctx, c.timeout-time.Now().Sub(o.Metadata.Created)-10)
-				eventChan <- consumer.ReadEvent[T]{
-					Event: consumer.Event[T]{
-						Type:     o.Type,
-						Data:     o.Data.Data,
-						Metadata: o.Metadata,
-					},
-					Position: o.Position,
-					Acc: func() {
-						c.accChan <- o.Data.ID
-						cancel()
-					},
-					CTX: ctx,
-				}
+				eventChan <- o
 			}
 		}
 	}()

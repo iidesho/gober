@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/store/eventstore"
+	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/consumer"
 	"sync"
@@ -40,7 +40,7 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	pers, err := eventstore.Init()
+	pers, err := inmemory.Init()
 	if err != nil {
 		t.Error(err)
 		return
@@ -51,7 +51,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	c, eventStream, err = New[dd](est, cryptKeyProvider, store.STREAM_START, stream.ReadAll(), ctxGlobal)
+	c, eventStream, err = New[dd](est, cryptKeyProvider, store.STREAM_START, stream.ReadAll(), time.Second*15, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
