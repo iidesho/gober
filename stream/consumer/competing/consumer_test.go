@@ -9,6 +9,7 @@ import (
 	"github.com/cantara/gober/stream/consumer"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gofrs/uuid"
 
@@ -117,6 +118,41 @@ func TestStreamOrder(t *testing.T) {
 		}
 	}
 	return
+}
+
+func TestTimeout(t *testing.T) {
+	data := dd{
+		Id:   10,
+		Name: "test_timeout",
+	}
+
+	e := consumer.Event[dd]{
+		Type: event.Create,
+		Data: data,
+	}
+	_, err := c.Store(e)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	log.Println("reading event to discard")
+	read := <-eventStream
+	log.Println(read)
+	log.Println("waiting until after timeout (70s)")
+	time.Sleep(time.Second * 70)
+	log.Println("accing event after timeout and it should have been discarded")
+	read.Acc()
+
+	log.Println("reading event to acc")
+	read = <-eventStream
+	log.Println(read)
+	read.Acc()
+	select {
+	case <-time.After(30 * time.Second):
+	case read = <-eventStream:
+		t.Error("task still existed after timeout: ", read)
+		return
+	}
 }
 
 func TestTairdown(t *testing.T) {

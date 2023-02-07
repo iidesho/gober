@@ -68,6 +68,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			case <-t.ctx.Done():
 				return
 			case e := <-eventChan:
+				log.Println("READ EVENT: ", e)
 				go func() {
 					select {
 					case <-t.ctx.Done():

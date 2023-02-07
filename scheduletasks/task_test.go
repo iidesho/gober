@@ -45,9 +45,13 @@ func TestInit(t *testing.T) {
 	}
 	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool {
 		log.Println("Executed after time ", d, " with count ", count)
+		if d.Name == "test" && count != 0 {
+			t.Error("task ran more than once")
+			return true
+		}
 		count++
 		if count%2 == 0 {
-			return false
+			//return false
 		}
 		time.Sleep(10 * time.Second)
 		defer wg.Done()
@@ -91,7 +95,7 @@ func TestFinish(t *testing.T) {
 func TestCreateInterval(t *testing.T) {
 	data := dd{
 		Id:   1,
-		Name: "test",
+		Name: "test_interval",
 	}
 	wg.Add(5)
 	err := ts.Create(time.Now(), time.Second, data)

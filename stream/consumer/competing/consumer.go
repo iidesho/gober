@@ -13,16 +13,16 @@ import (
 )
 
 type competing[T any] struct {
-	stream          stream.Stream
-	cryptoKey       stream.CryptoKeyProvider
-	accChan         chan uuid.UUID
-	timeoutChan     chan timeout
-	timedOutChan    chan uuid.UUID
-	competers       consumer.Map[consumer.Event[handleType[T]]]
-	timeout         time.Duration
-	name            uuid.UUID
-	catchupPosition uint64
-	ctx             context.Context
+	stream       stream.Stream
+	cryptoKey    stream.CryptoKeyProvider
+	accChan      chan uuid.UUID
+	timeoutChan  chan timeout
+	timedOutChan chan consumer.Event[handleType[T]]
+	competers    consumer.Map[consumer.Event[handleType[T]]]
+	timeout      time.Duration
+	name         uuid.UUID
+	//catchupPosition uint64
+	ctx context.Context
 }
 
 type timeout struct {
@@ -45,7 +45,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 		stream:       s,
 		cryptoKey:    cryptoKey,
 		accChan:      make(chan uuid.UUID, 0), //1000),
-		timedOutChan: make(chan uuid.UUID, 1000),
+		timedOutChan: make(chan consumer.Event[handleType[T]], 10),
 		timeoutChan:  make(chan timeout, 1000),
 		competers:    consumer.NewMap[consumer.Event[handleType[T]]](),
 		timeout:      time.Minute,
@@ -80,14 +80,15 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 					case <-c.ctx.Done():
 						return
 					case <-time.After(newTimeout.When.Sub(time.Now())):
-						c.timedOutChan <- newTimeout.ID
+						e, ok := c.competers.Load(newTimeout.ID.String())
+						if !ok || e.Type != event.Update {
+							return
+						}
+						log.Println("TIMED OUT!! ", newTimeout.ID)
+						c.timedOutChan <- e
 					}
 				}()
-			case id := <-c.timedOutChan:
-				e, ok := c.competers.Load(id.String())
-				if !ok {
-					continue
-				}
+			case e := <-c.timedOutChan:
 				c.compete(e)
 			}
 		}
@@ -152,18 +153,16 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 				if ok && lo.Type == event.Update && lo.Data.Name != c.name && lo.Metadata.Created.Add(c.timeout).After(time.Now()) {
 					continue
 				}
-
 				c.competers.Store(o.Data.ID.String(), o.Event)
+
+				if o.Type == event.Create {
+					c.compete(o.Event)
+					continue
+				}
+
 				c.timeoutChan <- timeout{
 					ID:   o.Data.ID,
 					When: o.Metadata.Created.Add(c.timeout),
-				}
-
-				if o.Type == event.Create {
-					if o.Position > c.catchupPosition {
-						c.compete(o.Event)
-					}
-					continue
 				}
 				if o.Data.Name != c.name {
 					continue
