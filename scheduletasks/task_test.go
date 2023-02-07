@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
 	"github.com/gofrs/uuid"
@@ -19,6 +18,7 @@ var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
 var td dd
 var wg sync.WaitGroup
+var count int
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -32,8 +32,8 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	//store, err := inmemory.Init()
-	store, err := eventstore.Init()
+	store, err := inmemory.Init()
+	//store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return
@@ -44,7 +44,11 @@ func TestInit(t *testing.T) {
 		return
 	}
 	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool {
-		log.Println("Executed after time ", d)
+		log.Println("Executed after time ", d, " with count ", count)
+		count++
+		if count%2 == 0 {
+			return false
+		}
 		time.Sleep(10 * time.Second)
 		defer wg.Done()
 		return true
@@ -71,19 +75,6 @@ func TestCreate(t *testing.T) {
 	return
 }
 
-/*
-func TestSelect(t *testing.T) {
-	data, metad, err := ts.Select()
-	fmt.Println(data)
-	fmt.Println(metad)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	td = data
-}
-*/
-
 func TestFinish(t *testing.T) {
 	c := make(chan struct{})
 	go func() {
@@ -91,25 +82,38 @@ func TestFinish(t *testing.T) {
 		wg.Wait()
 	}()
 	select {
-	case <-time.After(5000 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Error("timeout on task finish")
 	case <-c:
 	}
 }
 
-/*
-func TestSelectAfterFinish(t *testing.T) {
-	_, _, err := ts.Select()
-	if err == nil {
-		t.Error("no error when there shouldn't be anything to select")
+func TestCreateInterval(t *testing.T) {
+	data := dd{
+		Id:   1,
+		Name: "test",
+	}
+	wg.Add(5)
+	err := ts.Create(time.Now(), time.Second, data)
+	if err != nil {
+		t.Error(err)
 		return
 	}
-	if !errors.Is(err, NothingToSelectError) {
-		t.Errorf("error was not NothingToSelectError: %v", err)
-		return
+	return
+}
+
+func TestFinishInterval(t *testing.T) {
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-time.After(30 * time.Second):
+		t.Error("timeout on task finish")
+	case <-c:
 	}
 }
-*/
 
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
@@ -129,7 +133,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		return
 	}
 
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctxGlobal) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

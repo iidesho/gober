@@ -178,7 +178,6 @@ func DecryptEvent[T any](e event.ReadEvent, cryptoKey stream.CryptoKeyProvider) 
 			Metadata: e.Metadata,
 		},
 		Position: e.Position,
-		Created:  e.Created,
 	}
 	return
 }

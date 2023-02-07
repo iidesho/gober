@@ -148,10 +148,15 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 					continue
 				}
 
+				lo, ok := c.competers.Load(o.Data.ID.String())
+				if ok && lo.Type == event.Update && lo.Data.Name != c.name && lo.Metadata.Created.Add(c.timeout).After(time.Now()) {
+					continue
+				}
+
 				c.competers.Store(o.Data.ID.String(), o.Event)
 				c.timeoutChan <- timeout{
 					ID:   o.Data.ID,
-					When: o.Created.Add(c.timeout),
+					When: o.Metadata.Created.Add(c.timeout),
 				}
 
 				if o.Type == event.Create {
@@ -163,7 +168,7 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 				if o.Data.Name != c.name {
 					continue
 				}
-				ctx, cancel := context.WithTimeout(c.ctx, c.timeout-time.Now().Sub(o.Created)-10)
+				ctx, cancel := context.WithTimeout(c.ctx, c.timeout-time.Now().Sub(o.Metadata.Created)-10)
 				eventChan <- consumer.ReadEvent[T]{
 					Event: consumer.Event[T]{
 						Type:     o.Type,
@@ -171,7 +176,6 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 						Metadata: o.Metadata,
 					},
 					Position: o.Position,
-					Created:  o.Created,
 					Acc: func() {
 						c.accChan <- o.Data.ID
 						cancel()

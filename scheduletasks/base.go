@@ -18,11 +18,6 @@ type Tasks[DT any] interface {
 	Create(time.Time, time.Duration, DT) error
 }
 
-type transactionCheck struct {
-	transaction  uint64
-	completeChan chan struct{}
-}
-
 type scheduledtasks[DT any] struct {
 	eventTypeName    string
 	eventTypeVersion string
@@ -33,25 +28,13 @@ type scheduledtasks[DT any] struct {
 	ec               <-chan consumer.ReadEvent[tm[DT]]
 }
 
-type selectionStatus string
-
-const (
-	Created  selectionStatus = "created"
-	Selected selectionStatus = "selected"
-	Finished selectionStatus = "finished"
-)
-
 const NoInterval time.Duration = 0
 
 // TaskMetadata temp changed task to be the id that is used for strong and id seems to now only be used for events.
 type TaskMetadata struct {
-	Id       uuid.UUID       `json:"id"`
-	Task     uuid.UUID       `json:"task"` //Needs to be added because both sheduledtask and task can run in the same stream.
-	Next     uuid.UUID       `json:"next_id"`
-	NextTask uuid.UUID       `json:"next_task_id"`
-	After    time.Time       `json:"after"`
-	Interval time.Duration   `json:"interval"`
-	Status   selectionStatus `json:"status"`
+	Id       uuid.UUID     `json:"id"`
+	After    time.Time     `json:"after"`
+	Interval time.Duration `json:"interval"`
 }
 
 type tm[DT any] struct {
@@ -98,7 +81,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 						Metadata: event.Metadata{
 							Version:  t.eventTypeVersion,
 							DataType: t.eventTypeName + "_scheduled",
-							Key:      crypto.SimpleHash(e.Data.Metadata.Task.String()),
+							Key:      crypto.SimpleHash(e.Data.Metadata.Id.String()),
 						},
 					})
 					if err != nil {
@@ -149,18 +132,14 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	return
 }
 
-func (t *scheduledtasks[DT]) event(id uuid.UUID, eventType event.Type, data tm[DT]) (e consumer.Event[tm[DT]], err error) {
-	data.Metadata.Next = uuid.Must(uuid.NewV7())
+func (t *scheduledtasks[DT]) event(eventType event.Type, data tm[DT]) (e consumer.Event[tm[DT]], err error) {
 	e = consumer.Event[tm[DT]]{
 		Type: eventType,
 		Data: data,
 		Metadata: event.Metadata{
 			Version:  t.eventTypeVersion,
 			DataType: t.eventTypeName,
-			Key:      crypto.SimpleHash(id.String()),
-			Extra: map[string]any{
-				"select_status": data.Metadata.Status,
-			},
+			Key:      crypto.SimpleHash(data.Metadata.Id.String()),
 		},
 	}
 	return
@@ -168,36 +147,12 @@ func (t *scheduledtasks[DT]) event(id uuid.UUID, eventType event.Type, data tm[D
 
 // To finish adding updatable tasks, should add task"name" and use that to store the task. Thus also checking if the that that is sent to delete is the one stored. Incase the next task comes before the delete for some reason.
 func (t *scheduledtasks[DT]) Create(a time.Time, i time.Duration, dt DT) (err error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return
-	}
-	return t.create(id, a, i, dt)
-}
-
-func (t *scheduledtasks[DT]) create(id uuid.UUID, a time.Time, i time.Duration, dt DT) (err error) {
-	taskId, err := uuid.NewV7()
-	if err != nil {
-		return
-	}
-	nextId, err := uuid.NewV7()
-	if err != nil {
-		return
-	}
-	nextTaskId, err := uuid.NewV7()
-	if err != nil {
-		return
-	}
-	e, err := t.event(id, event.Create, tm[DT]{
+	e, err := t.event(event.Create, tm[DT]{
 		Task: dt,
 		Metadata: TaskMetadata{
-			Id:       id,
-			Task:     taskId,
-			Next:     nextId,
-			NextTask: nextTaskId,
-			Status:   Created,
 			After:    a,
 			Interval: i,
+			Id:       uuid.Must(uuid.NewV7()),
 		},
 	})
 	if err != nil {

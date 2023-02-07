@@ -81,7 +81,7 @@ func TestStoreOrder(t *testing.T) {
 			log.Println("reading event")
 			read := <-eventStream
 			log.Println("read event", read)
-			events[read.Data.Id] = read
+			events[i] = read
 			read.Acc()
 		}()
 		_, err := c.Store(e)

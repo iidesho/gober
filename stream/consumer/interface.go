@@ -3,7 +3,6 @@ package consumer
 import (
 	"context"
 	"github.com/cantara/gober/stream/event"
-	"time"
 )
 
 type Event[T any] struct {
@@ -16,7 +15,6 @@ type ReadEvent[T any] struct {
 	Event[T]
 
 	Position uint64
-	Created  time.Time
 
 	Acc func()
 	CTX context.Context

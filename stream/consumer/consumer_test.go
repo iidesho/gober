@@ -3,7 +3,7 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"github.com/cantara/gober/store/eventstore"
+	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
 	"sync"
 	"testing"
@@ -37,7 +37,7 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	pers, err := eventstore.Init()
+	pers, err := inmemory.Init()
 	if err != nil {
 		t.Error(err)
 		return
