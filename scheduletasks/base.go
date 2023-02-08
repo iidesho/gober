@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"fmt"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/stream/consumer/competing"
@@ -57,7 +58,6 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		ec:               eventChan,
 	}
 	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName+"_scheduled"), time.Second*30, ctx)
-	//tsks, err := tasks.Init[tm[DT]](s, dataTypeName+"_scheduled", dataTypeVersion, p, ctx)
 	if err != nil {
 		return
 	}
@@ -70,6 +70,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			case e := <-eventChan:
 				log.Println("READ EVENT: ", e)
 				go func() {
+					log.Printf("waiting until it is time to do work, from %v to %v with waiting time of %v", e.Data.Metadata.After, time.Now(), e.Data.Metadata.After.Sub(time.Now()))
 					select {
 					case <-t.ctx.Done():
 						return
@@ -112,7 +113,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					defer func() {
 						err := recover()
 						if err != nil {
-							log.AddError(err.(error)).Crit("panic while executing")
+							log.AddError(fmt.Errorf("%v", err)).Crit("panic while executing")
 							return
 						}
 					}()
