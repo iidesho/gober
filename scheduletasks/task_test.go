@@ -31,7 +31,10 @@ func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 
+var ct *testing.T
+
 func TestInit(t *testing.T) {
+	ct = t
 	store, err := inmemory.Init()
 	//store, err := eventstore.Init()
 	if err != nil {
@@ -46,14 +49,16 @@ func TestInit(t *testing.T) {
 	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool {
 		log.Println("Executed after time ", d, " with count ", count)
 		if d.Name == "test" && count != 0 {
-			t.Error("task ran more than once")
+			ctxGlobalCancel()
+			ct.Error("task ran more than once")
+			ct.FailNow()
 			return true
 		}
 		count++
 		if count%2 == 0 {
 			//return false
 		}
-		time.Sleep(10 * time.Second)
+		//time.Sleep(10 * time.Second)
 		defer wg.Done()
 		return true
 	}, ctxGlobal)
@@ -66,6 +71,7 @@ func TestInit(t *testing.T) {
 }
 
 func TestCreate(t *testing.T) {
+	ct = t
 	data := dd{
 		Id:   1,
 		Name: "test",
@@ -80,6 +86,7 @@ func TestCreate(t *testing.T) {
 }
 
 func TestFinish(t *testing.T) {
+	ct = t
 	c := make(chan struct{})
 	go func() {
 		defer close(c)
@@ -93,12 +100,13 @@ func TestFinish(t *testing.T) {
 }
 
 func TestCreateInterval(t *testing.T) {
+	ct = t
 	data := dd{
 		Id:   1,
 		Name: "test_interval",
 	}
 	wg.Add(5)
-	err := ts.Create(time.Now(), time.Second, data)
+	err := ts.Create(time.Now(), 10*time.Second, data)
 	if err != nil {
 		t.Error(err)
 		return
@@ -107,19 +115,21 @@ func TestCreateInterval(t *testing.T) {
 }
 
 func TestFinishInterval(t *testing.T) {
+	ct = t
 	c := make(chan struct{})
 	go func() {
 		defer close(c)
 		wg.Wait()
 	}()
 	select {
-	case <-time.After(30 * time.Second):
+	case <-time.After(70 * time.Second):
 		t.Error("timeout on task finish")
 	case <-c:
 	}
 }
 
 func TestTairdown(t *testing.T) {
+	ct = t
 	ctxGlobalCancel()
 }
 
