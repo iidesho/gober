@@ -46,6 +46,7 @@ type tm[DT any] struct {
 }
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
+	dataTypeName = dataTypeName + "_scheduled"
 	es, eventChan, err := competing.New[tm[DT]](s, p, store.STREAM_START, dataTypeName, time.Minute*15, ctx)
 	if err != nil {
 		return
@@ -57,7 +58,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		es:               es,
 		ec:               eventChan,
 	}
-	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, dataTypeName+"_scheduled", time.Second*30, ctx)
+	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, dataTypeName+"_executor", time.Second*30, ctx)
 	if err != nil {
 		return
 	}
@@ -81,7 +82,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 						Data: e.Data.Task,
 						Metadata: event.Metadata{
 							Version:  t.eventTypeVersion,
-							DataType: t.eventTypeName + "_scheduled",
+							DataType: t.eventTypeName + "_executor",
 							Key:      crypto.SimpleHash(e.Data.Metadata.Id.String()),
 						},
 					})
