@@ -100,6 +100,13 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 							return
 						}
 						log.Debug("TIMED OUT!! ", newTimeout.ID)
+						ne, ok := c.competers.Load(newTimeout.ID.String())
+						if !ok || ne.Type != event.Update {
+							return
+						}
+						if !ne.Metadata.Created.Equal(e.Metadata.Created) {
+							return
+						}
 						//c.timedOutChan <- e
 						c.competableChan <- newTimeout.ID
 					}
