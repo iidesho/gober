@@ -51,7 +51,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	c, eventStream, err = New[dd](est, cryptKeyProvider, store.STREAM_START, stream.ReadAll(), time.Second*15, ctxGlobal)
+	c, eventStream, err = New[dd](est, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -72,7 +72,8 @@ func TestStoreOrder(t *testing.T) {
 			Type: event.Create,
 			Data: data,
 			Metadata: event.Metadata{
-				Extra: map[string]any{"extra": meta.Extra},
+				Extra:    map[string]any{"extra": meta.Extra},
+				DataType: "datatype",
 			},
 		}
 		wg := sync.WaitGroup{}
@@ -129,6 +130,9 @@ func TestTimeout(t *testing.T) {
 	e := consumer.Event[dd]{
 		Type: event.Create,
 		Data: data,
+		Metadata: event.Metadata{
+			DataType: "datatype",
+		},
 	}
 	_, err := c.Store(e)
 	if err != nil {
@@ -148,7 +152,7 @@ func TestTimeout(t *testing.T) {
 	log.Println(read)
 	read.Acc()
 	select {
-	case <-time.After(30 * time.Second):
+	case <-time.After(40 * time.Second):
 	case read = <-eventStream:
 		t.Error("task still existed after timeout: ", read)
 		return

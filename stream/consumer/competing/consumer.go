@@ -99,7 +99,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 						if !ok || e.Type != event.Update {
 							return
 						}
-						//log.Debug("TIMED OUT!! ", newTimeout.ID)
+						log.Debug("TIMED OUT!! ", newTimeout.ID)
 						//c.timedOutChan <- e
 						c.competableChan <- newTimeout.ID
 					}
@@ -120,12 +120,14 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 			case competable := <-c.competableChan:
 				competer, ok := c.competers.Load(competable.String())
 				if ok {
+					//This filter seems to be a bit buggy when filtering out events that has timed out. Added a millisecond to the timeout check that re ads the competable
 					if time.Now().After(competer.Metadata.Created.Add(c.timeout)) || competer.Metadata.EventType == event.Create {
 						if competing {
 							c.competableChan <- competable
+							time.Sleep(time.Millisecond)
 							continue
 						}
-						//log.Debug("competing ", competable)
+						log.Debug("competing ", competable)
 						c.compete(competer)
 						competing = true
 					}
@@ -146,6 +148,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 					},
 					Position: current.Position,
 					Acc: func() {
+						defer cancel()
 						if time.Now().After(current.Metadata.Created.Add(c.timeout)) {
 							log.Warning("timed out before acc, discarding acc for ", current.Data.ID)
 							//Should probably store this somewhere to get statistics on it.
@@ -157,7 +160,6 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 							datatype: current.Metadata.DataType,
 							version:  current.Metadata.Version,
 						}
-						cancel()
 					},
 					CTX: currentctx,
 				}:
@@ -238,7 +240,7 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 
 				c.timeoutChan <- timeout{
 					ID:   o.Data.ID,
-					When: o.Metadata.Created.Add(c.timeout),
+					When: o.Metadata.Created.Add(c.timeout + time.Millisecond),
 				}
 				if o.Data.Name != c.name {
 					continue
