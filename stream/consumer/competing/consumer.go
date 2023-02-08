@@ -15,7 +15,7 @@ import (
 type competing[T any] struct {
 	stream         stream.Stream
 	cryptoKey      stream.CryptoKeyProvider
-	accChan        chan uuid.UUID
+	accChan        chan acc
 	timeoutChan    chan timeout
 	timedOutChan   chan consumer.Event[handleType[T]]
 	competableChan chan uuid.UUID
@@ -38,6 +38,12 @@ type handleType[T any] struct {
 	Name uuid.UUID `json:"name"`
 }
 
+type acc struct {
+	id       uuid.UUID
+	version  string
+	datatype string
+}
+
 func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, filter stream.Filter, timeoutDuration time.Duration, ctx context.Context) (out consumer.Consumer[T], outChan <-chan consumer.ReadEvent[T], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
@@ -46,7 +52,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 	c := competing[T]{
 		stream:         s,
 		cryptoKey:      cryptoKey,
-		accChan:        make(chan uuid.UUID, 0), //1000),
+		accChan:        make(chan acc, 0), //1000),
 		timedOutChan:   make(chan consumer.Event[handleType[T]], 10),
 		competableChan: make(chan uuid.UUID, 1000),
 		timeoutChan:    make(chan timeout, 1000),
@@ -68,11 +74,15 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 			select {
 			case <-c.ctx.Done():
 				return
-			case id := <-c.accChan:
+			case a := <-c.accChan:
 				_, err = c.store(consumer.Event[handleType[T]]{
 					Type: event.Delete,
 					Data: handleType[T]{
-						ID: id,
+						ID: a.id,
+					},
+					Metadata: event.Metadata{
+						DataType: a.datatype,
+						Version:  a.version,
 					},
 				})
 				if err != nil {
@@ -129,7 +139,6 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 				case <-currentctx.Done():
 					log.Println("write timeout ", current.Data.ID)
 					competing = false
-					//c.competableChan <- current.Data.ID
 				case eventChan <- consumer.ReadEvent[T]{
 					Event: consumer.Event[T]{
 						Type:     current.Type,
@@ -138,7 +147,18 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 					},
 					Position: current.Position,
 					Acc: func() {
-						c.accChan <- current.Data.ID
+						select {
+						case <-currentctx.Done():
+							log.Println("timed out before acc ", current.Data.ID)
+							return
+						default:
+						}
+
+						c.accChan <- acc{
+							id:       current.Data.ID,
+							datatype: current.Metadata.DataType,
+							version:  current.Metadata.Version,
+						}
 						cancel()
 					},
 					CTX: currentctx,
