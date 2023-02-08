@@ -6,6 +6,7 @@ import (
 	"fmt"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/store/eventstore"
+	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
 	"github.com/gofrs/uuid"
 	"testing"
@@ -29,7 +30,7 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	store, err := eventstore.Init()
+	store, err := inmemory.Init()
 	if err != nil {
 		t.Error(err)
 		return
