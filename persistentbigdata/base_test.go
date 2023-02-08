@@ -6,6 +6,7 @@ import (
 	"github.com/cantara/gober/store/eventstore"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/webserver"
+	"github.com/gofrs/uuid"
 	"os"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
 
-var STREAM_NAME = "TestServiceStoreAndStream_" //+ uuid.New().String()
+var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
 type dd struct {
 	Id   int    `json:"id"`
