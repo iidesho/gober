@@ -46,7 +46,7 @@ type tm[DT any] struct {
 }
 
 func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
-	es, eventChan, err := competing.New[tm[DT]](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName), time.Minute*15, ctx)
+	es, eventChan, err := competing.New[tm[DT]](s, p, store.STREAM_START, dataTypeName, time.Minute*15, ctx)
 	if err != nil {
 		return
 	}
@@ -57,7 +57,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		es:               es,
 		ec:               eventChan,
 	}
-	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, stream.ReadDataType(dataTypeName+"_scheduled"), time.Second*30, ctx)
+	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, dataTypeName+"_scheduled", time.Second*30, ctx)
 	if err != nil {
 		return
 	}
@@ -68,7 +68,6 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			case <-t.ctx.Done():
 				return
 			case e := <-eventChan:
-				log.Println("READ EVENT: ", e)
 				go func() {
 					log.Printf("waiting until it is time to do work, from %v to %v with waiting time of %v", e.Data.Metadata.After, time.Now(), e.Data.Metadata.After.Sub(time.Now()))
 					select {
@@ -147,7 +146,7 @@ func (t *scheduledtasks[DT]) event(eventType event.Type, data tm[DT]) (e consume
 	return
 }
 
-// To finish adding updatable tasks, should add task"name" and use that to store the task. Thus also checking if the that that is sent to delete is the one stored. Incase the next task comes before the delete for some reason.
+// To finish adding updatable tasks, should add task"name" and use that to store the task. Thus also checking if the that that is sent to delete is the one stored. Incase the next task comes before the delete-action for some reason.
 func (t *scheduledtasks[DT]) Create(a time.Time, i time.Duration, dt DT) (err error) {
 	e, err := t.event(event.Create, tm[DT]{
 		Task: dt,

@@ -44,7 +44,7 @@ type acc struct {
 	datatype string
 }
 
-func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, filter stream.Filter, timeoutDuration time.Duration, ctx context.Context) (out consumer.Consumer[T], outChan <-chan consumer.ReadEvent[T], err error) {
+func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeoutDuration time.Duration, ctx context.Context) (out consumer.Consumer[T], outChan <-chan consumer.ReadEvent[T], err error) {
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
@@ -64,7 +64,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 	}
 
 	eventChan := make(chan consumer.ReadEvent[T], 0)
-	eventStream, err := c.readStream(event.AllTypes(), from, filter)
+	eventStream, err := c.readStream(event.AllTypes(), from, stream.ReadDataType(datatype))
 	if err != nil {
 		return
 	}
@@ -99,7 +99,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 						if !ok || e.Type != event.Update {
 							return
 						}
-						log.Println("TIMED OUT!! ", newTimeout.ID)
+						//log.Debug("TIMED OUT!! ", newTimeout.ID)
 						//c.timedOutChan <- e
 						c.competableChan <- newTimeout.ID
 					}
@@ -119,14 +119,13 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 				return
 			case competable := <-c.competableChan:
 				competer, ok := c.competers.Load(competable.String())
-				log.Println(ok, " ", competer)
 				if ok {
 					if time.Now().After(competer.Metadata.Created.Add(c.timeout)) || competer.Metadata.EventType == event.Create {
 						if competing {
 							c.competableChan <- competable
 							continue
 						}
-						log.Println("competing ", competable)
+						//log.Debug("competing ", competable)
 						c.compete(competer)
 						competing = true
 					}
@@ -137,7 +136,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 				case <-c.ctx.Done():
 					return
 				case <-currentctx.Done():
-					log.Println("write timeout ", current.Data.ID)
+					//log.Debug("write timeout ", current.Data.ID)
 					competing = false
 				case eventChan <- consumer.ReadEvent[T]{
 					Event: consumer.Event[T]{
@@ -147,11 +146,10 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 					},
 					Position: current.Position,
 					Acc: func() {
-						select {
-						case <-currentctx.Done():
-							log.Println("timed out before acc ", current.Data.ID)
+						if time.Now().After(current.Metadata.Created.Add(c.timeout)) {
+							log.Warning("timed out before acc, discarding acc for ", current.Data.ID)
+							//Should probably store this somewhere to get statistics on it.
 							return
-						default:
 						}
 
 						c.accChan <- acc{
@@ -163,7 +161,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 					},
 					CTX: currentctx,
 				}:
-					log.Println("wrote ", current.Data.ID)
+					//log.Debug("wrote ", current.Data.ID)
 					competing = false
 				}
 			}
