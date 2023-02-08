@@ -58,7 +58,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		es:               es,
 		ec:               eventChan,
 	}
-	esTasks, taskEventChan, err := competing.New[DT](s, p, store.STREAM_START, dataTypeName+"_executor", time.Second*30, ctx)
+	esTasks, taskEventChan, err := competing.New[tm[DT]](s, p, store.STREAM_START, dataTypeName+"_executor", time.Second*30, ctx)
 	if err != nil {
 		return
 	}
@@ -78,8 +78,8 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 						return
 					case <-time.After(e.Data.Metadata.After.Sub(time.Now())):
 					}
-					_, err := esTasks.Store(consumer.Event[DT]{
-						Data: e.Data.Task,
+					_, err := esTasks.Store(consumer.Event[tm[DT]]{
+						Data: e.Data,
 						Metadata: event.Metadata{
 							Version:  t.eventTypeVersion,
 							DataType: t.eventTypeName + "_executor",
@@ -89,13 +89,6 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					if err != nil {
 						log.AddError(err).Error("while creating scheduled task")
 						return
-					}
-					if e.Data.Metadata.Interval != NoInterval {
-						err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
-						if err != nil {
-							log.AddError(err).Crit("while creating event for finished action in scheduled task")
-							return
-						}
 					}
 					e.Acc()
 				}()
@@ -119,11 +112,18 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					}()
 					log.Debug("selected task: ", e)
 					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
-					if !execute(e.Data) {
+					if !execute(e.Data.Task) {
 						log.Error("there was an error while executing task. not finishing")
 						return
 					}
 					log.Debug("executed task:", e)
+					if e.Data.Metadata.Interval != NoInterval {
+						err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
+						if err != nil {
+							log.AddError(err).Crit("while creating event for finished action in scheduled task")
+							return
+						}
+					}
 					e.Acc()
 				}()
 			}

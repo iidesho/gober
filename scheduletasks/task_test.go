@@ -48,17 +48,28 @@ func TestInit(t *testing.T) {
 	}
 	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool {
 		log.Println("Executed after time ", d, " with count ", count)
+		if count > 16 {
+			ctxGlobalCancel()
+			ct.Error("catchup ran too many times")
+			ct.FailNow()
+			return true
+		}
 		if d.Name == "test" && count != 0 {
 			ctxGlobalCancel()
 			ct.Error("task ran more than once")
 			ct.FailNow()
-			return true
+			return false
 		}
 		count++
+		if count == 2 {
+			return false
+		}
 		if count%2 == 0 {
 			//return false
 		}
 		//time.Sleep(10 * time.Second)
+
+		time.Sleep(5 * time.Second)
 		defer wg.Done()
 		return true
 	}, ctxGlobal)
@@ -99,14 +110,14 @@ func TestFinish(t *testing.T) {
 	}
 }
 
-func TestCreateInterval(t *testing.T) {
+func TestCreateIntervalWithCatchup(t *testing.T) {
 	ct = t
 	data := dd{
 		Id:   1,
 		Name: "test_interval",
 	}
-	wg.Add(5)
-	err := ts.Create(time.Now(), 10*time.Second, data)
+	wg.Add(15)
+	err := ts.Create(time.Now().Add(-time.Second*100), 10*time.Second, data)
 	if err != nil {
 		t.Error(err)
 		return
@@ -122,7 +133,7 @@ func TestFinishInterval(t *testing.T) {
 		wg.Wait()
 	}()
 	select {
-	case <-time.After(70 * time.Second):
+	case <-time.After(110 * time.Second):
 		t.Error("timeout on task finish")
 	case <-c:
 	}
