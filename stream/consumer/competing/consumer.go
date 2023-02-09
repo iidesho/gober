@@ -229,7 +229,8 @@ func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosi
 					continue
 				}
 				if o.Type == event.Delete {
-					c.competers.Delete(o.Data.ID.String())
+					c.competers.Store(o.Data.ID.String(), o.Event)
+					//c.competers.Delete(o.Data.ID.String())
 					continue
 				}
 
