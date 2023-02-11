@@ -1,6 +1,7 @@
 package competing
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	log "github.com/cantara/bragi"
@@ -13,35 +14,20 @@ import (
 )
 
 type competing[T any] struct {
-	stream         stream.Stream
-	cryptoKey      stream.CryptoKeyProvider
-	accChan        chan acc
-	timeoutChan    chan timeout
-	timedOutChan   chan consumer.Event[handleType[T]]
-	competableChan chan uuid.UUID
-	competable     map[string]consumer.Event[handleType[T]]
-	competers      consumer.Map[consumer.Event[handleType[T]]]
-	timeout        time.Duration
-	name           uuid.UUID
-	//catchupPosition uint64
-	ctx context.Context
+	stream    stream.Stream
+	cryptoKey stream.CryptoKeyProvider
+	selected  consumer.Map[consumer.ReadEvent[tm[T]]]
+	finished  consumer.Map[struct{}]
+	timeout   time.Duration
+	selector  uuid.UUID
+	ctx       context.Context
 }
 
-type timeout struct {
-	ID   uuid.UUID
-	When time.Time
-}
-
-type handleType[T any] struct {
-	ID   uuid.UUID `json:"id"`
-	Data T         `json:"data"`
-	Name uuid.UUID `json:"name"`
-}
-
-type acc struct {
-	id       uuid.UUID
-	version  string
-	datatype string
+type tm[T any] struct {
+	Id       uuid.UUID `json:"id"`
+	Data     T         `json:"data"`
+	Timeout  time.Time `json:"timeout"`
+	Selector uuid.UUID `json:"selector"`
 }
 
 func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeoutDuration time.Duration, ctx context.Context) (out consumer.Consumer[T], outChan <-chan consumer.ReadEvent[T], err error) {
@@ -50,136 +36,245 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.
 		return
 	}
 	c := competing[T]{
-		stream:         s,
-		cryptoKey:      cryptoKey,
-		accChan:        make(chan acc, 0), //1000),
-		timedOutChan:   make(chan consumer.Event[handleType[T]], 10),
-		competableChan: make(chan uuid.UUID, 1000),
-		timeoutChan:    make(chan timeout, 1000),
-		competers:      consumer.NewMap[consumer.Event[handleType[T]]](),
-		competable:     make(map[string]consumer.Event[handleType[T]]),
-		timeout:        timeoutDuration,
-		name:           name,
-		ctx:            ctx,
+		stream:    s,
+		cryptoKey: cryptoKey,
+		selected:  consumer.NewMap[consumer.ReadEvent[tm[T]]](),
+		finished:  consumer.NewMap[struct{}](),
+		timeout:   timeoutDuration,
+		selector:  name,
+		ctx:       ctx,
 	}
-
-	eventChan := make(chan consumer.ReadEvent[T], 0)
-	eventStream, err := c.readStream(event.AllTypes(), from, stream.ReadDataType(datatype))
+	eventStream, err := c.stream.Stream(event.AllTypes(), from, stream.ReadDataType(datatype), c.ctx)
 	if err != nil {
 		return
 	}
 
-	go func() {
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case a := <-c.accChan:
-				_, err = c.store(consumer.Event[handleType[T]]{
-					Type: event.Delete,
-					Data: handleType[T]{
-						ID: a.id,
-					},
-					Metadata: event.Metadata{
-						DataType: a.datatype,
-						Version:  a.version,
-					},
-				})
-				if err != nil {
-					log.AddError(err).Error("while storing finished competing consumer")
-					continue
-				}
-			case newTimeout := <-c.timeoutChan:
+	selectable, timeout, finished, selected := c.startReadStream(eventStream)
+	go c.readSelectables(selectable)
+	go c.readTimeout(timeout, selectable)
+	go c.readFinished(finished)
+
+	selectedOutput := make(chan consumer.ReadEvent[T], 0)
+	go c.readSelected(selected, selectedOutput)
+
+	out = &c
+	outChan = selectedOutput
+	return
+}
+
+func (c *competing[T]) readSelectables(selectable <-chan consumer.ReadEvent[tm[T]]) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Crit("Recovered ", r)
+		}
+		c.readSelectables(selectable)
+	}()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case e := <-selectable: //This needs some kind of throttling
+			if e.Metadata.Created.Add(30 * time.Second).Before(time.Now()) {
 				go func() {
-					select {
-					case <-c.ctx.Done():
+					time.Sleep(time.Minute)
+					if _, isFinished := c.finished.Load(e.Data.Id.String()); isFinished {
 						return
-					case <-time.After(newTimeout.When.Sub(time.Now())):
-						e, ok := c.competers.Load(newTimeout.ID.String())
-						if !ok || e.Type != event.Update {
-							return
-						}
-						log.Debug("TIMED OUT!! ", newTimeout.ID)
-						ne, ok := c.competers.Load(newTimeout.ID.String())
-						if !ok || ne.Type != event.Update {
-							return
-						}
-						if !ne.Metadata.Created.Equal(e.Metadata.Created) {
-							return
-						}
-						//c.timedOutChan <- e
-						c.competableChan <- newTimeout.ID
+					}
+					selected, isSelected := c.selected.Load(e.Data.Id.String())
+					if isSelected && selected.Data.Timeout.After(time.Now()) {
+						return
+					}
+					c.compete(e.Event)
+				}()
+				continue
+			}
+			c.compete(e.Event)
+		}
+	}
+}
+
+func (c *competing[T]) readTimeout(timeout <-chan consumer.ReadEvent[tm[T]], selectable chan<- consumer.ReadEvent[tm[T]]) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Crit("Recovered ", r)
+		}
+		c.readTimeout(timeout, selectable)
+	}()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case newTimeout := <-timeout:
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Crit("Hid panic ", r)
 					}
 				}()
-				//case e := <-c.timedOutChan:
-				//c.competableChan <- e.Data.ID
-				//c.compete(e)
-			}
-		}
-	}()
-
-	go func() {
-		competing := false
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case competable := <-c.competableChan:
-				competer, ok := c.competers.Load(competable.String())
-				if ok {
-					//This filter seems to be a bit buggy when filtering out events that has timed out. Added a millisecond to the timeout check that re ads the competable
-					if time.Now().After(competer.Metadata.Created.Add(c.timeout)) || competer.Metadata.EventType == event.Create {
-						if competing {
-							c.competableChan <- competable
-							time.Sleep(time.Millisecond)
-							continue
-						}
-						log.Debug("competing ", competable)
-						c.compete(competer)
-						competing = true
+				id := newTimeout.Data.Id
+				if newTimeout.Metadata.Created.Add(30 * time.Second).Before(time.Now()) { //This needs to be verified.
+					time.Sleep(time.Minute)
+					if _, isFinished := c.finished.Load(id.String()); isFinished {
+						return
+					}
+					selected, isSelected := c.selected.Load(id.String())
+					if isSelected && selected.Data.Timeout.After(time.Now()) {
+						return
 					}
 				}
-			case current := <-eventStream:
-				currentctx, cancel := context.WithTimeout(c.ctx, c.timeout-time.Now().Sub(current.Metadata.Created)-(time.Second*5))
 				select {
 				case <-c.ctx.Done():
 					return
-				case <-currentctx.Done():
-					//log.Debug("write timeout ", current.Data.ID)
-					competing = false
-				case eventChan <- consumer.ReadEvent[T]{
-					Event: consumer.Event[T]{
-						Type:     current.Type,
-						Data:     current.Data.Data,
-						Metadata: current.Metadata,
-					},
-					Position: current.Position,
-					Acc: func() {
-						defer cancel()
-						if time.Now().After(current.Metadata.Created.Add(c.timeout)) {
-							log.Warning("timed out before acc, discarding acc for ", current.Data.ID)
-							//Should probably store this somewhere to get statistics on it.
-							return
-						}
-
-						c.accChan <- acc{
-							id:       current.Data.ID,
-							datatype: current.Metadata.DataType,
-							version:  current.Metadata.Version,
-						}
-					},
-					CTX: currentctx,
-				}:
-					//log.Debug("wrote ", current.Data.ID)
-					competing = false
+				case <-time.After(newTimeout.Data.Timeout.Sub(time.Now())):
+					if _, finished := c.finished.Load(id.String()); finished {
+						return
+					}
+					selected, ok := c.selected.Load(id.String())
+					if !ok {
+						log.Error("This should never be true, neither finished nor selected but timed out ", id)
+						return
+					}
+					if !selected.Metadata.Created.Equal(newTimeout.Metadata.Created) {
+						return
+					}
+					log.Debug("TIMED OUT!! ", id)
+					selectable <- newTimeout
 				}
+			}()
+		}
+	}
+}
+
+func (c *competing[T]) readSelected(selected <-chan consumer.ReadEvent[tm[T]], out chan<- consumer.ReadEvent[T]) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Crit("Recovered ", r)
+		}
+		c.readSelected(selected, out)
+	}()
+	for {
+		select {
+		case <-c.ctx.Done():
+			close(out)
+			return
+		case current := <-selected:
+			currentCTX, cancel := context.WithTimeout(c.ctx, c.timeout-time.Now().Sub(current.Metadata.Created)-(time.Second*5))
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-currentCTX.Done():
+				//log.Debug("write timeout ", current.Data.ID)
+			case out <- consumer.ReadEvent[T]{
+				Event: consumer.Event[T]{
+					Type:     current.Type,
+					Data:     current.Data.Data,
+					Metadata: current.Metadata,
+				},
+				Position: current.Position,
+				Acc: func() {
+					defer cancel()
+
+					_, err := c.store(consumer.Event[tm[T]]{
+						Type:     event.Delete,
+						Data:     current.Data,
+						Metadata: current.Metadata,
+					})
+					if err != nil {
+						log.AddError(err).Error("while storing finished competing consumer")
+						return
+					}
+				},
+				CTX: currentCTX,
+			}:
+				//log.Debug("wrote ", current.Data.ID)
 			}
 		}
-	}()
+	}
+}
 
-	outChan = eventChan
-	out = &c
+func (c *competing[T]) readFinished(finished <-chan consumer.ReadEvent[tm[T]]) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Crit("Recovered ", r)
+		}
+		c.readFinished(finished)
+	}()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-finished: //Not sure what to do here
+		}
+	}
+}
+
+func (c *competing[T]) startReadStream(eventStream <-chan event.ReadEvent) (selectable chan consumer.ReadEvent[tm[T]], timeout, finished <-chan consumer.ReadEvent[tm[T]], selected <-chan consumer.ReadEvent[tm[T]]) {
+	selectableChan := make(chan consumer.ReadEvent[tm[T]], 10)
+	timeoutChan := make(chan consumer.ReadEvent[tm[T]], 10)
+	finishedChan := make(chan consumer.ReadEvent[tm[T]], 10)
+	selectedChan := make(chan consumer.ReadEvent[tm[T]], 10)
+
+	go c.readStream(eventStream, selectableChan, timeoutChan, finishedChan, selectedChan)
+
+	selectable = selectableChan
+	selected = selectedChan
+	timeout = timeoutChan
+	finished = finishedChan
 	return
+}
+
+func (c *competing[T]) readStream(eventStream <-chan event.ReadEvent, selectable, timeout, finished chan<- consumer.ReadEvent[tm[T]], selected chan<- consumer.ReadEvent[tm[T]]) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Crit("Recovered ", r)
+		}
+		c.readStream(eventStream, selectable, timeout, finished, selected)
+	}()
+	for {
+		select {
+		case <-c.ctx.Done():
+			close(selectable)
+			close(timeout)
+			close(finished)
+			close(selected)
+			return
+		case ce := <-eventStream:
+			e, err := consumer.DecryptEvent[tm[T]](ce, c.cryptoKey)
+			if err != nil {
+				log.AddError(err).Error("while reading event")
+				continue
+			}
+			id := e.Data.Id
+			if e.Type == event.Delete {
+				c.finished.Store(id.String(), struct{}{})
+				finished <- e //Delete from selected
+				continue
+			}
+			_, isFinished := c.finished.Load(id.String())
+			if isFinished {
+				log.Debug("skipping event since it is finished, ", id)
+				continue
+			}
+			if e.Type == event.Create {
+				selectable <- e
+				continue
+			}
+			if time.Now().After(e.Data.Timeout) {
+				//If this is a new server and catchup is too slow, the event could in theory time out before we get back to it.
+				//  Currently considering that highly unlikely.
+				continue
+			}
+			stored, isSelected := c.selected.Load(id.String())
+			if !isSelected || e.Metadata.Created.After(stored.Data.Timeout) {
+				c.selected.Store(id.String(), e)
+				timeout <- e
+			}
+			if bytes.Equal(e.Data.Selector.Bytes(), c.selector.Bytes()) {
+				selected <- e
+				continue
+			}
+		}
+	}
 }
 
 func (c *competing[T]) Store(e consumer.Event[T]) (position uint64, err error) {
@@ -191,10 +286,10 @@ func (c *competing[T]) Store(e consumer.Event[T]) (position uint64, err error) {
 	if err != nil {
 		return
 	}
-	es := consumer.Event[handleType[T]]{
+	es := consumer.Event[tm[T]]{
 		Type: event.Create,
-		Data: handleType[T]{
-			ID:   id,
+		Data: tm[T]{
+			Id:   id,
 			Data: e.Data,
 		},
 		Metadata: e.Metadata,
@@ -202,62 +297,12 @@ func (c *competing[T]) Store(e consumer.Event[T]) (position uint64, err error) {
 	return c.store(es)
 }
 
-func (c *competing[T]) store(e consumer.Event[handleType[T]]) (position uint64, err error) {
-	es, err := consumer.EncryptEvent[handleType[T]](e, c.cryptoKey)
+func (c *competing[T]) store(e consumer.Event[tm[T]]) (position uint64, err error) {
+	es, err := consumer.EncryptEvent[tm[T]](e, c.cryptoKey)
 	if err != nil {
 		return
 	}
 	return c.stream.Store(es)
-}
-
-func (c *competing[T]) readStream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter) (out <-chan consumer.ReadEvent[handleType[T]], err error) {
-	s, err := c.stream.Stream(eventTypes, from, filter, c.ctx)
-	if err != nil {
-		return
-	}
-	eventChan := make(chan consumer.ReadEvent[handleType[T]], 10)
-	out = eventChan
-	go func() {
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case e := <-s:
-				o, err := consumer.DecryptEvent[handleType[T]](e, c.cryptoKey)
-				if err != nil {
-					log.AddError(err).Error("while reading event")
-					continue
-				}
-				if o.Type == event.Delete {
-					c.competers.Store(o.Data.ID.String(), o.Event)
-					//c.competers.Delete(o.Data.ID.String())
-					continue
-				}
-
-				lo, ok := c.competers.Load(o.Data.ID.String())
-				if ok && lo.Type == event.Update && lo.Data.Name != c.name && lo.Metadata.Created.Add(c.timeout).After(time.Now()) {
-					continue
-				}
-				c.competers.Store(o.Data.ID.String(), o.Event)
-
-				if o.Type == event.Create {
-					//c.compete(o.Event)
-					c.competableChan <- o.Event.Data.ID
-					continue
-				}
-
-				c.timeoutChan <- timeout{
-					ID:   o.Data.ID,
-					When: o.Metadata.Created.Add(c.timeout + time.Millisecond),
-				}
-				if o.Data.Name != c.name {
-					continue
-				}
-				eventChan <- o
-			}
-		}
-	}()
-	return
 }
 
 func (c *competing[T]) End() (pos uint64, err error) {
@@ -268,10 +313,11 @@ func (c *competing[T]) Name() string {
 	return c.stream.Name()
 }
 
-func (c *competing[T]) compete(e consumer.Event[handleType[T]]) {
+func (c *competing[T]) compete(e consumer.Event[tm[T]]) {
 	e.Type = event.Update
-	e.Data.Name = c.name
-	es, err := consumer.EncryptEvent[handleType[T]](e, c.cryptoKey)
+	e.Data.Selector = c.selector
+	e.Data.Timeout = time.Now().Add(c.timeout)
+	es, err := consumer.EncryptEvent[tm[T]](e, c.cryptoKey)
 	if err != nil {
 		log.AddError(err).Error("while encrypting during compete")
 		return

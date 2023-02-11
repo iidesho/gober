@@ -133,7 +133,7 @@ func TestFinishInterval(t *testing.T) {
 		wg.Wait()
 	}()
 	select {
-	case <-time.After(110 * time.Second):
+	case <-time.After(170 * time.Second):
 		t.Error("timeout on task finish")
 	case <-c:
 	}

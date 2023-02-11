@@ -151,6 +151,7 @@ func TestTimeout(t *testing.T) {
 	read = <-eventStream
 	log.Println(read)
 	read.Acc()
+	log.Println("verifying there is no extra events a peering (40s)")
 	select {
 	case <-time.After(40 * time.Second):
 	case read = <-eventStream:
