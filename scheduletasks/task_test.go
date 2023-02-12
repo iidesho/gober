@@ -13,6 +13,8 @@ import (
 )
 
 var ts Tasks[dd]
+var ts2 Tasks[dd]
+var ts3 Tasks[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -33,6 +35,34 @@ func cryptKeyProvider(_ string) string {
 
 var ct *testing.T
 
+func executeFunc(d dd) bool {
+	log.Println("Executed after time ", d, " with count ", count)
+	if count > 16 {
+		ctxGlobalCancel()
+		ct.Error("catchup ran too many times")
+		ct.FailNow()
+		return true
+	}
+	if d.Name == "test" && count != 0 {
+		ctxGlobalCancel()
+		ct.Error("task ran more than once")
+		ct.FailNow()
+		return false
+	}
+	count++
+	if count == 2 {
+		return false
+	}
+	if count%2 == 0 {
+		//return false
+	}
+	//time.Sleep(10 * time.Second)
+
+	time.Sleep(5 * time.Second)
+	defer wg.Done()
+	return true
+}
+
 func TestInit(t *testing.T) {
 	ct = t
 	store, err := inmemory.Init()
@@ -46,33 +76,17 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		return
 	}
-	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, func(d dd) bool {
-		log.Println("Executed after time ", d, " with count ", count)
-		if count > 16 {
-			ctxGlobalCancel()
-			ct.Error("catchup ran too many times")
-			ct.FailNow()
-			return true
-		}
-		if d.Name == "test" && count != 0 {
-			ctxGlobalCancel()
-			ct.Error("task ran more than once")
-			ct.FailNow()
-			return false
-		}
-		count++
-		if count == 2 {
-			return false
-		}
-		if count%2 == 0 {
-			//return false
-		}
-		//time.Sleep(10 * time.Second)
-
-		time.Sleep(5 * time.Second)
-		defer wg.Done()
-		return true
-	}, ctxGlobal)
+	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	ts2, err = Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	ts3, err = Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return

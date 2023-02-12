@@ -149,6 +149,12 @@ func (c *competing[T]) readSelected(selected <-chan consumer.ReadEvent[tm[T]], o
 	defer func() {
 		if r := recover(); r != nil {
 			log.Crit("Recovered ", r)
+			select {
+			case <-c.ctx.Done():
+				log.Debug("Recovered after context was done")
+				return
+			default:
+			}
 		}
 		c.readSelected(selected, out)
 	}()
@@ -223,20 +229,28 @@ func (c *competing[T]) startReadStream(eventStream <-chan event.ReadEvent) (sele
 	return
 }
 
+var readStreamPanicCount uint
+
 func (c *competing[T]) readStream(eventStream <-chan event.ReadEvent, selectable, timeout, finished chan<- consumer.ReadEvent[tm[T]], selected chan<- consumer.ReadEvent[tm[T]]) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Crit("Recovered ", r)
 		}
+		readStreamPanicCount++
 		c.readStream(eventStream, selectable, timeout, finished, selected)
 	}()
 	for {
 		select {
 		case <-c.ctx.Done():
-			close(selectable)
-			close(timeout)
-			close(finished)
-			close(selected)
+			if readStreamPanicCount == 0 {
+				close(selectable)
+				close(timeout)
+				close(finished)
+				close(selected)
+				log.Debug("CLOSED CHANNELS !!!!")
+			} else {
+				readStreamPanicCount--
+			}
 			return
 		case ce := <-eventStream:
 			e, err := consumer.DecryptEvent[tm[T]](ce, c.cryptoKey)
@@ -265,11 +279,15 @@ func (c *competing[T]) readStream(eventStream <-chan event.ReadEvent, selectable
 				continue
 			}
 			stored, isSelected := c.selected.Load(id.String())
-			if !isSelected || e.Metadata.Created.After(stored.Data.Timeout) {
-				c.selected.Store(id.String(), e)
-				timeout <- e
+			if isSelected && !e.Metadata.Created.After(stored.Data.Timeout) {
+				continue
 			}
+			log.Debug("storing ", e.Data.Id, " in runner ", c.selector, " with winner ", e.Data.Selector)
+			c.selected.Store(id.String(), e)
+			timeout <- e
+			log.Println(e.Data.Selector, " ", c.selector, " ", e.Data.Id)
 			if bytes.Equal(e.Data.Selector.Bytes(), c.selector.Bytes()) {
+				log.Println(e.Data.Selector, " == ", c.selector)
 				selected <- e
 				continue
 			}
@@ -322,6 +340,7 @@ func (c *competing[T]) compete(e consumer.Event[tm[T]]) {
 		log.AddError(err).Error("while encrypting during compete")
 		return
 	}
+	log.Debug("competing on ", e.Data.Id, " with runner ", c.selector)
 	_, err = c.stream.Store(es)
 	if err != nil {
 		log.AddError(err).Warning("while trying to compete")
