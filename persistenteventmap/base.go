@@ -138,7 +138,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 
 func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error) {
 	s, err := m.es.Stream(eventTypes, from, filter, ctx)
-	if err == nil {
+	if err != nil {
 		return
 	}
 	c := make(chan event.Event[DT])
