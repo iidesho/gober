@@ -3,7 +3,6 @@ package persistenteventmap
 import (
 	"context"
 	"fmt"
-	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"os"
 	"testing"
@@ -36,12 +35,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	s, err := stream.Init(store, ctxGlobal)
-	if err != nil {
-		return
-	}
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return

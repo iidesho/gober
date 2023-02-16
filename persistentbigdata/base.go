@@ -31,7 +31,7 @@ type EventMap[DT, MT any] interface {
 	Range(f func(key string, data DT) error)
 	Delete(data MT) (err error)
 	Set(data DT, meta MT) (err error)
-	//Exists(key string) (exists bool)
+	Exists(key string) (exists bool)
 }
 
 type transactionCheck struct {
@@ -76,7 +76,7 @@ type discoveryMetadata[MT any] struct {
 	Meta     metadata[MT]
 }
 
-func Init[DT, MT any](serv *webserver.Server, s stream.FilteredStream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
+func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName).
 		WithMaxTableSize(1024 * 1024 * 8).
 		WithValueLogFileSize(1024 * 1024 * 8).
@@ -437,12 +437,10 @@ func (m *mapData[DT, MT]) Range(f func(key string, data DT) error) {
 	}
 }
 
-/*
 func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
-	//_, exists = m.data.Load(key)
-	return
+	_, err := m.Get(key)
+	return err == nil
 }
-*/
 
 func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 	var ed []byte

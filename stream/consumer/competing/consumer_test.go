@@ -10,7 +10,6 @@ import (
 	"github.com/gofrs/uuid"
 
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event"
 	"github.com/cantara/gober/stream/event/store"
 	"github.com/cantara/gober/stream/event/store/inmemory"
@@ -44,12 +43,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	est, err := stream.Init(pers, ctxGlobal)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	c, err = New[dd](est, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
+	c, err = New[dd](pers, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return

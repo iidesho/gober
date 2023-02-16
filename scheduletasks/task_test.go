@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 	"sync"
@@ -72,21 +71,17 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	s, err := stream.Init(store, ctxGlobal)
-	if err != nil {
-		return
-	}
-	edt, err := Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	edt, err := Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts2, err = Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	ts2, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts3, err = Init[dd](s, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	ts3, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -167,12 +162,8 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	s, err := stream.Init(store, ctx)
-	if err != nil {
-		return
-	}
 
-	edt, err := Init[dd](s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctx) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

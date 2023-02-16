@@ -42,7 +42,7 @@ type mapData[DT any] struct {
 	getKey          func(dt DT) string
 }
 
-func Init[DT any](s stream.FilteredStream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName).
 		WithMaxTableSize(1024 * 1024 * 8).
 		WithValueLogFileSize(1024 * 1024 * 8).
@@ -59,7 +59,7 @@ func Init[DT any](s stream.FilteredStream, dataTypeName, dataTypeVersion string,
 		}
 		var pos uint64
 		err = item.Value(func(val []byte) error {
-			pos = uint64(binary.LittleEndian.Uint64(val))
+			pos = binary.LittleEndian.Uint64(val)
 			return nil
 		})
 		if err != nil {
@@ -137,7 +137,7 @@ func Init[DT any](s stream.FilteredStream, dataTypeName, dataTypeVersion string,
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
-func (m mapData[DT]) Get(key string) (data DT, err error) {
+func (m *mapData[DT]) Get(key string) (data DT, err error) {
 	var ed []byte
 	err = m.data.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
@@ -162,11 +162,11 @@ func (m mapData[DT]) Get(key string) (data DT, err error) {
 	return
 }
 
-func (m mapData[DT]) Len() (l int) {
+func (m *mapData[DT]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m mapData[DT]) Keys() (keys []string) {
+func (m *mapData[DT]) Keys() (keys []string) {
 	keys = make([]string, 0)
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
@@ -183,7 +183,7 @@ func (m mapData[DT]) Keys() (keys []string) {
 	return
 }
 
-func (m mapData[DT]) Range(f func(key string, data DT) error) {
+func (m *mapData[DT]) Range(f func(key string, data DT) error) {
 	m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
@@ -209,11 +209,11 @@ func (m mapData[DT]) Range(f func(key string, data DT) error) {
 }
 
 func (m *mapData[DT]) Exists(key string) (exists bool) {
-	//_, exists = m.data.Load(key)
-	return
+	_, err := m.Get(key)
+	return err == nil
 }
 
-func (m mapData[DT]) createEvent(data DT) (e event.Event[DT], err error) {
+func (m *mapData[DT]) createEvent(data DT) (e event.Event[DT], err error) {
 	key := m.getKey(data)
 	eventType := event.Create
 	if m.Exists(key) {

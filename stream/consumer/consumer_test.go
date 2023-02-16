@@ -43,12 +43,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	est, err := stream.Init(pers, ctxGlobal)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	c, err = New[dd](est, cryptKeyProvider, ctxGlobal)
+	c, err = New[dd](pers, cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -142,12 +137,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	est, err := stream.Init(pers, ctx)
-	if err != nil {
-		b.Error(err)
-		return
-	}
-	c, err = New[dd](est, cryptKeyProvider, ctx)
+	c, err = New[dd](pers, cryptKeyProvider, ctx)
 	if err != nil {
 		b.Error(err)
 		return

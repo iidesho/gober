@@ -30,9 +30,13 @@ type transactionCheck struct {
 	completeChan chan struct{}
 }
 
-func New[T any](s stream.FilteredStream, cryptoKey stream.CryptoKeyProvider, ctx context.Context) (out Consumer[T], err error) {
+func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, ctx context.Context) (out Consumer[T], err error) {
+	fs, err := stream.Init(s, ctx)
+	if err != nil {
+		return
+	}
 	c := consumer[T]{
-		stream:             s,
+		stream:             fs,
 		cryptoKey:          cryptoKey,
 		newTransactionChan: make(chan transactionCheck, 0),
 		completeChans:      make(map[string]transactionCheck), //NewMap[transactionCheck](),

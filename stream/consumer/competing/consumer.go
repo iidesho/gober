@@ -32,13 +32,17 @@ type tm[T any] struct {
 	Selector uuid.UUID `json:"selector"`
 }
 
-func New[T any](s stream.FilteredStream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeoutDuration time.Duration, ctx context.Context) (out Consumer[T], err error) {
+func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeoutDuration time.Duration, ctx context.Context) (out Consumer[T], err error) {
+	fs, err := stream.Init(s, ctx)
+	if err != nil {
+		return
+	}
 	name, err := uuid.NewV7()
 	if err != nil {
 		return
 	}
 	c := competing[T]{
-		stream:         s,
+		stream:         fs,
 		cryptoKey:      cryptoKey,
 		selected:       consumer.NewMap[event.ReadEvent[tm[T]]](),
 		finished:       consumer.NewMap[struct{}](),

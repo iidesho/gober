@@ -37,11 +37,7 @@ type kv[DT any] struct {
 }
 
 func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
-	s, err := stream.Init(pers, ctx)
-	if err != nil {
-		return
-	}
-	es, err := consumer.New[kv[DT]](s, p, ctx)
+	es, err := consumer.New[kv[DT]](pers, p, ctx)
 	m := mapData[DT]{
 		data:             sync.Map{},
 		eventTypeName:    eventType,

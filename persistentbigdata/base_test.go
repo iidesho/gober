@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var s stream.FilteredStream
+var s stream.Stream
 var ed EventMap[dd, dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
@@ -36,12 +36,8 @@ func TestPre(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	store, err := inmemory.Init(STREAM_NAME, ctxGlobal)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	s, err = stream.Init(store, ctxGlobal)
+	var err error
+	s, err = inmemory.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return

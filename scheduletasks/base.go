@@ -43,7 +43,7 @@ type tm[DT any] struct {
 	cancel   context.CancelFunc
 }
 
-func Init[DT any](s stream.FilteredStream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
 	dataTypeName = dataTypeName + "_scheduled"
 	es, err := competing.New[tm[DT]](s, p, store.STREAM_START, dataTypeName, time.Minute*15, ctx)
 	if err != nil {
