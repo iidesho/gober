@@ -1,51 +1,9 @@
 package event
 
 import (
-	"fmt"
+	"context"
 	"time"
-
-	"github.com/gofrs/uuid"
 )
-
-type Event struct {
-	Id       uuid.UUID `json:"id"`
-	Type     Type      `json:"type"`
-	Data     []byte    `json:"data"`
-	Metadata Metadata  `json:"metadata"`
-}
-
-type ReadEvent struct {
-	Event
-
-	//Transaction uint64    `json:"transaction"`
-	Position uint64    `json:"position"`
-	Created  time.Time `json:"created"`
-}
-
-type Type string
-
-const (
-	Create  Type = "create"
-	Update  Type = "update"
-	Delete  Type = "delete"
-	Invalid Type = "invalid"
-)
-
-func AllTypes() []Type {
-	return []Type{Create, Update, Delete}
-}
-
-func TypeFromString(s string) Type {
-	switch s {
-	case string(Create):
-		return Create
-	case string(Update):
-		return Update
-	case string(Delete):
-		return Delete
-	}
-	return Invalid
-}
 
 type Metadata struct {
 	Stream    string         `json:"stream"`
@@ -57,82 +15,68 @@ type Metadata struct {
 	Created   time.Time      `json:"created"`
 }
 
-type builder struct {
-	Id       uuid.UUID
-	Type     Type
-	Data     []byte
-	Metadata Metadata
+type Event[T any] struct {
+	Type     Type     `json:"type"`
+	Data     T        `json:"data"`
+	Metadata Metadata `json:"metadata"`
 }
 
-type Builder interface {
-	WithId(id uuid.UUID) builder
-	WithType(t Type) builder
-	WithData(data []byte) builder
-	WithMetadata(data Metadata) builder
-	BuildRead() (ev ReadEvent, err error)
-	BuildStore() (ev Event, err error)
+type ReadEvent[T any] struct {
+	Event[T]
+
+	Position uint64    `json:"position"`
+	Created  time.Time `json:"created"`
 }
 
-func NewBuilder() Builder {
-	return builder{}
+type ReadEventWAcc[T any] struct {
+	ReadEvent[T]
+
+	Acc func()
+	CTX context.Context
 }
 
-func (e builder) WithId(id uuid.UUID) builder { //This was a function that validated strings as uuids.
-	e.Id = id
-	return e
+type WriteEvent[T any] struct {
+	Event[T]
+
+	Status chan<- WriteStatus
 }
 
-func (e builder) WithType(t Type) builder {
-	e.Type = t
-	return e
+type WriteStatus struct {
+	Error    error
+	Position uint64
+	Time     time.Time
 }
 
-func (e builder) WithData(data []byte) builder {
-	e.Data = data
-	return e
+type WriteEventReadStatus[T any] interface {
+	Event() Event[T]
+	Done() <-chan struct{}
+	Close()
 }
 
-func (e builder) WithMetadata(data Metadata) builder {
-	e.Metadata = data
-	return e
-}
-
-func (e builder) BuildRead() (ev ReadEvent, err error) {
-	if e.Type == "" {
-		err = InvalidTypeError
-		return
+func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] {
+	return &writeEvent[T]{
+		event: e,
+		done:  make(chan struct{}, 1),
 	}
-	e.Metadata.EventType = e.Type
-	ev = ReadEvent{
-		Event: Event{
-			Id:       e.Id,
-			Type:     e.Type,
-			Data:     e.Data,
-			Metadata: e.Metadata,
-		},
-	}
-	return
 }
 
-func (e builder) BuildStore() (ev Event, err error) {
-	if e.Type == "" {
-		err = InvalidTypeError
-		return
-	}
-	if e.Id.IsNil() {
-		e.Id, err = uuid.NewV7()
-		if err != nil {
-			return
-		}
-	}
-	e.Metadata.EventType = e.Type
-	ev = Event{
-		Id:       e.Id,
-		Type:     e.Type,
-		Data:     e.Data,
-		Metadata: e.Metadata,
-	}
-	return
+type writeEvent[T any] struct {
+	event Event[T]
+	done  chan struct{}
 }
 
-var InvalidTypeError = fmt.Errorf("event type is invalid")
+func (e *writeEvent[T]) Event() Event[T] {
+	return e.event
+}
+
+func (e *writeEvent[T]) Done() <-chan struct{} {
+	return e.done
+}
+
+func (e *writeEvent[T]) Close() {
+	close(e.done)
+}
+
+type ByteEvent Event[[]byte]
+type ByteWriteEvent WriteEvent[[]byte]
+type ByteReadEvent ReadEvent[[]byte]

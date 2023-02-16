@@ -3,7 +3,7 @@ package eventmap
 import (
 	"context"
 	"fmt"
-	"github.com/cantara/gober/store/eventstore"
+	"github.com/cantara/gober/stream/event/store/inmemory"
 	"testing"
 
 	"github.com/google/uuid"
@@ -26,13 +26,13 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	store, err := eventstore.Init()
+	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
+	store, err := inmemory.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := Init[dd](store, "setandwait", "1.0.0", STREAM_NAME, cryptKeyProvider, ctxGlobal)
+	edt, err := Init[dd](store, "setandwait", "1.0.0", cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return

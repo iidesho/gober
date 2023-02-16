@@ -3,20 +3,19 @@ package stream
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"github.com/cantara/gober/store/eventstore"
 	"testing"
 
 	"github.com/gofrs/uuid"
 
 	log "github.com/cantara/bragi"
 
-	"github.com/cantara/gober/store"
 	"github.com/cantara/gober/stream/event"
+	"github.com/cantara/gober/stream/event/store"
+	"github.com/cantara/gober/stream/event/store/inmemory"
 )
 
-var es Stream
+var es FilteredStream
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 
@@ -32,13 +31,13 @@ type dd struct {
 }
 
 func TestInit(t *testing.T) {
-	pers, err := eventstore.Init()
+	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
+	pers, err := inmemory.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	est, err := Init(pers, STREAM_NAME, ctxGlobal)
+	est, err := Init(pers, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -48,6 +47,7 @@ func TestInit(t *testing.T) {
 }
 
 func TestStoreOrder(t *testing.T) {
+	writer := es.Write()
 	for i := 1; i <= 5; i++ {
 		data := dd{
 			Id:   i,
@@ -72,11 +72,14 @@ func TestStoreOrder(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, err = es.Store(e)
-		if err != nil {
-			t.Error(err)
-			return
-		}
+		writer <- e
+		/*
+			_, err = es.Store(e)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+		*/
 	}
 	return
 }
@@ -122,7 +125,6 @@ func TestStreamOrder(t *testing.T) {
 }
 
 func TestStoreDuplicate(t *testing.T) {
-	id := uuid.Must(uuid.NewV7())
 	for i := 0; i < 2; i++ {
 		data := dd{
 			Id:   i,
@@ -137,7 +139,6 @@ func TestStoreDuplicate(t *testing.T) {
 			return
 		}
 		e, err := event.NewBuilder().
-			WithId(id).
 			WithType(event.Create).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
@@ -148,7 +149,7 @@ func TestStoreDuplicate(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, err = es.Store(e)
+		_, err = es.Store(event.ByteEvent(e.Event))
 		if err != nil {
 			t.Error(err)
 			return
@@ -203,24 +204,20 @@ func TestTairdown(t *testing.T) {
 
 func BenchmarkStoreAndStream(b *testing.B) {
 	log.SetLevel(log.ERROR)
-	pers, err := eventstore.Init()
-	if err != nil {
-		b.Error(err)
-		return
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	est, err := Init(pers, fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	pers, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	stream, err := est.Stream([]event.Type{event.Create}, store.STREAM_START, ReadEventType(event.Create), ctx)
+	est, err := Init(pers, ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	events := make([]event.Event, b.N)
+	status := make(chan event.WriteStatus, b.N)
+	events := make([]event.ByteWriteEvent, b.N)
 	for i := 0; i < b.N; i++ {
 		data := dd{
 			Id:   i,
@@ -245,25 +242,29 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			b.Error(err)
 			return
 		}
+		events[i].Status = status
 	}
+	writer := est.Write()
 	for i := 0; i < b.N; i++ {
-		if i == 0 {
-			fmt.Println(events[i].Data)
-		}
-		_, err = est.Store(events[i])
-		if err != nil {
-			b.Error(err)
-			return
-		}
+		writer <- events[i]
+		<-status
+		/*
+			_, err = est.Store(events[i].Event)
+			if err != nil {
+				b.Error(err)
+				return
+			}
+		*/
+	}
+	stream, err := est.Stream([]event.Type{event.Create}, store.STREAM_START, ReadAll(), ctx)
+	if err != nil {
+		b.Error(err)
+		return
 	}
 	for i := 0; i < b.N; i++ {
 		e := <-stream
 		if e.Type != event.Create {
 			b.Error(fmt.Errorf("missmatch event types"))
-			return
-		}
-		if e.Id.String() == "" {
-			b.Error(fmt.Errorf("missing event id"))
 			return
 		}
 		if !bytes.Equal(e.Data, events[i].Data) {

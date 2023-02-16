@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/cantara/gober/crypto"
-	"github.com/cantara/gober/store"
+	"github.com/cantara/gober/stream/event/store"
 )
 
 type EventMap[DT any] interface {
@@ -36,12 +36,12 @@ type kv[DT any] struct {
 	Value DT     `json:"value"`
 }
 
-func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamName string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
-	s, err := stream.Init(pers, streamName, ctx)
+func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
+	s, err := stream.Init(pers, ctx)
 	if err != nil {
 		return
 	}
-	es, eventChan, err := consumer.New[kv[DT]](s, p, event.AllTypes(), store.STREAM_START, stream.ReadAll(), ctx)
+	es, err := consumer.New[kv[DT]](s, p, ctx)
 	m := mapData[DT]{
 		data:             sync.Map{},
 		eventTypeName:    eventType,
@@ -52,12 +52,16 @@ func Init[DT any](pers stream.Persistence, eventType, dataTypeVersion, streamNam
 	if err != nil {
 		return
 	}
+	readChan, err := es.Stream(event.AllTypes(), store.STREAM_START, stream.ReadAll(), ctx)
+	if err != nil {
+		return
+	}
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case e := <-eventChan:
+			case e := <-readChan:
 				func() {
 					defer e.Acc()
 					if e.Type == event.Delete {
@@ -107,13 +111,13 @@ func (m *mapData[DT]) Exists(key string) (exists bool) {
 	return
 }
 
-func (m *mapData[DT]) createEvent(key string, data DT) (e consumer.Event[kv[DT]], err error) {
+func (m *mapData[DT]) createEvent(key string, data DT) (e event.Event[kv[DT]], err error) {
 	eventType := event.Create
 	if m.Exists(key) {
 		eventType = event.Update
 	}
 
-	e = consumer.Event[kv[DT]]{
+	e = event.Event[kv[DT]]{
 		Type: eventType,
 		Data: kv[DT]{
 			Key:   key,
@@ -129,7 +133,7 @@ func (m *mapData[DT]) createEvent(key string, data DT) (e consumer.Event[kv[DT]]
 }
 
 func (m *mapData[DT]) Delete(key string) (err error) {
-	e := consumer.Event[kv[DT]]{
+	e := event.Event[kv[DT]]{
 		Type: event.Delete,
 		Data: kv[DT]{
 			Key: key,
@@ -140,8 +144,9 @@ func (m *mapData[DT]) Delete(key string) (err error) {
 			Key:      crypto.SimpleHash(key),
 		},
 	}
-
-	_, err = m.es.Store(e)
+	we := event.NewWriteEvent(e)
+	m.es.Write() <- we
+	<-we.Done() //Missing error
 	return
 }
 
@@ -151,7 +156,9 @@ func (m *mapData[DT]) Set(key string, data DT) (err error) {
 	if err != nil {
 		return
 	}
-	_, err = m.es.Store(e)
+	we := event.NewWriteEvent(e)
+	m.es.Write() <- we
+	<-we.Done() //Missing error
 	log.Println("Set and wait end")
 	return
 }

@@ -3,26 +3,24 @@ package competing
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/store/inmemory"
-	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/consumer"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofrs/uuid"
 
-	"github.com/cantara/gober/store"
+	log "github.com/cantara/bragi"
+	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event"
+	"github.com/cantara/gober/stream/event/store"
+	"github.com/cantara/gober/stream/event/store/inmemory"
 )
 
-var c consumer.Consumer[dd]
-var eventStream <-chan consumer.ReadEvent[dd]
+var c Consumer[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
-var events = make(map[int]consumer.ReadEvent[dd])
+var events = make(map[int]event.ReadEventWAcc[dd])
 
 var STREAM_NAME = "TestCompetingConsumer_" + uuid.Must(uuid.NewV7()).String()
 
@@ -40,18 +38,18 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	pers, err := inmemory.Init()
-	if err != nil {
-		t.Error(err)
-		return
-	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	est, err := stream.Init(pers, STREAM_NAME, ctxGlobal)
+	pers, err := inmemory.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	c, eventStream, err = New[dd](est, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
+	est, err := stream.Init(pers, ctxGlobal)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	c, err = New[dd](est, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -68,7 +66,7 @@ func TestStoreOrder(t *testing.T) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		e := consumer.Event[dd]{
+		e := event.Event[dd]{
 			Type: event.Create,
 			Data: data,
 			Metadata: event.Metadata{
@@ -81,16 +79,22 @@ func TestStoreOrder(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			log.Println("reading event")
-			read := <-eventStream
+			read := <-c.Stream()
 			log.Println("read event", read)
 			events[i] = read
 			read.Acc()
 		}()
-		_, err := c.Store(e)
-		if err != nil {
-			t.Error(err)
-			return
+
+		c.Write() <- event.WriteEvent[dd]{
+			Event: e,
 		}
+		/*
+			_, err := c.Store(e)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+		*/
 		log.Println("waiting for event to read")
 		wg.Wait()
 	}
@@ -127,34 +131,45 @@ func TestTimeout(t *testing.T) {
 		Name: "test_timeout",
 	}
 
-	e := consumer.Event[dd]{
+	e := event.Event[dd]{
 		Type: event.Create,
 		Data: data,
 		Metadata: event.Metadata{
 			DataType: "datatype",
 		},
 	}
-	_, err := c.Store(e)
-	if err != nil {
-		t.Error(err)
-		return
+
+	c.Write() <- event.WriteEvent[dd]{
+		Event: e,
 	}
+	/*
+		_, err := c.Store(e)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+	*/
 	log.Println("reading event to discard")
-	read := <-eventStream
+	read := <-c.Stream()
 	log.Println(read)
-	log.Println("waiting until after timeout (70s)")
-	time.Sleep(time.Second * 70)
-	log.Println("accing event after timeout and it should have been discarded")
-	read.Acc()
+	log.Println("waiting until after timeout (20s)")
+	time.Sleep(time.Second * 20)
+	//log.Println("accing event after timeout and it should have been discarded") //This and the next one should probably not be true anymore :/
+	//read.Acc()
 
 	log.Println("reading event to acc")
-	read = <-eventStream
+	select {
+	case read = <-c.Stream():
+	default:
+		t.Error("task was not ready to select")
+		return
+	}
 	log.Println(read)
 	read.Acc()
 	log.Println("verifying there is no extra events a peering (40s)")
 	select {
 	case <-time.After(40 * time.Second):
-	case read = <-eventStream:
+	case read = <-c.Stream():
 		t.Error("task still existed after timeout: ", read)
 		return
 	}

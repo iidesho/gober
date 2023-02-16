@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/store/inmemory"
 	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 	"sync"
 	"testing"
@@ -65,14 +65,14 @@ func executeFunc(d dd) bool {
 
 func TestInit(t *testing.T) {
 	ct = t
-	store, err := inmemory.Init()
+	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
+	store, err := inmemory.Init(STREAM_NAME, ctxGlobal)
 	//store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	s, err := stream.Init(store, STREAM_NAME, ctxGlobal)
+	s, err := stream.Init(store, ctxGlobal)
 	if err != nil {
 		return
 	}
@@ -160,14 +160,14 @@ func TestTairdown(t *testing.T) {
 
 func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	log.SetLevel(log.ERROR)
-	store, err := inmemory.Init()
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
+	store, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	ctx, ctxCancel := context.WithCancel(context.Background())
-	defer ctxCancel()
-	s, err := stream.Init(store, fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	s, err := stream.Init(store, ctx)
 	if err != nil {
 		return
 	}

@@ -3,23 +3,23 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"github.com/cantara/gober/store/inmemory"
+	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream"
+	"github.com/cantara/gober/stream/event/store/inmemory"
 	"sync"
 	"testing"
 
 	"github.com/gofrs/uuid"
 
-	"github.com/cantara/gober/store"
 	"github.com/cantara/gober/stream/event"
+	"github.com/cantara/gober/stream/event/store"
 )
 
 var c Consumer[dd]
-var eventStream <-chan ReadEvent[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
-var events = make(map[int]ReadEvent[dd])
+var events = make(map[int]event.ReadEvent[dd])
 
 var STREAM_NAME = "TestConsumer_" + uuid.Must(uuid.NewV7()).String()
 
@@ -37,18 +37,18 @@ func cryptKeyProvider(_ string) string {
 }
 
 func TestInit(t *testing.T) {
-	pers, err := inmemory.Init()
-	if err != nil {
-		t.Error(err)
-		return
-	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	est, err := stream.Init(pers, STREAM_NAME, ctxGlobal)
+	pers, err := inmemory.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	c, eventStream, err = New[dd](est, cryptKeyProvider, event.AllTypes(), store.STREAM_START, stream.ReadAll(), ctxGlobal)
+	est, err := stream.Init(pers, ctxGlobal)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	c, err = New[dd](est, cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -57,6 +57,13 @@ func TestInit(t *testing.T) {
 }
 
 func TestStoreOrder(t *testing.T) {
+	ctx, cancel := context.WithCancel(ctxGlobal)
+	defer cancel()
+	readEventStream, err := c.Stream(event.AllTypes(), store.STREAM_START, stream.ReadAll(), ctx)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 	for i := 1; i <= 5; i++ {
 		data := dd{
 			Id:   i,
@@ -65,7 +72,7 @@ func TestStoreOrder(t *testing.T) {
 		meta := md{
 			Extra: "extra metadata test",
 		}
-		e := Event[dd]{
+		e := event.Event[dd]{
 			Type: event.Create,
 			Data: data,
 			Metadata: event.Metadata{
@@ -76,15 +83,20 @@ func TestStoreOrder(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			read := <-eventStream
-			events[read.Data.Id] = read
+			read := <-readEventStream
+			events[read.Data.Id] = read.ReadEvent
 			read.Acc()
 		}()
-		_, err := c.Store(e)
-		if err != nil {
-			t.Error(err)
-			return
-		}
+		we := event.NewWriteEvent(e)
+		c.Write() <- we
+		<-we.Done()
+		/*
+			_, err := c.Store(e)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+		*/
 		wg.Wait()
 	}
 	return
@@ -119,4 +131,66 @@ func TestStreamOrder(t *testing.T) {
 
 func TestTairdown(t *testing.T) {
 	ctxGlobalCancel()
+}
+
+func BenchmarkStoreAndStream(b *testing.B) {
+	log.SetLevel(log.ERROR)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pers, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	est, err := stream.Init(pers, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	c, err = New[dd](est, cryptKeyProvider, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	readEventStream, err := c.Stream(event.AllTypes(), store.STREAM_START, stream.ReadAll(), ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	events := make([]event.WriteEventReadStatus[dd], b.N)
+	go func() {
+		for i := 0; i < b.N; i++ {
+			e := <-readEventStream
+			e.Acc()
+			if e.Type != event.Create {
+				b.Error(fmt.Errorf("missmatch event types"))
+				return
+			}
+			if e.Data.Id != events[i].Event().Data.Id {
+				b.Error(fmt.Errorf("missmatch event data, %v != %v", e.Data, events[i].Event().Data))
+				return
+			}
+		}
+	}()
+	writeEventStream := c.Write()
+	for i := 0; i < b.N; i++ {
+		data := dd{
+			Id:   i,
+			Name: "test" + b.Name(),
+		}
+		we := event.NewWriteEvent(event.Event[dd]{
+			Type: event.Create,
+			Data: data,
+			Metadata: event.Metadata{
+				Extra: map[string]any{"extra": "extra metadata test"},
+			},
+		})
+		events[i] = we
+		if err != nil {
+			b.Error(err)
+			return
+		}
+		writeEventStream <- events[i]
+		<-events[i].Done()
+	}
 }

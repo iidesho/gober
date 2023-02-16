@@ -2,22 +2,26 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/crypto"
-	"github.com/cantara/gober/store"
+	"github.com/cantara/gober/mergedcontext"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event"
+	"github.com/cantara/gober/stream/event/store"
 	"github.com/gofrs/uuid"
+	jsoniter "github.com/json-iterator/go"
 )
 
+var json = jsoniter.ConfigDefault
+
 type consumer[T any] struct {
-	stream             stream.Stream
+	stream             stream.FilteredStream
 	cryptoKey          stream.CryptoKeyProvider
 	newTransactionChan chan transactionCheck
 	currentPosition    uint64
 	completeChans      map[string]transactionCheck
 	accChan            chan uint64
+	writeStream        chan event.WriteEventReadStatus[T]
 	ctx                context.Context
 }
 
@@ -26,13 +30,14 @@ type transactionCheck struct {
 	completeChan chan struct{}
 }
 
-func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out Consumer[T], eventStream <-chan ReadEvent[T], err error) {
+func New[T any](s stream.FilteredStream, cryptoKey stream.CryptoKeyProvider, ctx context.Context) (out Consumer[T], err error) {
 	c := consumer[T]{
 		stream:             s,
 		cryptoKey:          cryptoKey,
 		newTransactionChan: make(chan transactionCheck, 0),
 		completeChans:      make(map[string]transactionCheck), //NewMap[transactionCheck](),
 		accChan:            make(chan uint64, 0),              //1000),
+		writeStream:        make(chan event.WriteEventReadStatus[T], 0),
 		ctx:                ctx,
 	}
 
@@ -59,21 +64,11 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, eventTypes 
 					completeChan.completeChan <- struct{}{}
 					delete(c.completeChans, id)
 				}
-				/*
-					c.completeChans.Range(func(id string, completeChan transactionCheck) bool {
-						if position < completeChan.position {
-							return true
-						}
-						completeChan.completeChan <- struct{}{}
-						c.completeChans.Delete(id)
-						return true
-					})
-				*/
 			}
 		}
 	}()
 
-	eventStream, err = c.streamReadEvents(eventTypes, from, filter)
+	err = c.streamWriteEvents(c.writeStream)
 	if err != nil {
 		return
 	}
@@ -82,8 +77,16 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, eventTypes 
 	return
 }
 
-func (c *consumer[T]) Store(e Event[T]) (position uint64, err error) {
-	es, err := EncryptEvent[T](e, c.cryptoKey)
+func (c *consumer[T]) Write() chan<- event.WriteEventReadStatus[T] {
+	return c.writeStream
+}
+
+func (c *consumer[T]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.ReadEventWAcc[T], err error) {
+	return c.streamReadEvents(eventTypes, from, filter, ctx)
+}
+
+func (c *consumer[T]) store(e event.WriteEventReadStatus[T]) (position uint64, err error) {
+	es, err := EncryptEvent[T](e.Event(), c.cryptoKey)
 	if err != nil {
 		return
 	}
@@ -92,27 +95,48 @@ func (c *consumer[T]) Store(e Event[T]) (position uint64, err error) {
 		return
 	}
 
-	completeChan := make(chan struct{})
-	defer close(completeChan)
-	c.newTransactionChan <- transactionCheck{
-		position:     position,
-		completeChan: completeChan,
-	}
-	<-completeChan
+	go func() {
+		completeChan := make(chan struct{})
+		defer close(completeChan)
+		c.newTransactionChan <- transactionCheck{
+			position:     position,
+			completeChan: completeChan,
+		}
+		<-completeChan
+		e.Close()
+	}()
 	return
 }
 
-func (c *consumer[T]) streamReadEvents(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter) (out <-chan ReadEvent[T], err error) {
-	s, err := c.stream.Stream(eventTypes, from, filter, c.ctx)
-	if err != nil {
-		return
-	}
-	eventChan := make(chan ReadEvent[T], 0)
-	out = eventChan
+func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadStatus[T]) (err error) {
 	go func() {
 		for {
 			select {
 			case <-c.ctx.Done():
+				return
+			case e := <-eventStream:
+				p, err := c.store(e)
+				log.AddError(err).Debug("store at pos ", p)
+			}
+		}
+	}()
+	return
+}
+
+func (c *consumer[T]) streamReadEvents(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.ReadEventWAcc[T], err error) {
+	mctx, cancel := mergedcontext.MergeContexts(c.ctx, ctx)
+	s, err := c.stream.Stream(eventTypes, from, filter, mctx)
+	if err != nil {
+		cancel()
+		return
+	}
+	eventChan := make(chan event.ReadEventWAcc[T], 0)
+	out = eventChan
+	go func() {
+		defer cancel()
+		for {
+			select {
+			case <-mctx.Done():
 				return
 			case e := <-s:
 				o, err := DecryptEvent[T](e, c.cryptoKey)
@@ -120,11 +144,13 @@ func (c *consumer[T]) streamReadEvents(eventTypes []event.Type, from store.Strea
 					log.AddError(err).Error("while reading event")
 					continue
 				}
-				o.Acc = func() {
-					c.accChan <- o.Position
+				eventChan <- event.ReadEventWAcc[T]{
+					ReadEvent: o,
+					Acc: func() {
+						c.accChan <- o.Position
+					},
+					CTX: c.ctx,
 				}
-				o.CTX = c.ctx
-				eventChan <- o
 			}
 		}
 	}()
@@ -139,7 +165,7 @@ func (c *consumer[T]) Name() string {
 	return c.stream.Name()
 }
 
-func EncryptEvent[T any](e Event[T], cryptoKey stream.CryptoKeyProvider) (es event.Event, err error) {
+func EncryptEvent[T any](e event.Event[T], cryptoKey stream.CryptoKeyProvider) (es event.ByteEvent, err error) {
 	data, err := json.Marshal(e.Data)
 	if err != nil {
 		return
@@ -148,7 +174,7 @@ func EncryptEvent[T any](e Event[T], cryptoKey stream.CryptoKeyProvider) (es eve
 	if err != nil {
 		return
 	}
-	es, err = event.NewBuilder().
+	ev, err := event.NewBuilder().
 		WithType(e.Type).
 		WithMetadata(e.Metadata).
 		WithData(edata).
@@ -156,10 +182,11 @@ func EncryptEvent[T any](e Event[T], cryptoKey stream.CryptoKeyProvider) (es eve
 	if err != nil {
 		return
 	}
+	es = event.ByteEvent(ev.Event)
 	return
 }
 
-func DecryptEvent[T any](e event.ReadEvent, cryptoKey stream.CryptoKeyProvider) (out ReadEvent[T], err error) {
+func DecryptEvent[T any](e event.ByteReadEvent, cryptoKey stream.CryptoKeyProvider) (out event.ReadEvent[T], err error) {
 	dataJson, err := crypto.Decrypt(e.Data, cryptoKey(e.Metadata.Key))
 	if err != nil {
 		log.AddError(err).Warning("Decrypting event data error")
@@ -171,13 +198,14 @@ func DecryptEvent[T any](e event.ReadEvent, cryptoKey stream.CryptoKeyProvider) 
 		log.AddError(err).Warning("Unmarshalling event data error")
 		return
 	}
-	out = ReadEvent[T]{
-		Event: Event[T]{
+	out = event.ReadEvent[T]{
+		Event: event.Event[T]{
 			Type:     e.Type,
 			Data:     data,
 			Metadata: e.Metadata,
 		},
 		Position: e.Position,
+		Created:  e.Created,
 	}
 	return
 }

@@ -12,10 +12,19 @@ type Event struct {
 	Type     event.Type `json:"type"`
 	Data     []byte     `json:"data"`
 	Metadata []byte     `json:"metadata"`
+}
 
-	//Transaction uint64    `json:"transaction"`
+type ReadEvent struct {
+	Event
+
 	Position uint64    `json:"position"`
 	Created  time.Time `json:"created"`
+}
+
+type WriteEvent struct {
+	Event
+
+	Status chan<- event.WriteStatus
 }
 
 type StreamPosition uint64

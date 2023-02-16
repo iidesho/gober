@@ -19,19 +19,19 @@ import (
 	log "github.com/cantara/bragi"
 
 	"github.com/cantara/gober/crypto"
-	"github.com/cantara/gober/store"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event"
+	"github.com/cantara/gober/stream/event/store"
 )
 
 type EventMap[DT, MT any] interface {
 	Get(key string) (data DT, err error)
-	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
 	Range(f func(key string, data DT) error)
 	Delete(data MT) (err error)
 	Set(data DT, meta MT) (err error)
+	//Exists(key string) (exists bool)
 }
 
 type transactionCheck struct {
@@ -76,7 +76,7 @@ type discoveryMetadata[MT any] struct {
 	Meta     metadata[MT]
 }
 
-func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
+func Init[DT, MT any](serv *webserver.Server, s stream.FilteredStream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName).
 		WithMaxTableSize(1024 * 1024 * 8).
 		WithValueLogFileSize(1024 * 1024 * 8).
@@ -154,7 +154,7 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 		}
 		var pos uint64
 		err = item.Value(func(val []byte) error {
-			pos = uint64(binary.LittleEndian.Uint64(val))
+			pos = binary.LittleEndian.Uint64(val)
 			return nil
 		})
 		if err != nil {
@@ -163,11 +163,16 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	es, eventChan, err := consumer.New[discoveryMetadata[MT]](s, m.provider, event.AllTypes(), from, stream.ReadDataType(dataTypeName), m.ctx)
+	es, err := consumer.New[discoveryMetadata[MT]](s, m.provider, m.ctx)
 	if err != nil {
 		return
 	}
 	m.es = es
+
+	eventChan, err := es.Stream(event.AllTypes(), from, stream.ReadDataType(dataTypeName), ctx)
+	if err != nil {
+		return
+	}
 
 	go func() {
 		for {
@@ -178,10 +183,10 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 				func() {
 					defer e.Acc()
 					if e.Type == event.Delete {
-						m.delete(e)
+						m.delete(e.ReadEvent)
 						return
 					}
-					m.create(e)
+					m.create(e.ReadEvent)
 				}()
 			}
 		}
@@ -191,7 +196,7 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 	return
 }
 
-func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
+func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 	dmd := e.Data
 	if dmd.Action == query {
 		if dmd.Instance == m.instance {
@@ -214,7 +219,7 @@ func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 			Action:   response,
 		}
 
-		es := consumer.Event[discoveryMetadata[MT]]{
+		es := event.Event[discoveryMetadata[MT]]{
 			Type: event.Update,
 			Data: dmd,
 			Metadata: event.Metadata{
@@ -224,10 +229,15 @@ func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 				Extra:    map[string]any{"instance": m.instance},
 			},
 		}
-		_, err = m.es.Store(es)
-		if err != nil {
-			return
-		}
+		we := event.NewWriteEvent(es)
+		m.es.Write() <- we
+		<-we.Done() //Missing error
+		/*
+			_, err = m.es.Store(es)
+			if err != nil {
+				return
+			}
+		*/
 		return
 	}
 	if dmd.Instance != m.instance {
@@ -249,7 +259,7 @@ func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 				Action:   query,
 			}
 
-			es := consumer.Event[discoveryMetadata[MT]]{
+			es := event.Event[discoveryMetadata[MT]]{
 				Type: event.Update,
 				Data: dmd,
 				Metadata: event.Metadata{
@@ -259,11 +269,16 @@ func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 					Extra:    map[string]any{"instance": m.instance},
 				},
 			}
-			_, err = m.es.Store(es)
-			if err != nil {
-				log.AddError(err).Error("unable to store query event after get miss")
-				return
-			}
+			we := event.NewWriteEvent(es)
+			m.es.Write() <- we
+			<-we.Done() //Missing error
+			/*
+				_, err = m.es.Store(es)
+				if err != nil {
+					log.AddError(err).Error("unable to store query event after get miss")
+					return
+				}
+			*/
 			return
 		}
 		err = m.data.Update(func(txn *badger.Txn) error {
@@ -285,7 +300,7 @@ func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 			return err
 		}
 		if e.Type == event.Update {
-			err = txn.Delete([]byte(dmd.Meta.OldId.Bytes()))
+			err = txn.Delete(dmd.Meta.OldId.Bytes())
 			if err != nil {
 				return err
 			}
@@ -301,10 +316,10 @@ func (m *mapData[DT, MT]) create(e consumer.ReadEvent[discoveryMetadata[MT]]) {
 	}
 }
 
-func (m *mapData[DT, MT]) delete(e consumer.ReadEvent[discoveryMetadata[MT]]) {
+func (m *mapData[DT, MT]) delete(e event.ReadEvent[discoveryMetadata[MT]]) {
 	err := m.data.Update(func(txn *badger.Txn) error {
 
-		err := txn.Delete([]byte(e.Data.Meta.OldId.Bytes()))
+		err := txn.Delete(e.Data.Meta.OldId.Bytes())
 		if err != nil {
 			return err
 		}
@@ -374,7 +389,7 @@ func (m *mapData[DT, MT]) Len() (l int) {
 
 func (m *mapData[DT, MT]) Keys() (keys []string) {
 	keys = make([]string, 0)
-	m.data.View(func(txn *badger.Txn) error {
+	err := m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
@@ -386,11 +401,15 @@ func (m *mapData[DT, MT]) Keys() (keys []string) {
 		}
 		return nil
 	})
+	if err != nil {
+		log.AddError(err).Error("while reading bigdata disc store")
+		return
+	}
 	return
 }
 
 func (m *mapData[DT, MT]) Range(f func(key string, data DT) error) {
-	m.data.View(func(txn *badger.Txn) error {
+	err := m.data.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 10
 		it := txn.NewIterator(opts)
@@ -412,12 +431,18 @@ func (m *mapData[DT, MT]) Range(f func(key string, data DT) error) {
 		}
 		return nil
 	})
+	if err != nil {
+		log.AddError(err).Error("while reading bigdata disc store")
+		return
+	}
 }
 
+/*
 func (m *mapData[DT, MT]) Exists(key string) (exists bool) {
 	//_, exists = m.data.Load(key)
 	return
 }
+*/
 
 func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 	var ed []byte
@@ -442,7 +467,7 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 	if err != nil {
 		return
 	}
-	e := consumer.Event[discoveryMetadata[MT]]{
+	e := event.Event[discoveryMetadata[MT]]{
 		Type: event.Delete,
 		Data: discoveryMetadata[MT]{
 			Meta: md,
@@ -454,7 +479,12 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 		},
 	}
 
-	_, err = m.es.Store(e)
+	we := event.NewWriteEvent(e)
+	m.es.Write() <- we
+	<-we.Done() //Missing error
+	/*
+		_, err = m.es.Store(e)
+	*/
 	return
 }
 
@@ -502,7 +532,7 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 		Action:   update,
 	}
 
-	e := consumer.Event[discoveryMetadata[MT]]{
+	e := event.Event[discoveryMetadata[MT]]{
 		Type: eventType,
 		Data: dmd,
 		Metadata: event.Metadata{
@@ -524,10 +554,15 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 	if err != nil {
 		return
 	}
-	_, err = m.es.Store(e)
-	if err != nil {
-		return
-	}
+	we := event.NewWriteEvent(e)
+	m.es.Write() <- we
+	<-we.Done() //Missing error
+	/*
+		_, err = m.es.Store(e)
+		if err != nil {
+			return
+		}
+	*/
 	return
 }
 
@@ -540,7 +575,12 @@ func externalImage[DT any](url string) (d DT, raw []byte, err error) {
 		err = fmt.Errorf("get miss")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			log.AddError(err).Debug("while closing response body")
+		}
+	}()
 	raw, err = io.ReadAll(resp.Body)
 	if err == nil {
 		return
