@@ -21,6 +21,7 @@ type EventMap[DT any] interface {
 	Range(f func(key, value any) bool)
 	Delete(key string) (err error)
 	Set(key string, data DT) (err error)
+	Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error)
 }
 
 type mapData[DT any] struct {
@@ -71,6 +72,30 @@ func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p strea
 	}()
 
 	ed = &m
+	return
+}
+
+func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error) {
+	s, err := m.es.Stream(eventTypes, from, filter, ctx)
+	if err == nil {
+		return
+	}
+	c := make(chan event.Event[DT])
+	go func() {
+		for e := range s {
+			select {
+			case <-ctx.Done():
+				return
+			case c <- event.Event[DT]{
+				Type:     e.Type,
+				Data:     e.Event.Data.Value,
+				Metadata: e.Metadata,
+			}:
+				continue
+			}
+		}
+	}()
+	out = c
 	return
 }
 
