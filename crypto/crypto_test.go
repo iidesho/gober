@@ -55,11 +55,11 @@ func BenchmarkHashSCrypt(b *testing.B) {
 				log.Fatal(err)
 			}
 				out := base64.StdEncoding.EncodeToString(d)
-				log.Println(out)
+				log.Info(out)
 				out = strings.TrimRight(out, "=")
 				out = strings.ReplaceAll(out, "+", "-")
 				out = strings.ReplaceAll(out, "/", "_")
-				log.Println(out)
+				log.Info(out)
 		*/
 	}
 }

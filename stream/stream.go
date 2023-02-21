@@ -2,7 +2,7 @@ package stream
 
 import (
 	"context"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/mergedcontext"
 	jsoniter "github.com/json-iterator/go"
 	"time"
@@ -141,7 +141,7 @@ func (es eventService) Stream(eventTypes []event.Type, from store.StreamPosition
 				var metadata event.Metadata
 				err := json.Unmarshal(e.Metadata, &metadata)
 				if err != nil {
-					log.AddError(err).Warning("Unmarshalling event metadata error")
+					log.WithError(err).Warning("Unmarshalling event metadata error")
 					continue
 				}
 				if filter(metadata) {

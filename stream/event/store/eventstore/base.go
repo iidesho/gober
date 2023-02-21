@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream/event"
 	"time"
 
@@ -150,7 +150,7 @@ func (s *Stream) Stream(from store.StreamPosition, ctx context.Context) (out <-c
 func (s *Stream) readStream(esFrom *esdb.StreamPosition, backoff time.Duration, eventChan chan<- store.ReadEvent, ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("recovered panic: ", r)
+			log.Error("recovered", "error", r)
 			s.readStream(esFrom, backoff*2, eventChan, ctx)
 		}
 	}()
@@ -158,12 +158,12 @@ func (s *Stream) readStream(esFrom *esdb.StreamPosition, backoff time.Duration, 
 		From: *esFrom,
 	})
 	if err != nil {
-		log.AddError(err).Debug("while subscribing to stream ", s.name)
+		log.WithError(err).Debug("while subscribing to stream ", s.name)
 		time.Sleep(backoff * time.Second)
 		return
 	}
 	defer func() {
-		log.AddError(stream.Close()).Debug("Closing stream")
+		log.WithError(stream.Close()).Debug("Closing stream")
 	}() // Needed to not evaluate stream.Close() before defer is executed
 	subscriptionDropped := false
 	for !subscriptionDropped {

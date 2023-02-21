@@ -9,7 +9,7 @@ import (
 
 	"github.com/gofrs/uuid"
 
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream/event"
 	"github.com/cantara/gober/stream/event/store"
 	"github.com/cantara/gober/stream/event/store/inmemory"
@@ -72,9 +72,9 @@ func TestStoreOrder(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			log.Println("reading event")
+			log.Info("reading event")
 			read := <-c.Stream()
-			log.Println("read event", read)
+			log.Info("read event", read)
 			events[i] = read
 			read.Acc()
 		}()
@@ -89,7 +89,7 @@ func TestStoreOrder(t *testing.T) {
 				return
 			}
 		*/
-		log.Println("waiting for event to read")
+		log.Info("waiting for event to read")
 		wg.Wait()
 	}
 	return
@@ -98,7 +98,7 @@ func TestStoreOrder(t *testing.T) {
 func TestStreamOrder(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		e := events[i]
-		log.Println(e)
+		log.Info("events", "events", e)
 		if e.Data.Id != i {
 			t.Error(fmt.Errorf("missmatch event data id: %d != %d", e.Data.Id, i))
 			return
@@ -143,24 +143,24 @@ func TestTimeout(t *testing.T) {
 			return
 		}
 	*/
-	log.Println("reading event to discard")
+	log.Info("reading event to discard")
 	read := <-c.Stream()
-	log.Println(read)
-	log.Println("waiting until after timeout (20s)")
+	log.Info("read", "event", read)
+	log.Info("waiting until after timeout (20s)")
 	time.Sleep(time.Second * 20)
-	//log.Println("accing event after timeout and it should have been discarded") //This and the next one should probably not be true anymore :/
+	//log.Info("accing event after timeout and it should have been discarded") //This and the next one should probably not be true anymore :/
 	//read.Acc()
 
-	log.Println("reading event to acc")
+	log.Info("reading event to acc")
 	select {
 	case read = <-c.Stream():
 	default:
 		t.Error("task was not ready to select")
 		return
 	}
-	log.Println(read)
+	log.Info("read", "event", read)
 	read.Acc()
-	log.Println("verifying there is no extra events a peering (40s)")
+	log.Info("verifying there is no extra events a peering (40s)")
 	select {
 	case <-time.After(40 * time.Second):
 	case read = <-c.Stream():

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/stream/event"
@@ -80,7 +80,7 @@ func (c *competing[T]) Stream() <-chan event.ReadEventWAcc[T] {
 func (c *competing[T]) readSelectables(selectable <-chan event.ReadEvent[tm[T]]) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("Recovered ", r)
+			log.Error("recovered", "error", r)
 			c.readSelectables(selectable)
 		}
 	}()
@@ -111,7 +111,7 @@ func (c *competing[T]) readSelectables(selectable <-chan event.ReadEvent[tm[T]])
 func (c *competing[T]) readTimeout(timeout <-chan event.ReadEvent[tm[T]], selectable chan<- event.ReadEvent[tm[T]]) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("Recovered ", r)
+			log.Error("recovered", "error", r)
 			c.readTimeout(timeout, selectable)
 		}
 	}()
@@ -123,7 +123,7 @@ func (c *competing[T]) readTimeout(timeout <-chan event.ReadEvent[tm[T]], select
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {
-						log.Crit("Hid panic ", r)
+						log.Error("recovered", "error", r)
 					}
 				}()
 				id := newTimeout.Data.Id
@@ -163,7 +163,7 @@ func (c *competing[T]) readTimeout(timeout <-chan event.ReadEvent[tm[T]], select
 func (c *competing[T]) readSelected(selected <-chan event.ReadEvent[tm[T]], out chan<- event.ReadEventWAcc[T]) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("Recovered ", r)
+			log.Error("recovered", "error", r)
 			c.readSelected(selected, out)
 		}
 	}()
@@ -197,7 +197,7 @@ func (c *competing[T]) readSelected(selected <-chan event.ReadEvent[tm[T]], out 
 						Metadata: current.Metadata,
 					}, c.cryptoKey)
 					if err != nil {
-						log.AddError(err).Error("while encrypting acc event")
+						log.WithError(err).Error("while encrypting acc event")
 						return
 					}
 					c.stream.Write() <- event.ByteWriteEvent{
@@ -205,7 +205,7 @@ func (c *competing[T]) readSelected(selected <-chan event.ReadEvent[tm[T]], out 
 					}
 					/*
 						if err != nil {
-							log.AddError(err).Error("while storing finished competing consumer")
+							log.WithError(err).Error("while storing finished competing consumer")
 							return
 						}
 					*/
@@ -221,7 +221,7 @@ func (c *competing[T]) readSelected(selected <-chan event.ReadEvent[tm[T]], out 
 func (c *competing[T]) readFinished(finished <-chan event.ReadEvent[tm[T]]) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("Recovered ", r)
+			log.Error("recovered", "error", r)
 			c.readFinished(finished)
 		}
 	}()
@@ -252,7 +252,7 @@ func (c *competing[T]) startReadStream(eventStream <-chan event.ByteReadEvent) (
 func (c *competing[T]) readStream(eventStream <-chan event.ByteReadEvent, selectable, timeout, finished chan<- event.ReadEvent[tm[T]], selected chan<- event.ReadEvent[tm[T]]) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("Recovered ", r)
+			log.Error("recovered", "error", r)
 			c.readStream(eventStream, selectable, timeout, finished, selected)
 		}
 	}()
@@ -268,7 +268,7 @@ func (c *competing[T]) readStream(eventStream <-chan event.ByteReadEvent, select
 		case ce := <-eventStream:
 			e, err := consumer.DecryptEvent[tm[T]](ce, c.cryptoKey)
 			if err != nil {
-				log.AddError(err).Error("while reading event")
+				log.WithError(err).Error("while reading event")
 				continue
 			}
 			id := e.Data.Id
@@ -298,9 +298,9 @@ func (c *competing[T]) readStream(eventStream <-chan event.ByteReadEvent, select
 			//log.Debug("storing ", e.Data.Id, " in runner ", c.selector, " with winner ", e.Data.Selector)
 			c.selected.Store(id.String(), e)
 			timeout <- e
-			//log.Println(e.Data.Selector, " ", c.selector, " ", e.Data.Id)
+			//log.Info(e.Data.Selector, " ", c.selector, " ", e.Data.Id)
 			if bytes.Equal(e.Data.Selector.Bytes(), c.selector.Bytes()) {
-				///log.Println(e.Data.Selector, " == ", c.selector)
+				///log.Info(e.Data.Selector, " == ", c.selector)
 				selected <- e
 				continue
 			}
@@ -311,7 +311,7 @@ func (c *competing[T]) readStream(eventStream <-chan event.ByteReadEvent, select
 func (c *competing[T]) readWrites(events <-chan event.WriteEvent[T]) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Crit("Recovered ", r)
+			log.Error("recovered", "error", r)
 			c.readWrites(events)
 		}
 	}()
@@ -371,14 +371,14 @@ func (c *competing[T]) compete(e event.Event[tm[T]]) {
 	e.Data.Timeout = time.Now().Add(c.timeout)
 	es, err := consumer.EncryptEvent[tm[T]](e, c.cryptoKey)
 	if err != nil {
-		log.AddError(err).Error("while encrypting during compete")
+		log.WithError(err).Error("while encrypting during compete")
 		return
 	}
 	//log.Debug("competing on ", e.Data.Id, " with runner ", c.selector)
 
 	_, err = c.stream.Store(es)
 	if err != nil {
-		log.AddError(err).Warning("while trying to compete")
+		log.WithError(err).Warning("while trying to compete")
 		return
 	}
 }

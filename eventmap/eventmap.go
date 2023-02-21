@@ -3,7 +3,7 @@ package eventmap
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/stream/event"
@@ -172,7 +172,7 @@ func (m *mapData[DT]) Delete(key string) (err error) {
 }
 
 func (m *mapData[DT]) Set(key string, data DT) (err error) {
-	log.Println("Set and wait start")
+	log.Trace("Set and wait start", "key", key)
 	e, err := m.createEvent(key, data)
 	if err != nil {
 		return
@@ -180,6 +180,6 @@ func (m *mapData[DT]) Set(key string, data DT) (err error) {
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
 	<-we.Done() //Missing error
-	log.Println("Set and wait end")
+	log.Trace("Set and wait end", "key", key)
 	return
 }

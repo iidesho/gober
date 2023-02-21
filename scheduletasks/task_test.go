@@ -3,7 +3,7 @@ package tasks
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 	"sync"
@@ -35,7 +35,7 @@ func cryptKeyProvider(_ string) string {
 var ct *testing.T
 
 func executeFunc(d dd) bool {
-	log.Println("Executed after time ", d, " with count ", count)
+	log.Info("Executed after time ", d, " with count ", count)
 	if count > 16 {
 		ctxGlobalCancel()
 		ct.Error("catchup ran too many times")
@@ -154,7 +154,7 @@ func TestTairdown(t *testing.T) {
 }
 
 func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
-	log.SetLevel(log.ERROR)
+	//log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 	store, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
@@ -163,7 +163,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		return
 	}
 
-	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Println(d); return true }, ctx) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Info("benchmark task ran", "data", d); return true }, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

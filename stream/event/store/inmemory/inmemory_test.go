@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/gofrs/uuid"
 
 	"github.com/cantara/gober/stream/event"
@@ -156,7 +156,7 @@ func TestTeardown(t *testing.T) {
 }
 
 func BenchmarkStoreAndStream(b *testing.B) {
-	log.SetLevel(log.ERROR)
+	//log.SetLevel(log.ERROR) TODO: should add to sbragi
 	log.Debug("b.N ", b.N)
 	data := make(map[string]interface{})
 	data["id"] = 1

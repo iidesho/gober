@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 )
 
 var Version string
@@ -39,7 +39,8 @@ func GetOutboundIP() net.IP {
 	}
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		log.Fatal(err)
+		log.WithError(err).Error("unable to get outbound ip")
+		return nil
 	}
 	defer conn.Close()
 

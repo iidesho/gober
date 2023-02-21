@@ -2,7 +2,7 @@ package consumer
 
 import (
 	"context"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/mergedcontext"
 	"github.com/cantara/gober/stream"
@@ -120,7 +120,7 @@ func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadS
 				return
 			case e := <-eventStream:
 				p, err := c.store(e)
-				log.AddError(err).Debug("store at pos ", p)
+				log.WithError(err).Debug("store at pos ", p)
 			}
 		}
 	}()
@@ -145,7 +145,7 @@ func (c *consumer[T]) streamReadEvents(eventTypes []event.Type, from store.Strea
 			case e := <-s:
 				o, err := DecryptEvent[T](e, c.cryptoKey)
 				if err != nil {
-					log.AddError(err).Error("while reading event")
+					log.WithError(err).Error("while reading event")
 					continue
 				}
 				eventChan <- event.ReadEventWAcc[T]{
@@ -193,13 +193,13 @@ func EncryptEvent[T any](e event.Event[T], cryptoKey stream.CryptoKeyProvider) (
 func DecryptEvent[T any](e event.ByteReadEvent, cryptoKey stream.CryptoKeyProvider) (out event.ReadEvent[T], err error) {
 	dataJson, err := crypto.Decrypt(e.Data, cryptoKey(e.Metadata.Key))
 	if err != nil {
-		log.AddError(err).Warning("Decrypting event data error")
+		log.WithError(err).Warning("Decrypting event data error")
 		return
 	}
 	var data T
 	err = json.Unmarshal(dataJson, &data)
 	if err != nil {
-		log.AddError(err).Warning("Unmarshalling event data error")
+		log.WithError(err).Warning("Unmarshalling event data error")
 		return
 	}
 	out = event.ReadEvent[T]{

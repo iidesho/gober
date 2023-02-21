@@ -8,8 +8,6 @@ import (
 
 	"github.com/gofrs/uuid"
 
-	log "github.com/cantara/bragi"
-
 	"github.com/cantara/gober/stream/event"
 	"github.com/cantara/gober/stream/event/store"
 	"github.com/cantara/gober/stream/event/store/inmemory"
@@ -203,7 +201,7 @@ func TestTairdown(t *testing.T) {
 }
 
 func BenchmarkStoreAndStream(b *testing.B) {
-	log.SetLevel(log.ERROR)
+	//log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pers, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)

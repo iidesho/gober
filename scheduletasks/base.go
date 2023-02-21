@@ -3,7 +3,7 @@ package tasks
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream/consumer/competing"
 	"time"
 
@@ -67,7 +67,9 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 				return
 			case e := <-es.Stream():
 				go func() {
-					log.Printf("waiting until it is time to do work, from %v to %v with waiting time of %v", e.Data.Metadata.After, time.Now(), e.Data.Metadata.After.Sub(time.Now()))
+					from, to, waitTime := e.Data.Metadata.After, time.Now(), e.Data.Metadata.After.Sub(time.Now())
+					log.Trace(fmt.Sprintf("waiting until it is time to do work, from %v to %v with waiting time of %v", from, to, waitTime),
+						"from", from, "to", to, "wait_time", waitTime)
 					select {
 					case <-t.ctx.Done():
 						return
@@ -87,7 +89,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					}
 					/*
 						if err != nil {
-							log.AddError(err).Error("while creating scheduled task")
+							log.WithError(err).Error("while creating scheduled task")
 							return
 						}
 					*/
@@ -107,7 +109,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					defer func() {
 						err := recover()
 						if err != nil {
-							log.AddError(fmt.Errorf("%v", err)).Crit("panic while executing")
+							log.WithError(fmt.Errorf("%v", err)).Error("panic while executing")
 							return
 						}
 					}()
@@ -121,7 +123,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					if e.Data.Metadata.Interval != NoInterval {
 						err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
 						if err != nil {
-							log.AddError(err).Crit("while creating event for finished action in scheduled task")
+							log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
 							return
 						}
 					}

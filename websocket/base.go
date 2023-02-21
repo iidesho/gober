@@ -2,7 +2,7 @@ package websocket
 
 import (
 	"context"
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/gin-gonic/gin"
 	"nhooyr.io/websocket"
 )
@@ -14,9 +14,12 @@ func Websocket(r *gin.RouterGroup, path string, acceptFunc func(c *gin.Context) 
 		}
 		s, err := websocket.Accept(c.Writer, c.Request, nil)
 		if err != nil {
-			log.AddError(err).Fatal("while accepting websocket")
+			log.WithError(err).Fatal("while accepting websocket", "request", c.Request)
 		}
-		defer s.Close(websocket.StatusNormalClosure, "") //Could be smart to do something here to fix / tell people of errors.
+		defer func() {
+			err = s.Close(websocket.StatusNormalClosure, "")
+			log.WithError(err).Info("closing websocket")
+		}() //Could be smart to do something here to fix / tell people of errors.
 		for wsfunc(c.Request.Context(), s, c.Params) {
 		}
 	})

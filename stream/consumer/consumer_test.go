@@ -3,7 +3,6 @@ package consumer
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"sync"
@@ -129,7 +128,7 @@ func TestTairdown(t *testing.T) {
 }
 
 func BenchmarkStoreAndStream(b *testing.B) {
-	log.SetLevel(log.ERROR)
+	//log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pers, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)

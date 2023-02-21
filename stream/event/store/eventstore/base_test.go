@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/EventStore/EventStore-Client-Go/esdb"
-	log "github.com/cantara/bragi"
 	jsoniter "github.com/json-iterator/go"
 	"sync"
 	"testing"
@@ -102,7 +101,7 @@ func TestTeardown(t *testing.T) {
 var once sync.Once
 
 func BenchmarkStoreAndStream(b *testing.B) {
-	log.SetLevel(log.ERROR)
+	//log.SetLevel(log.ERROR) TODO: Should add to sbragi
 	fmt.Println("b.N ", b.N)
 	data := make(map[string]interface{})
 	data["id"] = 1
@@ -226,11 +225,11 @@ func BenchmarkEventStore(b *testing.B) {
 					From: esdb.Start{},
 				})
 				if err != nil {
-					log.AddError(err).Debug("while subscribing to stream ", sn)
+					log.WithError(err).Debug("while subscribing to stream ", sn)
 					time.Sleep(time.Second)
 					return
 				}
-				defer log.AddError(stream.Close()).Error("Closing stream")
+				defer log.WithError(stream.Close()).Error("Closing stream")
 				subscriptionDropped := false
 				for !subscriptionDropped {
 					select {
@@ -239,7 +238,7 @@ func BenchmarkEventStore(b *testing.B) {
 					default:
 						subEvent := stream.Recv()
 						if subEvent.SubscriptionDropped != nil {
-							log.AddError(subEvent.SubscriptionDropped.Error).Error("subscription is dropped")
+							log.WithError(subEvent.SubscriptionDropped.Error).Error("subscription is dropped")
 							subscriptionDropped = true
 							break
 						}

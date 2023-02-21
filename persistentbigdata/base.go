@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"strings"
 
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/stream"
@@ -131,14 +131,14 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 				webserver.ErrorResponse(c, err.Error(), http.StatusNotFound)
 				return
 			}
-			log.AddError(err).Error("while getting data for sync request")
+			log.WithError(err).Error("while getting data for sync request")
 			webserver.ErrorResponse(c, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		var data DT
 		err = json.Unmarshal(dataByte, &data)
 		if err != nil {
-			log.AddError(err).Error("while unmarshalling get request for big data")
+			log.WithError(err).Error("while unmarshalling get request for big data")
 			webserver.ErrorResponse(c, "json umarshal error", http.StatusInternalServerError)
 			return
 		}
@@ -251,7 +251,7 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 		}
 		_, raw, err := externalImage[DT](dmd.Endpoint)
 		if err != nil {
-			log.AddError(err).Warning("while getting updated big data") // Should probably use tasks to verify completions instead.
+			log.WithError(err).Warning("while getting updated big data") // Should probably use tasks to verify completions instead.
 			dmd = discoveryMetadata[MT]{
 				Key:      dmd.Key,
 				Instance: m.instance,
@@ -275,7 +275,7 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 			/*
 				_, err = m.es.Store(es)
 				if err != nil {
-					log.AddError(err).Error("unable to store query event after get miss")
+					log.WithError(err).Error("unable to store query event after get miss")
 					return
 				}
 			*/
@@ -285,13 +285,13 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 			return txn.Set(dmd.Meta.NewId.Bytes(), raw)
 		})
 		if err != nil {
-			log.AddError(err).Warning("Update error")
+			log.WithError(err).Warning("Update error")
 			return
 		}
 	}
 	data, err := json.Marshal(dmd.Meta)
 	if err != nil {
-		log.AddError(err).Warning("Update error")
+		log.WithError(err).Warning("Update error")
 		return
 	}
 	err = m.data.Update(func(txn *badger.Txn) error {
@@ -311,7 +311,7 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 		return txn.Set(m.positionKey, pos)
 	})
 	if err != nil {
-		log.AddError(err).Warning("Update error")
+		log.WithError(err).Warning("Update error")
 		return
 	}
 }
@@ -333,7 +333,7 @@ func (m *mapData[DT, MT]) delete(e event.ReadEvent[discoveryMetadata[MT]]) {
 		return txn.Set(m.positionKey, pos)
 	})
 	if err != nil {
-		log.AddError(err).Warning("Delete error")
+		log.WithError(err).Warning("Delete error")
 	}
 }
 
@@ -402,7 +402,7 @@ func (m *mapData[DT, MT]) Keys() (keys []string) {
 		return nil
 	})
 	if err != nil {
-		log.AddError(err).Error("while reading bigdata disc store")
+		log.WithError(err).Error("while reading bigdata disc store")
 		return
 	}
 	return
@@ -432,7 +432,7 @@ func (m *mapData[DT, MT]) Range(f func(key string, data DT) error) {
 		return nil
 	})
 	if err != nil {
-		log.AddError(err).Error("while reading bigdata disc store")
+		log.WithError(err).Error("while reading bigdata disc store")
 		return
 	}
 }
@@ -487,7 +487,7 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 }
 
 func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
-	log.Println("Set and wait start")
+	log.Trace("Set and wait start")
 	newId, err := uuid.NewV7()
 	if err != nil {
 		return
@@ -544,8 +544,7 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 	if err != nil {
 		return
 	}
-	log.Println(dmd.Endpoint)
-	log.Println(md.NewId.String())
+	log.Debug("publishing updated data", "endpoint", dmd.Endpoint, "id", md.NewId.String())
 	err = m.data.Update(func(txn *badger.Txn) error {
 		return txn.Set(md.NewId.Bytes(), d)
 	})
@@ -576,7 +575,7 @@ func externalImage[DT any](url string) (d DT, raw []byte, err error) {
 	defer func() {
 		err := resp.Body.Close()
 		if err != nil {
-			log.AddError(err).Debug("while closing response body")
+			log.WithError(err).Debug("while closing response body")
 		}
 	}()
 	raw, err = io.ReadAll(resp.Body)

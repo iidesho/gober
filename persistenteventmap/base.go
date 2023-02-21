@@ -10,7 +10,7 @@ import (
 
 	"github.com/dgraph-io/badger"
 
-	log "github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/stream"
@@ -104,7 +104,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 						return txn.Set(positionKey, pos)
 					})
 					if err != nil {
-						log.AddError(err).Error("Delete error")
+						log.WithError(err).Error("Delete error")
 						continue
 					}
 					e.Acc()
@@ -124,7 +124,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					return txn.Set(positionKey, pos)
 				})
 				if err != nil {
-					log.AddError(err).Error("Update error")
+					log.WithError(err).Error("Update error")
 					continue
 				}
 				e.Acc()
@@ -271,7 +271,7 @@ func (m *mapData[DT]) Delete(data DT) (err error) {
 }
 
 func (m *mapData[DT]) Set(data DT) (err error) {
-	log.Println("Set and wait start")
+	log.Trace("Set and wait start")
 	e, err := m.createEvent(data)
 	if err != nil {
 		return
@@ -279,6 +279,6 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
 	<-we.Done() //Missing error
-	log.Println("Set and wait end")
+	log.Trace("Set and wait end")
 	return
 }

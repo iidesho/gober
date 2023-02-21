@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	log "github.com/cantara/bragi"
+	"github.com/cantara/bragi"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/webserver/health"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -25,25 +26,33 @@ const (
 )
 
 func init() {
-	err := godotenv.Load(".env")
+	err := godotenv.Load("local_override.properties")
 	if err != nil {
-		log.Warning("Error loading .env file: ", err)
+		log.Warning("Error loading local_override.properties file: ", err)
+		err = godotenv.Load(".env")
+		if err != nil {
+			log.Warning("Error loading .env file: ", err)
+		}
 	}
 	logDir := os.Getenv("log.dir")
 	if logDir != "" {
-		log.SetPrefix(Name)
-		cloaser := log.SetOutputFolder(logDir)
-		if cloaser == nil {
-			log.Fatal("Unable to sett logdir")
+		bragi.SetPrefix(Name)
+		handler, err := log.NewHandlerInFolder(logDir)
+		if err != nil {
+			log.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
 		}
-		//defer cloaser()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
-		done := make(chan func())
-		log.StartRotate(done)
-		//defer close(done)  removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
+		//handler.MakeDefault() TODO
+		logger, err := log.NewLogger(&handler)
+		if err != nil {
+			log.WithError(err).Fatal("Unable create new logger", "handler", handler)
+		}
+		log.SetDefault(logger)
+		//defer handler.Cancel()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
 	}
 	if os.Getenv("debug.port") != "" {
 		go func() {
-			log.Println(http.ListenAndServe("localhost:"+os.Getenv("debug.port"), nil))
+			log.WithError(http.ListenAndServe("localhost:"+os.Getenv("debug.port"), nil)).
+				Info("while running debug server", "port", os.Getenv("debug.port"))
 		}()
 	}
 }
@@ -104,7 +113,7 @@ func Init(port uint16) (*Server, error) {
 func (s Server) Run() {
 	err := s.r.Run(fmt.Sprintf(":%d", s.Port()))
 	if err != nil {
-		log.AddError(err).Crit("while starting or running webserver")
+		log.WithError(err).Fatal("while starting or running webserver")
 	}
 }
 
