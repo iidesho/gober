@@ -11,7 +11,6 @@ require (
 	github.com/gofrs/uuid v4.3.1+incompatible
 	github.com/google/uuid v1.3.0
 	github.com/joho/godotenv v1.5.1
-	github.com/joho/godotenv v1.4.0
 	github.com/json-iterator/go v1.1.12
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.5.0
