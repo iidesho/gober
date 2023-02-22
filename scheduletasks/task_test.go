@@ -16,7 +16,7 @@ var ts2 Tasks[dd]
 var ts3 Tasks[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
-var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
 var td dd
 var wg sync.WaitGroup
 var count int
@@ -28,14 +28,14 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) string {
+func cryptKeyProvider(_ string) log.RedactedString {
 	return testCryptKey
 }
 
 var ct *testing.T
 
 func executeFunc(d dd) bool {
-	log.Info("Executed after time ", d, " with count ", count)
+	log.Info(fmt.Sprintf("Executed after time %v with count %d", d, count), "data", d, "count", count)
 	if count > 16 {
 		ctxGlobalCancel()
 		ct.Error("catchup ran too many times")

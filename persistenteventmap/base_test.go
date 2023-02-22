@@ -3,6 +3,7 @@ package persistenteventmap
 import (
 	"context"
 	"fmt"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"os"
 	"testing"
@@ -11,7 +12,7 @@ import (
 var ed EventMap[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
-var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
 
 var STREAM_NAME = "TestServiceStoreAndStream_" //+ uuid.New().String()
 
@@ -20,7 +21,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) string {
+func cryptKeyProvider(_ string) log.RedactedString {
 	return testCryptKey
 }
 

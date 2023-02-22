@@ -18,7 +18,7 @@ import (
 var c Consumer[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
-var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
 var events = make(map[int]event.ReadEventWAcc[dd])
 
 var STREAM_NAME = "TestCompetingConsumer_" + uuid.Must(uuid.NewV7()).String()
@@ -32,7 +32,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) string {
+func cryptKeyProvider(_ string) log.RedactedString {
 	return testCryptKey
 }
 
@@ -74,7 +74,7 @@ func TestStoreOrder(t *testing.T) {
 			defer wg.Done()
 			log.Info("reading event")
 			read := <-c.Stream()
-			log.Info("read event", read)
+			log.Info("read event", "event", read)
 			events[i] = read
 			read.Acc()
 		}()

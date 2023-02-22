@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"fmt"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"sync"
@@ -17,7 +18,7 @@ import (
 var c Consumer[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
-var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
 var events = make(map[int]event.ReadEvent[dd])
 
 var STREAM_NAME = "TestConsumer_" + uuid.Must(uuid.NewV7()).String()
@@ -31,7 +32,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) string {
+func cryptKeyProvider(_ string) log.RedactedString {
 	return testCryptKey
 }
 

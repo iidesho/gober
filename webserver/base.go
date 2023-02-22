@@ -41,12 +41,12 @@ func init() {
 		if err != nil {
 			log.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
 		}
-		//handler.MakeDefault() TODO
+		handler.MakeDefault()
 		logger, err := log.NewLogger(&handler)
 		if err != nil {
 			log.WithError(err).Fatal("Unable create new logger", "handler", handler)
 		}
-		log.SetDefault(logger)
+		logger.SetDefault()
 		//defer handler.Cancel()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
 	}
 	if os.Getenv("debug.port") != "" {

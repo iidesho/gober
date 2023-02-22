@@ -20,10 +20,10 @@ type eventService struct {
 
 type Filter func(md event.Metadata) bool
 
-type CryptoKeyProvider func(key string) string
+type CryptoKeyProvider func(key string) log.RedactedString
 
-func StaticProvider(key string) func(_ string) string {
-	return func(_ string) string {
+func StaticProvider(key log.RedactedString) func(_ string) log.RedactedString {
+	return func(_ string) log.RedactedString {
 		return key
 	}
 }

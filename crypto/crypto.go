@@ -7,14 +7,15 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"errors"
+	log "github.com/cantara/bragi/sbragi"
 	"io"
 	"strings"
 
 	"golang.org/x/crypto/sha3"
 )
 
-func Encrypt(data []byte, keyBase64 string) (ciphertext []byte, err error) {
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+func Encrypt(data []byte, keyBase64 log.RedactedString) (ciphertext []byte, err error) {
+	key, err := base64.StdEncoding.DecodeString(keyBase64.String())
 	if err != nil {
 		return
 	}
@@ -38,8 +39,8 @@ func Encrypt(data []byte, keyBase64 string) (ciphertext []byte, err error) {
 	return
 }
 
-func Decrypt(ciphertextAndNounce []byte, keyBase64 string) (data []byte, err error) {
-	key, err := base64.StdEncoding.DecodeString(keyBase64)
+func Decrypt(ciphertextAndNounce []byte, keyBase64 log.RedactedString) (data []byte, err error) {
+	key, err := base64.StdEncoding.DecodeString(keyBase64.String())
 	if err != nil {
 		return
 	}
