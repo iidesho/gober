@@ -113,13 +113,13 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 							return
 						}
 					}()
-					log.Debug("selected task: ", e)
+					log.Debug("selected task", "event", e)
 					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
 					if !execute(e.Data.Task) {
-						log.Error("there was an error while executing task. not finishing")
+						log.Warning("there was an error while executing task. not finishing")
 						return
 					}
-					log.Debug("executed task:", e)
+					log.Debug("executed task", "event", e)
 					if e.Data.Metadata.Interval != NoInterval {
 						err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
 						if err != nil {

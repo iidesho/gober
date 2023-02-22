@@ -28,10 +28,10 @@ const (
 func init() {
 	err := godotenv.Load("local_override.properties")
 	if err != nil {
-		log.Warning("Error loading local_override.properties file: ", err)
+		log.WithError(err).Warning("Error loading local_override.properties file", "file", "local_override.properties")
 		err = godotenv.Load(".env")
 		if err != nil {
-			log.Warning("Error loading .env file: ", err)
+			log.WithError(err).Warning("Error loading .env file", "file", ".env")
 		}
 	}
 	logDir := os.Getenv("log.dir")
