@@ -1,0 +1,763 @@
+{
+  "changed": true,
+  "msg": "All items completed",
+  "results": [
+    {
+      "ansible_index_var": "index",
+      "ansible_loop_var": "item",
+      "changed": true,
+      "failed": false,
+      "index": 0,
+      "instance_ids": [
+        "i-022dc988ee879451c"
+      ],
+      "instances": [
+        {
+          "ami_launch_index": 0,
+          "architecture": "arm64",
+          "block_device_mappings": [
+            {
+              "device_name": "/dev/xvda",
+              "ebs": {
+                "attach_time": "2023-01-26T09:10:47+00:00",
+                "delete_on_termination": true,
+                "status": "attached",
+                "volume_id": "vol-0e117f16435c5cb93"
+              }
+            }
+          ],
+          "boot_mode": "uefi",
+          "capacity_reservation_specification": {
+            "capacity_reservation_preference": "open"
+          },
+          "client_token": "b510ab05e4a24af1acec8680d6af66fe",
+          "cpu_options": {
+            "core_count": 2,
+            "threads_per_core": 1
+          },
+          "ebs_optimized": false,
+          "ena_support": true,
+          "enclave_options": {
+            "enabled": false
+          },
+          "hibernation_options": {
+            "configured": false
+          },
+          "hypervisor": "xen",
+          "image_id": "ami-0c5cff9ad118f667a",
+          "instance_id": "i-022dc988ee879451c",
+          "instance_type": "t4g.nano",
+          "ipv6_address": "2406:da14:362:aa00:dfeb:4bb4:c7ae:7678",
+          "key_name": "my_key_pair",
+          "launch_time": "2023-01-26T09:10:46+00:00",
+          "maintenance_options": {
+            "auto_recovery": "default"
+          },
+          "metadata_options": {
+            "http_endpoint": "enabled",
+            "http_protocol_ipv6": "disabled",
+            "http_put_response_hop_limit": 1,
+            "http_tokens": "optional",
+            "instance_metadata_tags": "disabled",
+            "state": "applied"
+          },
+          "monitoring": {
+            "state": "disabled"
+          },
+          "network_interfaces": [
+            {
+              "attachment": {
+                "attach_time": "2023-01-26T09:10:46+00:00",
+                "attachment_id": "eni-attach-02e4404e91146f86a",
+                "delete_on_termination": true,
+                "device_index": 0,
+                "network_card_index": 0,
+                "status": "attached"
+              },
+              "description": "",
+              "groups": [
+                {
+                  "group_id": "sg-0d52b7acb6fcb4a1a",
+                  "group_name": "my_security_group"
+                }
+              ],
+              "interface_type": "interface",
+              "ipv6_addresses": [
+                {
+                  "ipv6_address": "2406:da14:362:aa00:dfeb:4bb4:c7ae:7678"
+                }
+              ],
+              "mac_address": "06:06:31:27:4d:23",
+              "network_interface_id": "eni-03abd815e403a5ce6",
+              "owner_id": "217183500018",
+              "private_dns_name": "ip-10-100-14-189.ap-northeast-1.compute.internal",
+              "private_ip_address": "10.100.14.189",
+              "private_ip_addresses": [
+                {
+                  "primary": true,
+                  "private_dns_name": "ip-10-100-14-189.ap-northeast-1.compute.internal",
+                  "private_ip_address": "10.100.14.189"
+                }
+              ],
+              "source_dest_check": true,
+              "status": "in-use",
+              "subnet_id": "subnet-013f4c2b0cf07cd27",
+              "vpc_id": "vpc-0c50a7b2bae2e1dce"
+            }
+          ],
+          "placement": {
+            "availability_zone": "ap-northeast-1a",
+            "group_name": "",
+            "tenancy": "default"
+          },
+          "platform_details": "Linux/UNIX",
+          "private_dns_name": "ip-10-100-14-189.ap-northeast-1.compute.internal",
+          "private_dns_name_options": {
+            "enable_resource_name_dns_a_record": false,
+            "enable_resource_name_dns_aaaa_record": false,
+            "hostname_type": "ip-name"
+          },
+          "private_ip_address": "10.100.14.189",
+          "product_codes": [],
+          "public_dns_name": "",
+          "root_device_name": "/dev/xvda",
+          "root_device_type": "ebs",
+          "security_groups": [
+            {
+              "group_id": "sg-0d52b7acb6fcb4a1a",
+              "group_name": "my_security_group"
+            }
+          ],
+          "source_dest_check": true,
+          "state": {
+            "code": 16,
+            "name": "running"
+          },
+          "state_transition_reason": "",
+          "subnet_id": "subnet-013f4c2b0cf07cd27",
+          "tags": {
+            "Name": "cantara-lab-wamper-1"
+          },
+          "usage_operation": "RunInstances",
+          "usage_operation_update_time": "2023-01-26T09:10:46+00:00",
+          "virtualization_type": "hvm",
+          "vpc_id": "vpc-0c50a7b2bae2e1dce"
+        }
+      ],
+      "invocation": {
+        "module_args": {
+          "aap_callback": null,
+          "access_key": null,
+          "availability_zone": null,
+          "aws_ca_bundle": null,
+          "aws_config": null,
+          "count": 1,
+          "cpu_credit_specification": null,
+          "cpu_options": null,
+          "debug_botocore_endpoint_logs": false,
+          "detailed_monitoring": null,
+          "ebs_optimized": null,
+          "endpoint_url": null,
+          "exact_count": null,
+          "filters": {
+            "image-id": [
+              "ami-0c5cff9ad118f667a"
+            ],
+            "instance-state-name": [
+              "pending",
+              "running",
+              "stopping",
+              "stopped"
+            ],
+            "subnet-id": [
+              "subnet-013f4c2b0cf07cd27"
+            ],
+            "tag:Name": [
+              "cantara-lab-wamper-1"
+            ]
+          },
+          "hibernation_options": false,
+          "iam_instance_profile": null,
+          "image": null,
+          "image_id": "ami-0c5cff9ad118f667a",
+          "instance_ids": [],
+          "instance_initiated_shutdown_behavior": null,
+          "instance_type": "t4g.nano",
+          "key_name": "my_key_pair",
+          "launch_template": null,
+          "metadata_options": null,
+          "name": null,
+          "network": null,
+          "placement_group": null,
+          "profile": null,
+          "purge_tags": true,
+          "region": "ap-northeast-1",
+          "secret_key": null,
+          "security_group": "my_security_group",
+          "security_groups": [],
+          "session_token": null,
+          "state": "started",
+          "tags": {
+            "Name": "cantara-lab-wamper-1"
+          },
+          "tenancy": null,
+          "termination_protection": null,
+          "user_data": "#!/bin/env sh\nsudo amazon-linux-extras enable ansible2\nsudo yum install -y ansible > /dev/null\nsudo yum install -y docker > /dev/null\n\nsudo docker run --restart=always --name esdb-node -it -p 2113:2113 -p 1113:1113 ghcr.io/eventstore/eventstore:20.6.1-alpha.0.69-arm64v8 --insecure --cluster-dns wamper.lab.cantra.infra\n\nadduser wamper\n\ncd /home/ec2-user\ncat <<'EOF' > ./CRON\nMAILTO=\"\"\n*/30 * * * * sudo yum update -y > /dev/null\n0 3 * * 6 sudo reboot\nEOF\nchown ec2-user CRON\nchgrp ec2-user CRON\n\nsudo -u ec2-user crontab ./CRON\ncat <<'EOF' > su_to_wamper.sh\n#!/bin/env sh\nsudo su - wamper\nEOF\n\nchmod +x su_to_wamper.sh\nchown ec2-user su_to_wamper.sh\nchgrp ec2-user su_to_wamper.sh\n\n# Switch to user\n./su_to_wamper.sh\n\n\n# Install semantic-versioning and visuale\ncurl -s \"https://raw.githubusercontent.com/Cantara/visuale/master/agent/scripts/download_and_setup_visuale_reporting.sh\" | bash -s\n\nrm ~/scripts/*_template\n\ncat <<'EOF' > ~/scripts/reportServiceHealthToVisuale.properties\nhealthUrl=http://localhost:13030/wamper/health\nreportToUrl1='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\n#reportToUrl2='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\nEOF\n\ncat <<'EOF' > ~/scripts/CRON\nMAILTO=\"\"\n*/6 * * * * ./buri -a buri -g no/cantara/gotools > /dev/null\n*/6 * * * * ./buri -a wamper -g no/cantara/gotools -r > /dev/null\nEOF\n\nln -s scripts/CRON CRON\n\ncrontab ~/CRON\n\ncurl --fail --show-error --silent -o \"buri-v0.3.5\" \"https://mvnrepo.cantara.no/content/repositories/releases/no/cantara/gotools/buri/v0.3.5/buri-v0.3.5\"\nln -s \"buri-v0.3.5\" \"buri\"\nchmod +x \"buri\"\n\ncat <<'EOF' > ~/.env\nwebserver.port=13030\n\ninmem=false\n\ndebug.user=labDebug\ndebug.pass=syuperDebugLab\n\nscreenshot.key=MgqHE2qIgboCKxgavuH/n1i36ddzkVRHTnsoGlM+IBI=\nscreenshot.service.key=NkyQQ5mjRTTZq6e3c2vkv+JVWmgJAvjddtffYLDJWXM=\nslack.service.key=10igBbnXQymZ5lhLopBGeJNO+RO7MzBlrtnY3TgnvTY=\nauthkey=b3+6ErSirqLVSrRI7pBS/VHqaCza8TtQOl5g1Lg/PYM=\nEOF\n\n./buri -a buri -g no/cantara/gotools\n./buri -a vili -g no/cantara/gotools -r\n\n# Clear history which contains passwords and secrets\necho '' > ~/.bash_history\nhistory -c\nexit\n",
+          "validate_certs": true,
+          "volumes": null,
+          "vpc_subnet_id": "subnet-013f4c2b0cf07cd27",
+          "wait": true,
+          "wait_timeout": 600
+        }
+      },
+      "item": {
+        "ami": "ami-0c5cff9ad118f667a",
+        "name": "cantara-lab-wamper-1"
+      },
+      "spec": {
+        "BlockDeviceMappings": [],
+        "ClientToken": "b510ab05e4a24af1acec8680d6af66fe",
+        "ImageId": "ami-0c5cff9ad118f667a",
+        "InstanceType": "t4g.nano",
+        "KeyName": "my_key_pair",
+        "MaxCount": 1,
+        "MinCount": 1,
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": 0,
+            "Groups": [
+              "sg-0d52b7acb6fcb4a1a"
+            ],
+            "SubnetId": "subnet-013f4c2b0cf07cd27"
+          }
+        ],
+        "TagSpecifications": [
+          {
+            "ResourceType": "volume",
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "cantara-lab-wamper-1"
+              }
+            ]
+          },
+          {
+            "ResourceType": "instance",
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "cantara-lab-wamper-1"
+              }
+            ]
+          }
+        ],
+        "UserData": "#!/bin/env sh\nsudo amazon-linux-extras enable ansible2\nsudo yum install -y ansible > /dev/null\nsudo yum install -y docker > /dev/null\n\nsudo docker run --restart=always --name esdb-node -it -p 2113:2113 -p 1113:1113 ghcr.io/eventstore/eventstore:20.6.1-alpha.0.69-arm64v8 --insecure --cluster-dns wamper.lab.cantra.infra\n\nadduser wamper\n\ncd /home/ec2-user\ncat <<'EOF' > ./CRON\nMAILTO=\"\"\n*/30 * * * * sudo yum update -y > /dev/null\n0 3 * * 6 sudo reboot\nEOF\nchown ec2-user CRON\nchgrp ec2-user CRON\n\nsudo -u ec2-user crontab ./CRON\ncat <<'EOF' > su_to_wamper.sh\n#!/bin/env sh\nsudo su - wamper\nEOF\n\nchmod +x su_to_wamper.sh\nchown ec2-user su_to_wamper.sh\nchgrp ec2-user su_to_wamper.sh\n\n# Switch to user\n./su_to_wamper.sh\n\n\n# Install semantic-versioning and visuale\ncurl -s \"https://raw.githubusercontent.com/Cantara/visuale/master/agent/scripts/download_and_setup_visuale_reporting.sh\" | bash -s\n\nrm ~/scripts/*_template\n\ncat <<'EOF' > ~/scripts/reportServiceHealthToVisuale.properties\nhealthUrl=http://localhost:13030/wamper/health\nreportToUrl1='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\n#reportToUrl2='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\nEOF\n\ncat <<'EOF' > ~/scripts/CRON\nMAILTO=\"\"\n*/6 * * * * ./buri -a buri -g no/cantara/gotools > /dev/null\n*/6 * * * * ./buri -a wamper -g no/cantara/gotools -r > /dev/null\nEOF\n\nln -s scripts/CRON CRON\n\ncrontab ~/CRON\n\ncurl --fail --show-error --silent -o \"buri-v0.3.5\" \"https://mvnrepo.cantara.no/content/repositories/releases/no/cantara/gotools/buri/v0.3.5/buri-v0.3.5\"\nln -s \"buri-v0.3.5\" \"buri\"\nchmod +x \"buri\"\n\ncat <<'EOF' > ~/.env\nwebserver.port=13030\n\ninmem=false\n\ndebug.user=labDebug\ndebug.pass=syuperDebugLab\n\nscreenshot.key=MgqHE2qIgboCKxgavuH/n1i36ddzkVRHTnsoGlM+IBI=\nscreenshot.service.key=NkyQQ5mjRTTZq6e3c2vkv+JVWmgJAvjddtffYLDJWXM=\nslack.service.key=10igBbnXQymZ5lhLopBGeJNO+RO7MzBlrtnY3TgnvTY=\nauthkey=b3+6ErSirqLVSrRI7pBS/VHqaCza8TtQOl5g1Lg/PYM=\nEOF\n\n./buri -a buri -g no/cantara/gotools\n./buri -a vili -g no/cantara/gotools -r\n\n# Clear history which contains passwords and secrets\necho '' > ~/.bash_history\nhistory -c\nexit\n"
+      }
+    },
+    {
+      "ansible_index_var": "index",
+      "ansible_loop_var": "item",
+      "changed": true,
+      "failed": false,
+      "index": 1,
+      "instance_ids": [
+        "i-0e6648fa501ed9cf3"
+      ],
+      "instances": [
+        {
+          "ami_launch_index": 0,
+          "architecture": "arm64",
+          "block_device_mappings": [
+            {
+              "device_name": "/dev/xvda",
+              "ebs": {
+                "attach_time": "2023-01-26T09:13:40+00:00",
+                "delete_on_termination": true,
+                "status": "attached",
+                "volume_id": "vol-0aa77a099a206cf09"
+              }
+            }
+          ],
+          "boot_mode": "uefi",
+          "capacity_reservation_specification": {
+            "capacity_reservation_preference": "open"
+          },
+          "client_token": "d5fb320189814ce496d78635c38c2c12",
+          "cpu_options": {
+            "core_count": 2,
+            "threads_per_core": 1
+          },
+          "ebs_optimized": false,
+          "ena_support": true,
+          "enclave_options": {
+            "enabled": false
+          },
+          "hibernation_options": {
+            "configured": false
+          },
+          "hypervisor": "xen",
+          "image_id": "ami-0c5cff9ad118f667a",
+          "instance_id": "i-0e6648fa501ed9cf3",
+          "instance_type": "t4g.nano",
+          "ipv6_address": "2406:da14:362:aa01:4461:5da0:40a0:d2d7",
+          "key_name": "my_key_pair",
+          "launch_time": "2023-01-26T09:13:39+00:00",
+          "maintenance_options": {
+            "auto_recovery": "default"
+          },
+          "metadata_options": {
+            "http_endpoint": "enabled",
+            "http_protocol_ipv6": "disabled",
+            "http_put_response_hop_limit": 1,
+            "http_tokens": "optional",
+            "instance_metadata_tags": "disabled",
+            "state": "applied"
+          },
+          "monitoring": {
+            "state": "disabled"
+          },
+          "network_interfaces": [
+            {
+              "attachment": {
+                "attach_time": "2023-01-26T09:13:39+00:00",
+                "attachment_id": "eni-attach-02feebb161c3185d0",
+                "delete_on_termination": true,
+                "device_index": 0,
+                "network_card_index": 0,
+                "status": "attached"
+              },
+              "description": "",
+              "groups": [
+                {
+                  "group_id": "sg-0d52b7acb6fcb4a1a",
+                  "group_name": "my_security_group"
+                }
+              ],
+              "interface_type": "interface",
+              "ipv6_addresses": [
+                {
+                  "ipv6_address": "2406:da14:362:aa01:4461:5da0:40a0:d2d7"
+                }
+              ],
+              "mac_address": "0a:e4:20:70:26:73",
+              "network_interface_id": "eni-030e4a2aa624123ea",
+              "owner_id": "217183500018",
+              "private_dns_name": "ip-10-100-25-210.ap-northeast-1.compute.internal",
+              "private_ip_address": "10.100.25.210",
+              "private_ip_addresses": [
+                {
+                  "primary": true,
+                  "private_dns_name": "ip-10-100-25-210.ap-northeast-1.compute.internal",
+                  "private_ip_address": "10.100.25.210"
+                }
+              ],
+              "source_dest_check": true,
+              "status": "in-use",
+              "subnet_id": "subnet-079d32fe6c21828c5",
+              "vpc_id": "vpc-0c50a7b2bae2e1dce"
+            }
+          ],
+          "placement": {
+            "availability_zone": "ap-northeast-1c",
+            "group_name": "",
+            "tenancy": "default"
+          },
+          "platform_details": "Linux/UNIX",
+          "private_dns_name": "ip-10-100-25-210.ap-northeast-1.compute.internal",
+          "private_dns_name_options": {
+            "enable_resource_name_dns_a_record": false,
+            "enable_resource_name_dns_aaaa_record": false,
+            "hostname_type": "ip-name"
+          },
+          "private_ip_address": "10.100.25.210",
+          "product_codes": [],
+          "public_dns_name": "",
+          "root_device_name": "/dev/xvda",
+          "root_device_type": "ebs",
+          "security_groups": [
+            {
+              "group_id": "sg-0d52b7acb6fcb4a1a",
+              "group_name": "my_security_group"
+            }
+          ],
+          "source_dest_check": true,
+          "state": {
+            "code": 16,
+            "name": "running"
+          },
+          "state_transition_reason": "",
+          "subnet_id": "subnet-079d32fe6c21828c5",
+          "tags": {
+            "Name": "cantara-lab-wamper-2"
+          },
+          "usage_operation": "RunInstances",
+          "usage_operation_update_time": "2023-01-26T09:13:39+00:00",
+          "virtualization_type": "hvm",
+          "vpc_id": "vpc-0c50a7b2bae2e1dce"
+        }
+      ],
+      "invocation": {
+        "module_args": {
+          "aap_callback": null,
+          "access_key": null,
+          "availability_zone": null,
+          "aws_ca_bundle": null,
+          "aws_config": null,
+          "count": 1,
+          "cpu_credit_specification": null,
+          "cpu_options": null,
+          "debug_botocore_endpoint_logs": false,
+          "detailed_monitoring": null,
+          "ebs_optimized": null,
+          "endpoint_url": null,
+          "exact_count": null,
+          "filters": {
+            "image-id": [
+              "ami-0c5cff9ad118f667a"
+            ],
+            "instance-state-name": [
+              "pending",
+              "running",
+              "stopping",
+              "stopped"
+            ],
+            "subnet-id": [
+              "subnet-079d32fe6c21828c5"
+            ],
+            "tag:Name": [
+              "cantara-lab-wamper-2"
+            ]
+          },
+          "hibernation_options": false,
+          "iam_instance_profile": null,
+          "image": null,
+          "image_id": "ami-0c5cff9ad118f667a",
+          "instance_ids": [],
+          "instance_initiated_shutdown_behavior": null,
+          "instance_type": "t4g.nano",
+          "key_name": "my_key_pair",
+          "launch_template": null,
+          "metadata_options": null,
+          "name": null,
+          "network": null,
+          "placement_group": null,
+          "profile": null,
+          "purge_tags": true,
+          "region": "ap-northeast-1",
+          "secret_key": null,
+          "security_group": "my_security_group",
+          "security_groups": [],
+          "session_token": null,
+          "state": "started",
+          "tags": {
+            "Name": "cantara-lab-wamper-2"
+          },
+          "tenancy": null,
+          "termination_protection": null,
+          "user_data": "#!/bin/env sh\nsudo amazon-linux-extras enable ansible2\nsudo yum install -y ansible > /dev/null\nsudo yum install -y docker > /dev/null\n\nsudo docker run --restart=always --name esdb-node -it -p 2113:2113 -p 1113:1113 ghcr.io/eventstore/eventstore:20.6.1-alpha.0.69-arm64v8 --insecure --cluster-dns wamper.lab.cantra.infra\n\nadduser wamper\n\ncd /home/ec2-user\ncat <<'EOF' > ./CRON\nMAILTO=\"\"\n*/30 * * * * sudo yum update -y > /dev/null\n0 3 * * 6 sudo reboot\nEOF\nchown ec2-user CRON\nchgrp ec2-user CRON\n\nsudo -u ec2-user crontab ./CRON\ncat <<'EOF' > su_to_wamper.sh\n#!/bin/env sh\nsudo su - wamper\nEOF\n\nchmod +x su_to_wamper.sh\nchown ec2-user su_to_wamper.sh\nchgrp ec2-user su_to_wamper.sh\n\n# Switch to user\n./su_to_wamper.sh\n\n\n# Install semantic-versioning and visuale\ncurl -s \"https://raw.githubusercontent.com/Cantara/visuale/master/agent/scripts/download_and_setup_visuale_reporting.sh\" | bash -s\n\nrm ~/scripts/*_template\n\ncat <<'EOF' > ~/scripts/reportServiceHealthToVisuale.properties\nhealthUrl=http://localhost:13030/wamper/health\nreportToUrl1='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\n#reportToUrl2='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\nEOF\n\ncat <<'EOF' > ~/scripts/CRON\nMAILTO=\"\"\n*/6 * * * * ./buri -a buri -g no/cantara/gotools > /dev/null\n*/6 * * * * ./buri -a wamper -g no/cantara/gotools -r > /dev/null\nEOF\n\nln -s scripts/CRON CRON\n\ncrontab ~/CRON\n\ncurl --fail --show-error --silent -o \"buri-v0.3.5\" \"https://mvnrepo.cantara.no/content/repositories/releases/no/cantara/gotools/buri/v0.3.5/buri-v0.3.5\"\nln -s \"buri-v0.3.5\" \"buri\"\nchmod +x \"buri\"\n\ncat <<'EOF' > ~/.env\nwebserver.port=13030\n\ninmem=false\n\ndebug.user=labDebug\ndebug.pass=syuperDebugLab\n\nscreenshot.key=MgqHE2qIgboCKxgavuH/n1i36ddzkVRHTnsoGlM+IBI=\nscreenshot.service.key=NkyQQ5mjRTTZq6e3c2vkv+JVWmgJAvjddtffYLDJWXM=\nslack.service.key=10igBbnXQymZ5lhLopBGeJNO+RO7MzBlrtnY3TgnvTY=\nauthkey=b3+6ErSirqLVSrRI7pBS/VHqaCza8TtQOl5g1Lg/PYM=\nEOF\n\n./buri -a buri -g no/cantara/gotools\n./buri -a vili -g no/cantara/gotools -r\n\n# Clear history which contains passwords and secrets\necho '' > ~/.bash_history\nhistory -c\nexit\n",
+          "validate_certs": true,
+          "volumes": null,
+          "vpc_subnet_id": "subnet-079d32fe6c21828c5",
+          "wait": true,
+          "wait_timeout": 600
+        }
+      },
+      "item": {
+        "ami": "ami-0c5cff9ad118f667a",
+        "name": "cantara-lab-wamper-2"
+      },
+      "spec": {
+        "BlockDeviceMappings": [],
+        "ClientToken": "d5fb320189814ce496d78635c38c2c12",
+        "ImageId": "ami-0c5cff9ad118f667a",
+        "InstanceType": "t4g.nano",
+        "KeyName": "my_key_pair",
+        "MaxCount": 1,
+        "MinCount": 1,
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": 0,
+            "Groups": [
+              "sg-0d52b7acb6fcb4a1a"
+            ],
+            "SubnetId": "subnet-079d32fe6c21828c5"
+          }
+        ],
+        "TagSpecifications": [
+          {
+            "ResourceType": "volume",
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "cantara-lab-wamper-2"
+              }
+            ]
+          },
+          {
+            "ResourceType": "instance",
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "cantara-lab-wamper-2"
+              }
+            ]
+          }
+        ],
+        "UserData": "#!/bin/env sh\nsudo amazon-linux-extras enable ansible2\nsudo yum install -y ansible > /dev/null\nsudo yum install -y docker > /dev/null\n\nsudo docker run --restart=always --name esdb-node -it -p 2113:2113 -p 1113:1113 ghcr.io/eventstore/eventstore:20.6.1-alpha.0.69-arm64v8 --insecure --cluster-dns wamper.lab.cantra.infra\n\nadduser wamper\n\ncd /home/ec2-user\ncat <<'EOF' > ./CRON\nMAILTO=\"\"\n*/30 * * * * sudo yum update -y > /dev/null\n0 3 * * 6 sudo reboot\nEOF\nchown ec2-user CRON\nchgrp ec2-user CRON\n\nsudo -u ec2-user crontab ./CRON\ncat <<'EOF' > su_to_wamper.sh\n#!/bin/env sh\nsudo su - wamper\nEOF\n\nchmod +x su_to_wamper.sh\nchown ec2-user su_to_wamper.sh\nchgrp ec2-user su_to_wamper.sh\n\n# Switch to user\n./su_to_wamper.sh\n\n\n# Install semantic-versioning and visuale\ncurl -s \"https://raw.githubusercontent.com/Cantara/visuale/master/agent/scripts/download_and_setup_visuale_reporting.sh\" | bash -s\n\nrm ~/scripts/*_template\n\ncat <<'EOF' > ~/scripts/reportServiceHealthToVisuale.properties\nhealthUrl=http://localhost:13030/wamper/health\nreportToUrl1='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\n#reportToUrl2='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\nEOF\n\ncat <<'EOF' > ~/scripts/CRON\nMAILTO=\"\"\n*/6 * * * * ./buri -a buri -g no/cantara/gotools > /dev/null\n*/6 * * * * ./buri -a wamper -g no/cantara/gotools -r > /dev/null\nEOF\n\nln -s scripts/CRON CRON\n\ncrontab ~/CRON\n\ncurl --fail --show-error --silent -o \"buri-v0.3.5\" \"https://mvnrepo.cantara.no/content/repositories/releases/no/cantara/gotools/buri/v0.3.5/buri-v0.3.5\"\nln -s \"buri-v0.3.5\" \"buri\"\nchmod +x \"buri\"\n\ncat <<'EOF' > ~/.env\nwebserver.port=13030\n\ninmem=false\n\ndebug.user=labDebug\ndebug.pass=syuperDebugLab\n\nscreenshot.key=MgqHE2qIgboCKxgavuH/n1i36ddzkVRHTnsoGlM+IBI=\nscreenshot.service.key=NkyQQ5mjRTTZq6e3c2vkv+JVWmgJAvjddtffYLDJWXM=\nslack.service.key=10igBbnXQymZ5lhLopBGeJNO+RO7MzBlrtnY3TgnvTY=\nauthkey=b3+6ErSirqLVSrRI7pBS/VHqaCza8TtQOl5g1Lg/PYM=\nEOF\n\n./buri -a buri -g no/cantara/gotools\n./buri -a vili -g no/cantara/gotools -r\n\n# Clear history which contains passwords and secrets\necho '' > ~/.bash_history\nhistory -c\nexit\n"
+      }
+    },
+    {
+      "ansible_index_var": "index",
+      "ansible_loop_var": "item",
+      "changed": true,
+      "failed": false,
+      "index": 2,
+      "instance_ids": [
+        "i-08b294929547aa812"
+      ],
+      "instances": [
+        {
+          "ami_launch_index": 0,
+          "architecture": "arm64",
+          "block_device_mappings": [
+            {
+              "device_name": "/dev/xvda",
+              "ebs": {
+                "attach_time": "2023-01-26T09:16:32+00:00",
+                "delete_on_termination": true,
+                "status": "attached",
+                "volume_id": "vol-0b5ac97a459b18b49"
+              }
+            }
+          ],
+          "boot_mode": "uefi",
+          "capacity_reservation_specification": {
+            "capacity_reservation_preference": "open"
+          },
+          "client_token": "4af87af402ae4039beffac3e3bfda486",
+          "cpu_options": {
+            "core_count": 2,
+            "threads_per_core": 1
+          },
+          "ebs_optimized": false,
+          "ena_support": true,
+          "enclave_options": {
+            "enabled": false
+          },
+          "hibernation_options": {
+            "configured": false
+          },
+          "hypervisor": "xen",
+          "image_id": "ami-0c5cff9ad118f667a",
+          "instance_id": "i-08b294929547aa812",
+          "instance_type": "t4g.nano",
+          "ipv6_address": "2406:da14:362:aa02:dcf:d90b:ece8:dc9c",
+          "key_name": "my_key_pair",
+          "launch_time": "2023-01-26T09:16:31+00:00",
+          "maintenance_options": {
+            "auto_recovery": "default"
+          },
+          "metadata_options": {
+            "http_endpoint": "enabled",
+            "http_protocol_ipv6": "disabled",
+            "http_put_response_hop_limit": 1,
+            "http_tokens": "optional",
+            "instance_metadata_tags": "disabled",
+            "state": "applied"
+          },
+          "monitoring": {
+            "state": "disabled"
+          },
+          "network_interfaces": [
+            {
+              "attachment": {
+                "attach_time": "2023-01-26T09:16:31+00:00",
+                "attachment_id": "eni-attach-0e4ed98ca95472ef8",
+                "delete_on_termination": true,
+                "device_index": 0,
+                "network_card_index": 0,
+                "status": "attached"
+              },
+              "description": "",
+              "groups": [
+                {
+                  "group_id": "sg-0d52b7acb6fcb4a1a",
+                  "group_name": "my_security_group"
+                }
+              ],
+              "interface_type": "interface",
+              "ipv6_addresses": [
+                {
+                  "ipv6_address": "2406:da14:362:aa02:dcf:d90b:ece8:dc9c"
+                }
+              ],
+              "mac_address": "0e:73:cc:ed:ea:43",
+              "network_interface_id": "eni-035ec6bc688781dcb",
+              "owner_id": "217183500018",
+              "private_dns_name": "ip-10-100-33-181.ap-northeast-1.compute.internal",
+              "private_ip_address": "10.100.33.181",
+              "private_ip_addresses": [
+                {
+                  "primary": true,
+                  "private_dns_name": "ip-10-100-33-181.ap-northeast-1.compute.internal",
+                  "private_ip_address": "10.100.33.181"
+                }
+              ],
+              "source_dest_check": true,
+              "status": "in-use",
+              "subnet_id": "subnet-08306865c5f9d907f",
+              "vpc_id": "vpc-0c50a7b2bae2e1dce"
+            }
+          ],
+          "placement": {
+            "availability_zone": "ap-northeast-1d",
+            "group_name": "",
+            "tenancy": "default"
+          },
+          "platform_details": "Linux/UNIX",
+          "private_dns_name": "ip-10-100-33-181.ap-northeast-1.compute.internal",
+          "private_dns_name_options": {
+            "enable_resource_name_dns_a_record": false,
+            "enable_resource_name_dns_aaaa_record": false,
+            "hostname_type": "ip-name"
+          },
+          "private_ip_address": "10.100.33.181",
+          "product_codes": [],
+          "public_dns_name": "",
+          "root_device_name": "/dev/xvda",
+          "root_device_type": "ebs",
+          "security_groups": [
+            {
+              "group_id": "sg-0d52b7acb6fcb4a1a",
+              "group_name": "my_security_group"
+            }
+          ],
+          "source_dest_check": true,
+          "state": {
+            "code": 16,
+            "name": "running"
+          },
+          "state_transition_reason": "",
+          "subnet_id": "subnet-08306865c5f9d907f",
+          "tags": {
+            "Name": "cantara-lab-wamper-3"
+          },
+          "usage_operation": "RunInstances",
+          "usage_operation_update_time": "2023-01-26T09:16:31+00:00",
+          "virtualization_type": "hvm",
+          "vpc_id": "vpc-0c50a7b2bae2e1dce"
+        }
+      ],
+      "invocation": {
+        "module_args": {
+          "aap_callback": null,
+          "access_key": null,
+          "availability_zone": null,
+          "aws_ca_bundle": null,
+          "aws_config": null,
+          "count": 1,
+          "cpu_credit_specification": null,
+          "cpu_options": null,
+          "debug_botocore_endpoint_logs": false,
+          "detailed_monitoring": null,
+          "ebs_optimized": null,
+          "endpoint_url": null,
+          "exact_count": null,
+          "filters": {
+            "image-id": [
+              "ami-0c5cff9ad118f667a"
+            ],
+            "instance-state-name": [
+              "pending",
+              "running",
+              "stopping",
+              "stopped"
+            ],
+            "subnet-id": [
+              "subnet-08306865c5f9d907f"
+            ],
+            "tag:Name": [
+              "cantara-lab-wamper-3"
+            ]
+          },
+          "hibernation_options": false,
+          "iam_instance_profile": null,
+          "image": null,
+          "image_id": "ami-0c5cff9ad118f667a",
+          "instance_ids": [],
+          "instance_initiated_shutdown_behavior": null,
+          "instance_type": "t4g.nano",
+          "key_name": "my_key_pair",
+          "launch_template": null,
+          "metadata_options": null,
+          "name": null,
+          "network": null,
+          "placement_group": null,
+          "profile": null,
+          "purge_tags": true,
+          "region": "ap-northeast-1",
+          "secret_key": null,
+          "security_group": "my_security_group",
+          "security_groups": [],
+          "session_token": null,
+          "state": "started",
+          "tags": {
+            "Name": "cantara-lab-wamper-3"
+          },
+          "tenancy": null,
+          "termination_protection": null,
+          "user_data": "#!/bin/env sh\nsudo amazon-linux-extras enable ansible2\nsudo yum install -y ansible > /dev/null\nsudo yum install -y docker > /dev/null\n\nsudo docker run --restart=always --name esdb-node -it -p 2113:2113 -p 1113:1113 ghcr.io/eventstore/eventstore:20.6.1-alpha.0.69-arm64v8 --insecure --cluster-dns wamper.lab.cantra.infra\n\nadduser wamper\n\ncd /home/ec2-user\ncat <<'EOF' > ./CRON\nMAILTO=\"\"\n*/30 * * * * sudo yum update -y > /dev/null\n0 3 * * 6 sudo reboot\nEOF\nchown ec2-user CRON\nchgrp ec2-user CRON\n\nsudo -u ec2-user crontab ./CRON\ncat <<'EOF' > su_to_wamper.sh\n#!/bin/env sh\nsudo su - wamper\nEOF\n\nchmod +x su_to_wamper.sh\nchown ec2-user su_to_wamper.sh\nchgrp ec2-user su_to_wamper.sh\n\n# Switch to user\n./su_to_wamper.sh\n\n\n# Install semantic-versioning and visuale\ncurl -s \"https://raw.githubusercontent.com/Cantara/visuale/master/agent/scripts/download_and_setup_visuale_reporting.sh\" | bash -s\n\nrm ~/scripts/*_template\n\ncat <<'EOF' > ~/scripts/reportServiceHealthToVisuale.properties\nhealthUrl=http://localhost:13030/wamper/health\nreportToUrl1='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\n#reportToUrl2='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\nEOF\n\ncat <<'EOF' > ~/scripts/CRON\nMAILTO=\"\"\n*/6 * * * * ./buri -a buri -g no/cantara/gotools > /dev/null\n*/6 * * * * ./buri -a wamper -g no/cantara/gotools -r > /dev/null\nEOF\n\nln -s scripts/CRON CRON\n\ncrontab ~/CRON\n\ncurl --fail --show-error --silent -o \"buri-v0.3.5\" \"https://mvnrepo.cantara.no/content/repositories/releases/no/cantara/gotools/buri/v0.3.5/buri-v0.3.5\"\nln -s \"buri-v0.3.5\" \"buri\"\nchmod +x \"buri\"\n\ncat <<'EOF' > ~/.env\nwebserver.port=13030\n\ninmem=false\n\ndebug.user=labDebug\ndebug.pass=syuperDebugLab\n\nscreenshot.key=MgqHE2qIgboCKxgavuH/n1i36ddzkVRHTnsoGlM+IBI=\nscreenshot.service.key=NkyQQ5mjRTTZq6e3c2vkv+JVWmgJAvjddtffYLDJWXM=\nslack.service.key=10igBbnXQymZ5lhLopBGeJNO+RO7MzBlrtnY3TgnvTY=\nauthkey=b3+6ErSirqLVSrRI7pBS/VHqaCza8TtQOl5g1Lg/PYM=\nEOF\n\n./buri -a buri -g no/cantara/gotools\n./buri -a vili -g no/cantara/gotools -r\n\n# Clear history which contains passwords and secrets\necho '' > ~/.bash_history\nhistory -c\nexit\n",
+          "validate_certs": true,
+          "volumes": null,
+          "vpc_subnet_id": "subnet-08306865c5f9d907f",
+          "wait": true,
+          "wait_timeout": 600
+        }
+      },
+      "item": {
+        "ami": "ami-0c5cff9ad118f667a",
+        "name": "cantara-lab-wamper-3"
+      },
+      "spec": {
+        "BlockDeviceMappings": [],
+        "ClientToken": "4af87af402ae4039beffac3e3bfda486",
+        "ImageId": "ami-0c5cff9ad118f667a",
+        "InstanceType": "t4g.nano",
+        "KeyName": "my_key_pair",
+        "MaxCount": 1,
+        "MinCount": 1,
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": 0,
+            "Groups": [
+              "sg-0d52b7acb6fcb4a1a"
+            ],
+            "SubnetId": "subnet-08306865c5f9d907f"
+          }
+        ],
+        "TagSpecifications": [
+          {
+            "ResourceType": "volume",
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "cantara-lab-wamper-3"
+              }
+            ]
+          },
+          {
+            "ResourceType": "instance",
+            "Tags": [
+              {
+                "Key": "Name",
+                "Value": "cantara-lab-wamper-3"
+              }
+            ]
+          }
+        ],
+        "UserData": "#!/bin/env sh\nsudo amazon-linux-extras enable ansible2\nsudo yum install -y ansible > /dev/null\nsudo yum install -y docker > /dev/null\n\nsudo docker run --restart=always --name esdb-node -it -p 2113:2113 -p 1113:1113 ghcr.io/eventstore/eventstore:20.6.1-alpha.0.69-arm64v8 --insecure --cluster-dns wamper.lab.cantra.infra\n\nadduser wamper\n\ncd /home/ec2-user\ncat <<'EOF' > ./CRON\nMAILTO=\"\"\n*/30 * * * * sudo yum update -y > /dev/null\n0 3 * * 6 sudo reboot\nEOF\nchown ec2-user CRON\nchgrp ec2-user CRON\n\nsudo -u ec2-user crontab ./CRON\ncat <<'EOF' > su_to_wamper.sh\n#!/bin/env sh\nsudo su - wamper\nEOF\n\nchmod +x su_to_wamper.sh\nchown ec2-user su_to_wamper.sh\nchgrp ec2-user su_to_wamper.sh\n\n# Switch to user\n./su_to_wamper.sh\n\n\n# Install semantic-versioning and visuale\ncurl -s \"https://raw.githubusercontent.com/Cantara/visuale/master/agent/scripts/download_and_setup_visuale_reporting.sh\" | bash -s\n\nrm ~/scripts/*_template\n\ncat <<'EOF' > ~/scripts/reportServiceHealthToVisuale.properties\nhealthUrl=http://localhost:13030/wamper/health\nreportToUrl1='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\n#reportToUrl2='https://visuale.cantara.no/api/status/Tokyo_LAB/Wamper/cantara-lab-tokyo-wamper-1?service_tag=SoftwareFactory&service_type=A2A'\nEOF\n\ncat <<'EOF' > ~/scripts/CRON\nMAILTO=\"\"\n*/6 * * * * ./buri -a buri -g no/cantara/gotools > /dev/null\n*/6 * * * * ./buri -a wamper -g no/cantara/gotools -r > /dev/null\nEOF\n\nln -s scripts/CRON CRON\n\ncrontab ~/CRON\n\ncurl --fail --show-error --silent -o \"buri-v0.3.5\" \"https://mvnrepo.cantara.no/content/repositories/releases/no/cantara/gotools/buri/v0.3.5/buri-v0.3.5\"\nln -s \"buri-v0.3.5\" \"buri\"\nchmod +x \"buri\"\n\ncat <<'EOF' > ~/.env\nwebserver.port=13030\n\ninmem=false\n\ndebug.user=labDebug\ndebug.pass=syuperDebugLab\n\nscreenshot.key=MgqHE2qIgboCKxgavuH/n1i36ddzkVRHTnsoGlM+IBI=\nscreenshot.service.key=NkyQQ5mjRTTZq6e3c2vkv+JVWmgJAvjddtffYLDJWXM=\nslack.service.key=10igBbnXQymZ5lhLopBGeJNO+RO7MzBlrtnY3TgnvTY=\nauthkey=b3+6ErSirqLVSrRI7pBS/VHqaCza8TtQOl5g1Lg/PYM=\nEOF\n\n./buri -a buri -g no/cantara/gotools\n./buri -a vili -g no/cantara/gotools -r\n\n# Clear history which contains passwords and secrets\necho '' > ~/.bash_history\nhistory -c\nexit\n"
+      }
+    }
+  ],
+  "skipped": false
+}
