@@ -52,7 +52,7 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 			default:
 				err = wsjson.Read(ctx, conn, &read)
 				if err != nil {
-					log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
+					log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.
 					if errors.Is(err, websocket.CloseError{}) {
 						return
 					}
