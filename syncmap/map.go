@@ -9,6 +9,7 @@ type SyncMap[T any] interface {
 	Set(key string, data T)
 	Get(key string) (data T, ok bool)
 	GetMap() map[string]T
+	Delete(key string)
 }
 
 func New[T any]() SyncMap[T] {
@@ -40,4 +41,15 @@ func (s *syncMap[T]) GetMap() (data map[string]T) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	return maps.Clone(s.data)
+}
+
+func (s *syncMap[T]) Delete(key string) {
+	_, ok := s.Get(key)
+	if !ok {
+		return
+	}
+	s.rwLock.Lock()
+	defer s.rwLock.Unlock()
+	delete(s.data, key)
+	return
 }

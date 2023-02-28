@@ -55,13 +55,17 @@ func BenchmarkMultiReadWrite(b *testing.B) {
 	var wg sync.WaitGroup
 	wg.Add(b.N)
 	for i := 0; i < b.N; i++ {
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			for i := 0; i < b.N; i++ {
-				bsmap.GetMap()["k"] = 5
+			m := bsmap.GetMap()
+			for k, v := range m {
+				bsmap.Set(fmt.Sprintf("%v-%v", k, v), i)
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
-	fmt.Println(bsmap.Get("k"))
+	m := bsmap.GetMap()
+	for k, v := range m {
+		fmt.Println(k, v)
+	}
 }
