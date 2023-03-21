@@ -64,27 +64,28 @@ type Server struct {
 	API  *gin.RouterGroup
 }
 
-func Init(port uint16) (*Server, error) {
+func Init(port uint16, from_base bool) (*Server, error) {
 	h := health.Init()
 	s := &Server{
 		r:    gin.New(),
 		port: port,
-	}
-	if Name == "" {
-		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-			SkipPaths: []string{"/health"},
-		}))
-	} else {
-		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-			SkipPaths: []string{"/" + Name + "/health"},
-		}))
 	}
 	s.r.Use(gin.Recovery())
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{"*"}
 	s.r.Use(cors.New(config))
 	s.Base = s.r.Group("")
-	s.API = s.Base.Group("/" + Name)
+	if Name == "" || from_base {
+		s.API = s.Base.Group("/")
+		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+			SkipPaths: []string{"/health"},
+		}))
+	} else {
+		s.API = s.Base.Group("/" + Name)
+		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+			SkipPaths: []string{"/" + Name + "/health"},
+		}))
+	}
 	s.API.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, h.GetHealthReport())
 	})
