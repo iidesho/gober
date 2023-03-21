@@ -137,7 +137,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	c, err = New[dd](pers, cryptKeyProvider, ctx)
+	c, err := New[[]byte](pers, cryptKeyProvider, ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -147,7 +147,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	events := make([]event.WriteEventReadStatus[dd], b.N)
+	events := make([]event.WriteEventReadStatus[[]byte], b.N)
 	go func() {
 		for i := 0; i < b.N; i++ {
 			e := <-readEventStream
@@ -156,21 +156,25 @@ func BenchmarkStoreAndStream(b *testing.B) {
 				b.Error(fmt.Errorf("missmatch event types"))
 				return
 			}
-			if e.Data.Id != events[i].Event().Data.Id {
-				b.Error(fmt.Errorf("missmatch event data, %v != %v", e.Data, events[i].Event().Data))
-				return
-			}
+			/*
+				if e.Data.Id != events[i].Event().Data.Id {
+					b.Error(fmt.Errorf("missmatch event data, %v != %v", e.Data, events[i].Event().Data))
+					return
+				}
+			*/
 		}
 	}()
 	writeEventStream := c.Write()
 	for i := 0; i < b.N; i++ {
-		data := dd{
-			Id:   i,
-			Name: "test" + b.Name(),
-		}
-		we := event.NewWriteEvent(event.Event[dd]{
+		/*
+			data := dd{
+				Id:   i,
+				Name: "test" + b.Name(),
+			}
+		*/
+		we := event.NewWriteEvent(event.Event[[]byte]{
 			Type: event.Create,
-			Data: data,
+			Data: make([]byte, 1024),
 			Metadata: event.Metadata{
 				Extra: map[string]any{"extra": "extra metadata test"},
 			},

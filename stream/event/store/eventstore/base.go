@@ -44,7 +44,7 @@ type Stream struct {
 	name      string
 }
 
-const BATCH_SIZE = 40000 //5000 is an arbitrary number, should probably be based on something else.
+const BATCH_SIZE = 1000 //5000 is an arbitrary number, should probably be based on something else.
 
 func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err error) {
 	writeChan := make(chan store.WriteEvent, BATCH_SIZE)
@@ -55,20 +55,22 @@ func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err er
 		ctx:       ctx,
 	}
 	go func() {
+		events := make([]esdb.EventData, BATCH_SIZE)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case e := <-writeChan:
-				var events []esdb.EventData
+				i := 0
 				var statusChans []chan<- event.WriteStatus
-				events = append(events, esdb.EventData{
+				events[i] = esdb.EventData{
 					EventID:     e.Id,
 					ContentType: esdb.BinaryContentType,
 					EventType:   string(e.Type),
 					Data:        e.Data,
 					Metadata:    e.Metadata,
-				})
+				}
+				i++
 				if e.Status != nil {
 					statusChans = append(statusChans, e.Status)
 				}
@@ -78,25 +80,27 @@ func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err er
 					case <-ctx.Done():
 						return
 					case e = <-writeChan:
-						events = append(events, esdb.EventData{
+						events[i] = esdb.EventData{
 							EventID:     e.Id,
 							ContentType: esdb.BinaryContentType,
 							EventType:   string(e.Type),
 							Data:        e.Data,
 							Metadata:    e.Metadata,
-						})
+						}
+						i++
 						if e.Status != nil {
 							statusChans = append(statusChans, e.Status)
 						}
 					default:
 						done = true
 					}
-					if done || len(events) >= BATCH_SIZE {
+					if done || i >= BATCH_SIZE {
 						break
 					}
 				}
 
-				wr, err := s.c.c.AppendToStream(ctx, s.name, esdb.AppendToStreamOptions{}, events...)
+				log.Info("writing events", "number of events", i)
+				wr, err := s.c.c.AppendToStream(ctx, s.name, esdb.AppendToStreamOptions{}, events[:i]...)
 				writeStatus := event.WriteStatus{
 					Error: err,
 					Time:  time.Now(),
