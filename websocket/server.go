@@ -5,6 +5,7 @@ import (
 	"errors"
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/gin-gonic/gin"
+	"io"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 	"reflect"
@@ -56,10 +57,10 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 					err = wsjson.Read(c.Request.Context(), conn, &read)
 					if err != nil {
 						log.WithError(err).Error("while reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
-						if errors.Is(err, websocket.CloseError{}) {
+						if errors.Is(err, io.EOF) {                                                                                                         //, websocket.CloseError{}) {
 							return
 						}
-						continue
+						return //continue
 					}
 					reader <- read
 				}

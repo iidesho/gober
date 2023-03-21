@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	log "github.com/cantara/bragi/sbragi"
+	"io"
 	"net/url"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
@@ -53,10 +54,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 				err = wsjson.Read(ctx, conn, &read)
 				if err != nil {
 					log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.
-					if errors.Is(err, websocket.CloseError{}) {
+					if errors.Is(err, websocket.CloseError{}) || errors.Is(err, io.EOF) {
 						return
 					}
-					continue
+					return //continue
 				}
 				reader <- read
 			}

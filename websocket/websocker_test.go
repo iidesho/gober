@@ -14,12 +14,15 @@ type TT struct {
 	Data string `json:"data"`
 }
 
+var gt *testing.T
+
 func TestServe(t *testing.T) {
-	serv, err := webserver.Init(4123)
+	serv, err := webserver.Init(4123, true)
 	if err != nil {
 		t.Error(err)
 		return
 	}
+	gt = t
 	Serve[TT](serv.API, "/wstest", nil, func(reader <-chan TT, writer chan<- Write[TT], params gin.Params, ctx context.Context) {
 		errChan := make(chan error, 1)
 		writer <- Write[TT]{
@@ -28,17 +31,20 @@ func TestServe(t *testing.T) {
 		}
 		err := <-errChan
 		if err != nil {
-			t.Error(err)
+			gt.Error(err)
 			return
 		}
+		<-reader
 	})
 	go serv.Run()
 }
 
 var reader <-chan TT
 var writer chan<- Write[TT]
+var cancel context.CancelFunc
 
 func TestDial(t *testing.T) {
+	gt = t
 	u, err := url.Parse("ws://localhost:4123/wstest")
 	if err != nil {
 		t.Error(err)
@@ -46,7 +52,9 @@ func TestDial(t *testing.T) {
 	}
 	fmt.Println(u.String())
 	fmt.Println(u.Scheme)
-	reader, writer, err = Dial[TT](u, context.Background())
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	reader, writer, err = Dial[TT](u, ctx)
 	if err != nil {
 		t.Error(err)
 		return
@@ -58,6 +66,7 @@ var data = TT{
 }
 
 func TestWrite(t *testing.T) {
+	gt = t
 	errChan := make(chan error, 1)
 	select {
 	case writer <- Write[TT]{
@@ -77,8 +86,19 @@ func TestWrite(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
+	gt = t
 	read := <-reader
 	if read.Data != data.Data {
 		t.Error("read data is not the same as wrote data, read ", read, " wrote ", data)
 	}
 }
+
+/*
+func TestClose(t *testing.T) {
+	gt = t
+	<-reader
+	<-reader
+	<-reader
+	<-reader
+}
+*/
