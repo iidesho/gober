@@ -4,7 +4,7 @@
     "local>cantara/Cantara-Renovate-Config"
   ],
   "postUpdateOptions": [
-    "gomodUpdateImportPaths",
-    "gomodTidy"
+    "gomodTidy",
+    "gomodNoMassage"
   ]
 }
