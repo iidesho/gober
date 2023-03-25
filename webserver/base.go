@@ -17,8 +17,6 @@ import (
 	"strings"
 )
 
-var Name string
-
 const (
 	CONTENT_TYPE      = "Content-Type"
 	CONTENT_TYPE_JSON = "application/json"
@@ -36,7 +34,7 @@ func init() {
 	}
 	logDir := os.Getenv("log.dir")
 	if logDir != "" {
-		bragi.SetPrefix(Name)
+		bragi.SetPrefix(health.Name)
 		handler, err := log.NewHandlerInFolder(logDir)
 		if err != nil {
 			log.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
@@ -75,15 +73,15 @@ func Init(port uint16, from_base bool) (*Server, error) {
 	config.AllowOrigins = []string{"*"}
 	s.r.Use(cors.New(config))
 	s.Base = s.r.Group("")
-	if Name == "" || from_base {
+	if health.Name == "" || from_base {
 		s.API = s.Base.Group("/")
 		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 			SkipPaths: []string{"/health"},
 		}))
 	} else {
-		s.API = s.Base.Group("/" + Name)
+		s.API = s.Base.Group("/" + health.Name)
 		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-			SkipPaths: []string{"/" + Name + "/health"},
+			SkipPaths: []string{"/" + health.Name + "/health"},
 		}))
 	}
 	s.API.GET("/health", func(c *gin.Context) {
@@ -91,7 +89,7 @@ func Init(port uint16, from_base bool) (*Server, error) {
 	})
 	user := os.Getenv("debug.user")
 	pass := os.Getenv("debug.pass")
-	if user != "" && pass != "" && Name != "" {
+	if user != "" && pass != "" && health.Name != "" {
 		debug := s.API.Group("/debug")
 		debug.Use(gin.BasicAuth(gin.Accounts{user: pass}))
 		debug.GET("/pprof/*type", func(c *gin.Context) {

@@ -9,6 +9,7 @@ import (
 
 var Version string
 var BuildTime string
+var Name string
 
 type health struct {
 	IP    net.IP    `json:"ip"`
@@ -24,6 +25,7 @@ func Init() health {
 
 type Report struct {
 	Status    string    `json:"status"`
+	Name      string    `json:"name"`
 	Version   string    `json:"version"`
 	BuildTime string    `json:"build_time"`
 	IP        net.IP    `json:"ip"`
@@ -53,6 +55,7 @@ func GetOutboundIP() net.IP {
 func (h health) GetHealthReport() Report {
 	return Report{
 		Status:    "UP",
+		Name:      Name,
 		Version:   Version,
 		BuildTime: BuildTime,
 		IP:        h.IP,
