@@ -5,6 +5,7 @@ import (
 	"errors"
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/gobwas/ws"
+	"io"
 	"net/url"
 	"nhooyr.io/websocket"
 	"reflect"
@@ -39,6 +40,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 		if initBuff != nil {
 			read, err = ReadWebsocket[T](initBuff)
 			if err != nil {
+				if errors.Is(err, io.EOF) {
+					log.Info("server closed websocker, closing...")
+					return
+				}
 				log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.
 				return
 			}
@@ -52,6 +57,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 			default:
 				read, err = ReadWebsocket[T](conn)
 				if err != nil {
+					if errors.Is(err, io.EOF) {
+						log.Info("server closed websocker, closing...")
+						return
+					}
 					log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.
 					return
 				}

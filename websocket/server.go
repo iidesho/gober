@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"errors"
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/gin-gonic/gin"
 	"github.com/gobwas/ws"
@@ -34,6 +35,10 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 			for write := range writer {
 				err := WriteWebsocket[T](conn, write)
 				if err != nil {
+					if errors.Is(err, io.EOF) {
+						log.Info("client closed websocker, closing...")
+						return
+					}
 					log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String(), "data", write) // This could end up logging person sensitive data.
 					return
 				}
@@ -49,6 +54,10 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 				default:
 					read, err = ReadWebsocket[T](conn)
 					if err != nil {
+						if errors.Is(err, io.EOF) {
+							log.Info("client closed websocker, closing...")
+							return
+						}
 						log.WithError(err).Error("while reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
 						return
 					}
