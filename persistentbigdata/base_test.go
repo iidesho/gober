@@ -43,7 +43,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	serv, err := webserver.Init(1231)
+	serv, err := webserver.Init(1231, true)
 	if err != nil {
 		t.Error(err)
 		return
@@ -95,7 +95,7 @@ func TestExtraServer(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	serv, err := webserver.Init(1232)
+	serv, err := webserver.Init(1232, true)
 	if err != nil {
 		t.Error(err)
 		return

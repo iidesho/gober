@@ -101,7 +101,7 @@ func ReadWebsocket[T any](conn ReadWriter) (out T, err error) {
 	}
 
 	payload := make([]byte, header.Length)
-	_, err = io.ReadFull(conn, payload)
+	_, err = io.ReadFull(conn, payload) //Could be an idea to change this to ReadAll to not have EOF errors. Or silence them ourselves
 	if err != nil {
 		return
 	}
