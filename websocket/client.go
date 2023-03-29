@@ -38,10 +38,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 		defer close(reader)
 		var read T
 		if initBuff != nil {
-			read, err = ReadWebsocket[T](initBuff)
+			//read, err = ReadWebsocket[T](initBuff) TODO find a simple way to read
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					log.Info("server closed websocker, closing...")
+					log.Info("server closed websocket, closing...")
 					return
 				}
 				log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.
@@ -58,7 +58,7 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 				read, err = ReadWebsocket[T](conn)
 				if err != nil {
 					if errors.Is(err, io.EOF) {
-						log.Info("server closed websocker, closing...")
+						log.Info("server closed websocket, closing...")
 						return
 					}
 					log.WithError(err).Error("while reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.

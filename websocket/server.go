@@ -36,7 +36,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 				err := WriteWebsocket[T](conn, write)
 				if err != nil {
 					if errors.Is(err, io.EOF) {
-						log.Info("client closed websocker, closing...")
+						log.Info("client closed websocket, closing...")
 						return
 					}
 					log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String(), "data", write) // This could end up logging person sensitive data.
@@ -55,7 +55,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 					read, err = ReadWebsocket[T](conn)
 					if err != nil {
 						if errors.Is(err, io.EOF) {
-							log.Info("client closed websocker, closing...")
+							log.Info("client closed websocket, closing...")
 							return
 						}
 						log.WithError(err).Error("while reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
@@ -69,13 +69,34 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 	})
 }
 
-func ReadWebsocket[T any](conn io.Reader) (out T, err error) {
+type ReadWriter interface {
+	io.Reader
+	io.Writer
+}
+
+func ReadWebsocket[T any](conn ReadWriter) (out T, err error) {
 	header, err := ws.ReadHeader(conn)
 	if err != nil {
 		return
 	}
 	if header.OpCode == ws.OpClose {
 		err = io.EOF
+		return
+	}
+	if header.OpCode == ws.OpPing {
+		log.Info("ping received, ponging...")
+		err = ws.WriteHeader(conn, ws.Header{
+			Fin:    true,
+			Rsv:    0,
+			OpCode: ws.OpPong,
+			Masked: false,
+			Mask:   [4]byte{},
+			Length: header.Length,
+		})
+		if err != nil {
+			return
+		}
+		_, err = io.Copy(conn, conn)
 		return
 	}
 
