@@ -26,6 +26,8 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 			log.WithError(err).Fatal("while accepting websocket", "request", c.Request)
 		}
 		defer func() {
+			_, err = conn.Write(ws.NewCloseFrameBody(ws.StatusNormalClosure, "data over"))
+			log.WithError(err).Info("writing websocket close frame")
 			err = conn.Close()
 			log.WithError(err).Info("closing websocket")
 		}() //Could be smart to do something here to fix / tell people of errors.
@@ -54,6 +56,9 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 				default:
 					read, err = ReadWebsocket[T](conn)
 					if err != nil {
+						if errors.Is(err, ErrNotImplemented) {
+							continue
+						}
 						if errors.Is(err, io.EOF) {
 							log.Info("client closed websocket, closing...")
 							return
@@ -69,12 +74,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 	})
 }
 
-type ReadWriter interface {
-	io.Reader
-	io.Writer
-}
-
-func ReadWebsocket[T any](conn ReadWriter) (out T, err error) {
+func ReadWebsocket[T any](conn io.ReadWriter) (out T, err error) {
 	header, err := ws.ReadHeader(conn)
 	if err != nil {
 		return
@@ -97,6 +97,25 @@ func ReadWebsocket[T any](conn ReadWriter) (out T, err error) {
 			return
 		}
 		_, err = io.Copy(conn, conn)
+		return
+	}
+
+	/*
+		1. Should verify against outstanding ping TODO
+		2. Should ignore if no outstanding ping
+	*/
+	if header.OpCode == ws.OpPong {
+		err = ErrNotImplemented
+		return
+	}
+
+	if header.OpCode == ws.OpContinuation {
+		err = ErrNotImplemented
+		return
+	}
+
+	if header.OpCode == ws.OpBinary {
+		err = ErrNotImplemented
 		return
 	}
 
@@ -150,3 +169,5 @@ func WriteWebsocket[T any](conn io.Writer, write Write[T]) error {
 }
 
 type WSHandler[T any] func(<-chan T, chan<- Write[T], gin.Params, context.Context)
+
+var ErrNotImplemented = errors.New("operation not implemented")

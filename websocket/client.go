@@ -23,6 +23,8 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 	writer := make(chan Write[T], BufferSize)
 	go func() {
 		defer func() {
+			_, err = conn.Write(ws.NewCloseFrameBody(ws.StatusNormalClosure, "done"))
+			log.WithError(err).Info("writing websocket close frame")
 			//conn.Close(websocket.StatusNormalClosure, "done")
 			log.WithError(conn.Close()).Info("closing websocket")
 		}()
