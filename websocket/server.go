@@ -8,6 +8,7 @@ import (
 	"github.com/gobwas/ws"
 	jsoniter "github.com/json-iterator/go"
 	"io"
+	"net"
 	"reflect"
 )
 
@@ -77,6 +78,10 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 func ReadWebsocket[T any](conn io.ReadWriter) (out T, err error) {
 	header, err := ws.ReadHeader(conn)
 	if err != nil {
+		if errors.Is(err, net.ErrClosed) {
+			err = io.EOF
+			return
+		}
 		return
 	}
 	if header.OpCode == ws.OpClose {

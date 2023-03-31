@@ -6,6 +6,7 @@ import (
 	"github.com/cantara/gober/webserver"
 	"github.com/gin-gonic/gin"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,6 +17,7 @@ type TT struct {
 }
 
 var gt *testing.T
+var wg sync.WaitGroup
 
 func TestServe(t *testing.T) {
 	serv, err := webserver.Init(4123, true)
@@ -25,6 +27,8 @@ func TestServe(t *testing.T) {
 	}
 	gt = t
 	Serve[TT](serv.API, "/wstest", nil, func(reader <-chan TT, writer chan<- Write[TT], params gin.Params, ctx context.Context) {
+		wg.Add(1)
+		defer wg.Done()
 		for read := range reader {
 			errChan := make(chan error, 1)
 			writer <- Write[TT]{
@@ -153,6 +157,8 @@ func TestWriteAndReadLarge(t *testing.T) {
 	if len(read.Bytes) != byteLen {
 		t.Error("read data is not the same as wrote data, read ", read, " wrote ", data)
 	}
+	close(writer)
+	wg.Wait()
 }
 
 /*
