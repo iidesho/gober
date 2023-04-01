@@ -27,6 +27,7 @@ func TestServe(t *testing.T) {
 	}
 	gt = t
 	Serve[TT](serv.API, "/wstest", nil, func(reader <-chan TT, writer chan<- Write[TT], params gin.Params, ctx context.Context) {
+		defer close(writer)
 		wg.Add(1)
 		defer wg.Done()
 		for read := range reader {

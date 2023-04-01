@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"sync"
 )
 
 var json = jsoniter.ConfigDefault
@@ -21,35 +22,39 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 		if acceptFunc != nil && !acceptFunc(c) {
 			return //Could be smart to have some check of weather or not the statuscode code has been set.
 		}
-		//conn, err := websocket.Accept(c.Writer, c.Request, nil)
 		conn, _, _, err := ws.UpgradeHTTP(c.Request, c.Writer)
 		if err != nil {
 			log.WithError(err).Fatal("while accepting websocket", "request", c.Request)
 		}
+		var wg sync.WaitGroup
+		clientClosed := false
 		defer func() {
-			_, err = conn.Write(ws.NewCloseFrameBody(ws.StatusNormalClosure, "data over"))
-			log.WithError(err).Info("writing websocket close frame")
-			err = conn.Close()
-			log.WithError(err).Info("closing websocket")
-		}() //Could be smart to do something here to fix / tell people of errors.
+			wg.Wait()
+			if !clientClosed {
+				err = ws.WriteFrame(conn, ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")))
+				log.WithError(err).Info("writing server websocket close frame")
+			}
+			log.WithError(conn.Close()).Info("closing server net conn")
+		}()
 		reader := make(chan T, BufferSize)
 		writer := make(chan Write[T], BufferSize)
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for write := range writer {
 				err := WriteWebsocket[T](conn, write)
 				if err != nil {
-					if errors.Is(err, io.EOF) {
-						log.Info("client closed websocket, closing...")
-						return
-					}
 					log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String(), "data", write) // This could end up logging person sensitive data.
 					return
 				}
 			}
 		}()
+		wg.Add(1)
 		go func() {
 			defer close(reader)
+			defer wg.Done()
 			var read T
+			var err error
 			for {
 				select {
 				case <-c.Request.Context().Done():
@@ -61,10 +66,11 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 							continue
 						}
 						if errors.Is(err, io.EOF) {
-							log.Info("client closed websocket, closing...")
+							clientClosed = true
+							log.Info("websocket is closed, server ending...") //This works, but gave a wrong impression, changed slightly
 							return
 						}
-						log.WithError(err).Error("while reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
+						log.WithError(err).Error("while server reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
 						return
 					}
 					reader <- read
@@ -90,6 +96,7 @@ func ReadWebsocket[T any](conn io.ReadWriter) (out T, err error) {
 	}
 	if header.OpCode == ws.OpPing {
 		log.Info("ping received, ponging...")
+		//Could also use ws.NewPingFrame(body)
 		err = ws.WriteHeader(conn, ws.Header{
 			Fin:    true,
 			Rsv:    0,
@@ -101,7 +108,7 @@ func ReadWebsocket[T any](conn io.ReadWriter) (out T, err error) {
 		if err != nil {
 			return
 		}
-		_, err = io.Copy(conn, conn)
+		_, err = io.CopyN(conn, conn, header.Length)
 		return
 	}
 
@@ -126,7 +133,19 @@ func ReadWebsocket[T any](conn io.ReadWriter) (out T, err error) {
 
 	payload := make([]byte, header.Length)
 	_, err = io.ReadFull(conn, payload) //Could be an idea to change this to ReadAll to not have EOF errors. Or silence them ourselves
+	/*
+		total, err := conn.Read(payload)
+		var n int
+		for err == nil && total < int(header.Length) {
+			n, err = conn.Read(payload[total:])
+			total += n
+		}
+	*/
 	if err != nil {
+		if errors.Is(err, net.ErrClosed) {
+			err = io.EOF
+			return
+		}
 		return
 	}
 	if header.Masked {
