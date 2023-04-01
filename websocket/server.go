@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"reflect"
-	"sync"
 )
 
 var json = jsoniter.ConfigDefault
@@ -26,21 +25,17 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 		if err != nil {
 			log.WithError(err).Fatal("while accepting websocket", "request", c.Request)
 		}
-		var wg sync.WaitGroup
 		clientClosed := false
-		defer func() {
-			wg.Wait()
-			if !clientClosed {
-				err = ws.WriteFrame(conn, ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")))
-				log.WithError(err).Info("writing server websocket close frame")
-			}
-			log.WithError(conn.Close()).Info("closing server net conn")
-		}()
 		reader := make(chan T, BufferSize)
 		writer := make(chan Write[T], BufferSize)
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer func() {
+				if !clientClosed {
+					err = ws.WriteFrame(conn, ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")))
+					log.WithError(err).Info("writing server websocket close frame")
+				}
+				log.WithError(conn.Close()).Info("closing server net conn")
+			}()
 			for write := range writer {
 				err := WriteWebsocket[T](conn, write)
 				if err != nil {
@@ -49,10 +44,8 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 				}
 			}
 		}()
-		wg.Add(1)
 		go func() {
 			defer close(reader)
-			defer wg.Done()
 			var read T
 			var err error
 			for {
