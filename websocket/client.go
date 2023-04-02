@@ -23,7 +23,7 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 	serverClosed := false
 	reader := make(chan T, BufferSize)
 	writer := make(chan Write[T], BufferSize)
-	tick := time.Millisecond * 200 //time.Second * 20
+	tick := time.Second * 20
 	sucker := webSucker[T]{
 		pingTimout: tick,
 		pingTicker: time.NewTicker(tick),
