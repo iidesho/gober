@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"fmt"
+	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/webserver"
 	"github.com/gin-gonic/gin"
 	"net/url"
@@ -153,12 +154,20 @@ func TestWriteAndReadLarge(t *testing.T) {
 
 	read := <-reader
 	if read.Data != "Large" {
-		t.Error("read data is not the same as wrote data, read ", read, " wrote ", data)
+		t.Error("read data is not the same as wrote data, read ", read, " wrote ", TT{
+			Data:  "Large",
+			Bytes: nil, //make([]byte, byteLen),
+		})
 	}
 	if len(read.Bytes) != byteLen {
-		t.Error("read data is not the same as wrote data, read ", read, " wrote ", data)
+		t.Error("read data is not the same as wrote data, read ", read, " wrote ", TT{
+			Data:  "Large",
+			Bytes: nil, //make([]byte, byteLen),
+		})
 	}
+	log.Info("test closing")
 	close(writer)
+	log.Info("test waiting")
 	wg.Wait()
 }
 
