@@ -106,7 +106,7 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 					}
 					if errors.Is(err, io.EOF) {
 						serverClosed = true
-						log.Info("websocket is closed, client ending...")
+						log.Info("websocket is closed, client closing...")
 						return
 					}
 					log.WithError(err).Error("while client reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.

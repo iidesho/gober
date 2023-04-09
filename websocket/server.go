@@ -83,12 +83,25 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 				}
 				log.WithError(conn.Close()).Info("closing client net conn")
 			}()
-			for write := range writer {
-				//err := WriteWebsocket[T](connWriter, write)
-				err := sucker.Write(write)
-				if err != nil {
-					log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String()) // This could end up logging person sensitive data.
-					return
+			for {
+				select {
+				case write, ok := <-writer:
+					if !ok {
+						return
+					}
+					//err := WriteWebsocket[T](connWriter, write)
+					err := sucker.Write(write)
+					if err != nil {
+						log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String()) // This could end up logging person sensitive data.
+						return
+					}
+				case <-sucker.pingTicker.C:
+					err = sucker.Ping()
+					if err != nil && errors.Is(err, ErrNoErrorHandled) {
+						log.Debug("no ping already waiting for pong from client")
+						continue
+					}
+					log.WithError(err).Debug("wrote ping from server")
 				}
 			}
 		}()
@@ -113,7 +126,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 						}
 						if errors.Is(err, io.EOF) {
 							clientClosed = true
-							log.Info("websocket is closed, server ending...") //This works, but gave a wrong impression, changed slightly
+							log.Info("websocket is closed, server closing...") //This works, but gave a wrong impression, changed slightly
 							return
 						}
 						log.WithError(err).Error("while server reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
