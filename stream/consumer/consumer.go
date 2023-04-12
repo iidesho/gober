@@ -10,6 +10,7 @@ import (
 	"github.com/cantara/gober/stream/event/store"
 	"github.com/gofrs/uuid"
 	jsoniter "github.com/json-iterator/go"
+	"time"
 )
 
 var json = jsoniter.ConfigDefault
@@ -52,7 +53,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, ctx context
 				return
 			case completeChan := <-c.newTransactionChan:
 				if c.currentPosition >= completeChan.position {
-					completeChan.completeChan <- struct{}{}
+					close(completeChan.completeChan) // <- struct{}{}
 					continue
 				}
 				c.completeChans[uuid.Must(uuid.NewV7()).String()] = completeChan
@@ -65,7 +66,7 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, ctx context
 					if position < completeChan.position {
 						continue
 					}
-					completeChan.completeChan <- struct{}{}
+					close(completeChan.completeChan) // <- struct{}{}
 					delete(c.completeChans, id)
 				}
 			}
@@ -101,13 +102,15 @@ func (c *consumer[T]) store(e event.WriteEventReadStatus[T]) (position uint64, e
 
 	go func() {
 		completeChan := make(chan struct{})
-		defer close(completeChan)
 		c.newTransactionChan <- transactionCheck{
 			position:     position,
 			completeChan: completeChan,
 		}
 		<-completeChan
-		e.Close()
+		e.Close(event.WriteStatus{
+			Position: position,
+			Time:     time.Now(),
+		})
 	}()
 	return
 }
@@ -121,6 +124,7 @@ func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadS
 			case e := <-eventStream:
 				p, err := c.store(e)
 				log.WithError(err).Debug("store at pos ", p)
+
 			}
 		}
 	}()

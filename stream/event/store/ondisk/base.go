@@ -67,6 +67,11 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 				func() {
 					es.data.dbLock.Lock()
 					defer es.data.dbLock.Unlock()
+					defer func() {
+						if e.Status != nil {
+							close(e.Status)
+						}
+					}()
 					se := storeEvent{
 						Event:    e.Event,
 						Position: uint64(es.data.len.Add(1)),
@@ -153,6 +158,8 @@ func (es *Stream) Stream(
 				case <-es.ctx.Done():
 					return
 				default:
+					scanner = bufio.NewScanner(db)
+					scanner.Split(bufio.ScanLines)
 					for scanner.Scan() {
 						t := scanner.Text()
 						err = json.UnmarshalFromString(t, &se)

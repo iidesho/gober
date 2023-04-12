@@ -50,6 +50,11 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 				func() {
 					es.data.dbLock.Lock()
 					defer es.data.dbLock.Unlock()
+					defer func() {
+						if e.Status != nil {
+							close(e.Status)
+						}
+					}()
 					se := inMemEvent{
 						Event:    e.Event,
 						Position: uint64(len(es.data.db) + 1),

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream/event/store/inmemory"
+	"github.com/cantara/gober/stream/event/store/ondisk"
 	"testing"
 
 	"github.com/google/uuid"
@@ -28,7 +28,7 @@ func cryptKeyProvider(_ string) log.RedactedString {
 
 func TestInit(t *testing.T) {
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	store, err := inmemory.Init(STREAM_NAME, ctxGlobal)
+	store, err := ondisk.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return

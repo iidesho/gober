@@ -49,31 +49,35 @@ type WriteStatus struct {
 
 type WriteEventReadStatus[T any] interface {
 	Event() Event[T]
-	Done() <-chan struct{}
-	Close()
+	Done() <-chan WriteStatus
+	Close(WriteStatus)
 }
 
 func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] {
 	return &writeEvent[T]{
 		event: e,
-		done:  make(chan struct{}, 1),
+		done:  make(chan WriteStatus, 1),
 	}
 }
 
 type writeEvent[T any] struct {
 	event Event[T]
-	done  chan struct{}
+	done  chan WriteStatus
 }
 
 func (e *writeEvent[T]) Event() Event[T] {
 	return e.event
 }
 
-func (e *writeEvent[T]) Done() <-chan struct{} {
+func (e *writeEvent[T]) Done() <-chan WriteStatus {
 	return e.done
 }
 
-func (e *writeEvent[T]) Close() {
+func (e *writeEvent[T]) Close(status WriteStatus) {
+	if e.done == nil {
+		return
+	}
+	e.done <- status
 	close(e.done)
 }
 
