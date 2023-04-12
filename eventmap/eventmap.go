@@ -7,7 +7,7 @@ import (
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/stream/event"
-	"sync"
+	"github.com/cantara/gober/syncmap"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/stream/event/store"
@@ -18,14 +18,15 @@ type EventMap[DT any] interface {
 	Exists(key string) (exists bool)
 	Len() (l int)
 	Keys() (keys []string)
-	Range(f func(key, value any) bool)
+	Range(f func(key string, value DT) bool)
+	GetMap() map[string]DT
 	Delete(key string) (err error)
 	Set(key string, data DT) (err error)
 	Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error)
 }
 
 type mapData[DT any] struct {
-	data             sync.Map
+	data             syncmap.SyncMap[DT]
 	eventTypeName    string
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
@@ -40,7 +41,7 @@ type kv[DT any] struct {
 func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
 	es, err := consumer.New[kv[DT]](pers, p, ctx)
 	m := mapData[DT]{
-		data:             sync.Map{},
+		data:             syncmap.New[DT](),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
@@ -65,7 +66,7 @@ func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p strea
 						m.data.Delete(e.Data.Key)
 						return
 					}
-					m.data.Store(e.Data.Key, e.Data.Value)
+					m.data.Set(e.Data.Key, e.Data.Value)
 				}()
 			}
 		}
@@ -102,12 +103,12 @@ func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition,
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
 func (m *mapData[DT]) Get(key string) (data DT, err error) {
-	ed, ok := m.data.Load(key)
+	ed, ok := m.data.Get(key)
 	if !ok {
 		err = ERROR_KEY_NOT_FOUND
 		return
 	}
-	return ed.(DT), nil
+	return ed, nil
 }
 
 func (m *mapData[DT]) Len() (l int) {
@@ -116,19 +117,35 @@ func (m *mapData[DT]) Len() (l int) {
 
 func (m *mapData[DT]) Keys() (keys []string) {
 	keys = make([]string, 0)
-	m.data.Range(func(k, _ any) bool {
-		keys = append(keys, k.(string))
+	m.Range(func(k string, _ DT) bool {
+		keys = append(keys, k)
 		return true
 	})
 	return
 }
 
-func (m *mapData[DT]) Range(f func(key, value any) bool) {
-	m.data.Range(f)
+// Range calls f sequentially for each key and value present in the map.
+// If f returns false, range stops the iteration.
+//
+// Range does not necessarily correspond to any consistent snapshot of the Map's
+// contents: no key will be visited more than once, but if the value for any key
+// is stored or deleted concurrently (including by f), Range may reflect any
+// mapping for that key from any point during the Range call. Range does not
+// block other methods on the receiver; even f itself may call any method on m.
+func (m *mapData[DT]) Range(f func(key string, value DT) bool) {
+	for k, v := range m.GetMap() {
+		if !f(k, v) {
+			return
+		}
+	}
+}
+
+func (m *mapData[DT]) GetMap() map[string]DT {
+	return m.data.GetMap()
 }
 
 func (m *mapData[DT]) Exists(key string) (exists bool) {
-	_, exists = m.data.Load(key)
+	_, exists = m.data.Get(key)
 	return
 }
 
