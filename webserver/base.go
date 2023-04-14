@@ -69,20 +69,23 @@ func Init(port uint16, from_base bool) (*Server, error) {
 		port: port,
 	}
 	s.r.Use(gin.Recovery())
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"*"}
-	s.r.Use(cors.New(config))
-	s.Base = s.r.Group("")
 	if health.Name == "" || from_base {
-		s.API = s.Base.Group("/")
 		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 			SkipPaths: []string{"/health"},
 		}))
 	} else {
-		s.API = s.Base.Group("/" + health.Name)
 		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 			SkipPaths: []string{"/" + health.Name + "/health"},
 		}))
+	}
+	//config := cors.DefaultConfig()
+	//config.AllowOrigins = []string{"*"}
+	s.r.Use(cors.Default()) //cors.New(config))
+	s.Base = s.r.Group("")
+	if health.Name == "" || from_base {
+		s.API = s.Base.Group("/")
+	} else {
+		s.API = s.Base.Group("/" + health.Name)
 	}
 	s.API.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, h.GetHealthReport())
