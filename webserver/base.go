@@ -68,7 +68,6 @@ func Init(port uint16, from_base bool) (*Server, error) {
 		r:    gin.New(),
 		port: port,
 	}
-	s.r.Use(gin.Recovery())
 	if health.Name == "" || from_base {
 		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 			SkipPaths: []string{"/health"},
@@ -78,6 +77,10 @@ func Init(port uint16, from_base bool) (*Server, error) {
 			SkipPaths: []string{"/" + health.Name + "/health"},
 		}))
 	}
+	s.r.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
+		log.WithError(fmt.Errorf("%v", err)).Error("gin panic recover")
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
 	//config := cors.DefaultConfig()
 	//config.AllowOrigins = []string{"*"}
 	s.r.Use(cors.Default()) //cors.New(config))
