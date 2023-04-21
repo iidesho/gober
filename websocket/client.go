@@ -6,6 +6,7 @@ import (
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/gobwas/ws"
 	"io"
+	"net"
 	"net/url"
 	"nhooyr.io/websocket"
 	"reflect"
@@ -40,6 +41,8 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 		}()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case write, ok := <-writer:
 				if !ok {
 					return
@@ -47,13 +50,23 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 				err := sucker.Write(write)
 				if err != nil {
 					log.WithError(err).Error("while writing to websocket", "path", url.String(), "type", reflect.TypeOf(write).String(), "data", write) // This could end up logging person sensitive data.
+					if errors.Is(err, net.ErrClosed) {
+						serverClosed = true
+						return
+					}
 					return
 				}
 			case <-sucker.pingTicker.C:
 				err = sucker.Ping()
-				if err != nil && errors.Is(err, ErrNoErrorHandled) {
-					log.Debug("no ping already waiting for pong from server")
-					continue
+				if err != nil {
+					if errors.Is(err, ErrNoErrorHandled) {
+						log.Debug("no ping already waiting for pong from server")
+						continue
+					}
+					if errors.Is(err, net.ErrClosed) {
+						serverClosed = true
+						return
+					}
 				}
 				log.WithError(err).Debug("wrote ping from client")
 			}
@@ -104,6 +117,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 						log.WithError(err).Warning("continuing after packet is discarded")
 						continue
 					}
+					if errors.Is(err, net.ErrClosed) {
+						serverClosed = true
+						return
+					}
 					if errors.Is(err, io.EOF) {
 						serverClosed = true
 						log.Info("websocket is closed, client closing...")
@@ -122,6 +139,7 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 	return
 }
 
+/*
 type inBuff struct {
 	read  io.Reader
 	write io.Writer
@@ -134,3 +152,4 @@ func (b *inBuff) Read(p []byte) (n int, err error) {
 func (b *inBuff) Write(p []byte) (n int, err error) {
 	return b.write.Write(p)
 }
+*/

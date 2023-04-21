@@ -17,7 +17,7 @@ import (
 
 var json = jsoniter.ConfigDefault
 
-var BufferSize = 10
+var BufferSize = 100
 
 func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Context) bool, wsfunc WSHandler[T]) {
 	r.GET(path, func(c *gin.Context) {
@@ -28,6 +28,8 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 		if err != nil {
 			log.WithError(err).Fatal("while accepting websocket", "request", c.Request)
 		}
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
 		clientClosed := false
 		reader := make(chan T, BufferSize)
 		writer := make(chan Write[T], BufferSize)
@@ -85,6 +87,8 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 			}()
 			for {
 				select {
+				case <-ctx.Done():
+					return
 				case write, ok := <-writer:
 					if !ok {
 						return
@@ -92,14 +96,26 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 					//err := WriteWebsocket[T](connWriter, write)
 					err := sucker.Write(write)
 					if err != nil {
+						if errors.Is(err, net.ErrClosed) {
+							clientClosed = true
+							cancel()
+							return
+						}
 						log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String()) // This could end up logging person sensitive data.
 						return
 					}
 				case <-sucker.pingTicker.C:
 					err = sucker.Ping()
-					if err != nil && errors.Is(err, ErrNoErrorHandled) {
-						log.Debug("no ping already waiting for pong from client")
-						continue
+					if err != nil {
+						if errors.Is(err, ErrNoErrorHandled) {
+							//log.Debug("no ping already waiting for pong from client")
+							continue
+						}
+						if errors.Is(err, net.ErrClosed) {
+							clientClosed = true
+							cancel()
+							return
+						}
 					}
 					log.WithError(err).Debug("wrote ping from server")
 				}
@@ -111,7 +127,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 			var err error
 			for {
 				select {
-				case <-c.Request.Context().Done():
+				case <-ctx.Done():
 					return
 				default:
 					//read, err = ReadWebsocket[T](conn, connWriter)
@@ -124,8 +140,14 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 							log.WithError(err).Warning("continuing after packet is discarded")
 							continue
 						}
+						if errors.Is(err, net.ErrClosed) {
+							clientClosed = true
+							cancel()
+							return
+						}
 						if errors.Is(err, io.EOF) {
 							clientClosed = true
+							cancel()
 							log.Info("websocket is closed, server closing...") //This works, but gave a wrong impression, changed slightly
 							return
 						}
@@ -136,7 +158,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 				}
 			}
 		}()
-		wsfunc(reader, writer, c.Params, c.Request.Context())
+		wsfunc(reader, writer, c.Params, ctx)
 	})
 }
 
@@ -182,14 +204,22 @@ func (sucker *webSucker[T]) Write(write Write[T]) (err error) {
 		}
 		return err
 	}
-	err = sucker.WriteConn(append(websocketHeaderBytes(ws.Header{
-		Fin:    true,
-		Rsv:    0,
-		OpCode: ws.OpText,
-		Masked: false,
-		Mask:   [4]byte{},
-		Length: int64(len(payload)),
-	}), payload...))
+	var frame []byte
+	frame, err = ws.CompileFrame(ws.NewTextFrame(payload))
+	if err != nil {
+		return
+	}
+	err = sucker.WriteConn(frame)
+	/*
+		err = sucker.WriteConn(append(websocketHeaderBytes(ws.Header{
+			Fin:    true,
+			Rsv:    0,
+			OpCode: ws.OpText,
+			Masked: false,
+			Mask:   [4]byte{},
+			Length: int64(len(payload)),
+		}), payload...))
+	*/
 	if err != nil {
 		if write.Err != nil {
 			write.Err <- err
@@ -200,7 +230,7 @@ func (sucker *webSucker[T]) Write(write Write[T]) (err error) {
 }
 
 func (sucker *webSucker[T]) Read() (out T, err error) {
-	defer sucker.pingTicker.Reset(sucker.pingTimout)
+	//defer sucker.pingTicker.Reset(sucker.pingTimout)
 	header, err := ws.ReadHeader(sucker.conn)
 	if err != nil {
 		if errors.Is(err, net.ErrClosed) {
@@ -209,6 +239,7 @@ func (sucker *webSucker[T]) Read() (out T, err error) {
 		}
 		return
 	}
+	log.Trace("packet received", "type", packetTypeToString(header.OpCode))
 	sucker.pingTicker.Stop()
 	defer sucker.pingTicker.Reset(sucker.pingTimout)
 	if header.OpCode == ws.OpClose {
@@ -222,14 +253,25 @@ func (sucker *webSucker[T]) Read() (out T, err error) {
 		if err != nil {
 			return
 		}
-		err = sucker.WriteConn(append(websocketHeaderBytes(ws.Header{
-			Fin:    true,
-			Rsv:    0,
-			OpCode: ws.OpPong,
-			Masked: false,
-			Mask:   [4]byte{},
-			Length: header.Length,
-		}), payload...))
+		/*
+			var frame []byte
+			frame, err = ws.CompileFrame(ws.NewPongFrame(payload))
+			if err != nil {
+				return
+			}
+		*/
+		err = sucker.WriteConn(ws.CompiledPong)
+		/*
+			err = sucker.WriteConn(append(websocketHeaderBytes(ws.Header{
+				Fin:    true,
+				Rsv:    0,
+				OpCode: ws.OpPong,
+				Masked: false,
+				Mask:   [4]byte{},
+				Length: header.Length,
+			}), payload...))
+		*/
+		log.WithError(err).Trace("while ponging")
 		err = ErrNoErrorHandled
 		return
 	}
@@ -278,6 +320,7 @@ func (sucker *webSucker[T]) Read() (out T, err error) {
 	return
 }
 
+/*
 func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err error) {
 	header, err := ws.ReadHeader(conn)
 	if err != nil {
@@ -299,6 +342,7 @@ func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err erro
 		if err != nil {
 			return
 		}
+
 		writer <- append(websocketHeaderBytes(ws.Header{ //This can write to a closed channel
 			Fin:    true,
 			Rsv:    0,
@@ -320,7 +364,7 @@ func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err erro
 				return
 			}
 			_, err = io.CopyN(conn, conn, header.Length)
-		*/
+*/ /*
 		err = ErrNoErrorHandled
 		return
 	}
@@ -328,7 +372,7 @@ func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err erro
 	/*
 		1. Should verify against outstanding ping TODO
 		2. Should ignore if no outstanding ping
-	*/
+*/ /*
 	if header.OpCode == ws.OpPong {
 		log.Info("pong received")
 		if header.Length == 0 {
@@ -361,7 +405,7 @@ func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err erro
 			n, err = conn.Read(payload[total:])
 			total += n
 		}
-	*/
+*/ /*
 	if err != nil {
 		if errors.Is(err, net.ErrClosed) {
 			err = io.EOF
@@ -375,6 +419,7 @@ func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err erro
 	err = json.Unmarshal(payload, &out)
 	return
 }
+
 
 func WriteWebsocket[T any](writer chan<- []byte, write Write[T]) error {
 	defer func() {
@@ -416,9 +461,10 @@ func WriteWebsocket[T any](writer chan<- []byte, write Write[T]) error {
 			}
 			return err
 		}
-	*/
+*/ /*
 	return nil
 }
+*/
 
 func websocketHeaderBytes(h ws.Header) []byte {
 	bts := make([]byte, ws.MaxHeaderSize)
@@ -468,3 +514,21 @@ const (
 	len16 = int64(^(uint16(0)))
 	len64 = int64(^(uint64(0)) >> 1)
 )
+
+func packetTypeToString(code ws.OpCode) string {
+	switch code {
+	case ws.OpText:
+		return "text"
+	case ws.OpBinary:
+		return "binary"
+	case ws.OpClose:
+		return "close"
+	case ws.OpPing:
+		return "ping"
+	case ws.OpPong:
+		return "pong"
+	case ws.OpContinuation:
+		return "continuation"
+	}
+	return ""
+}
