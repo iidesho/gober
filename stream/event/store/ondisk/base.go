@@ -18,6 +18,13 @@ import (
 
 var json = jsoniter.ConfigDefault
 
+const (
+	B  = 1
+	KB = B << 10
+	MB = KB << 10
+	GB = MB << 10
+)
+
 type storeEvent struct {
 	Event    store.Event
 	Position uint64
@@ -145,7 +152,7 @@ func (es *Stream) Stream(
 			}
 			readTo := uint64(0)
 			scanner := bufio.NewScanner(db)
-			scanner.Buffer(make([]byte, 1<<32), 1<<32)
+			scanner.Buffer(make([]byte, KB, MB*12), MB*12)
 			scanner.Split(bufio.ScanLines)
 			for readTo < position && scanner.Scan() {
 				// scanner.Text()
