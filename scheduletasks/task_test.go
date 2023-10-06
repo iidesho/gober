@@ -3,12 +3,13 @@ package tasks
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream/event/store/inmemory"
-	"github.com/gofrs/uuid"
 	"sync"
 	"testing"
 	"time"
+
+	log "github.com/cantara/bragi/sbragi"
+	"github.com/cantara/gober/stream/event/store/inmemory"
+	"github.com/gofrs/uuid"
 )
 
 var ts Tasks[dd]
@@ -71,17 +72,17 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	edt, err := Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	edt, err := Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts2, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	ts2, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts3, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, ctxGlobal)
+	ts3, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -163,7 +164,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		return
 	}
 
-	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Info("benchmark task ran", "data", d); return true }, ctx) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Info("benchmark task ran", "data", d); return true }, 10, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

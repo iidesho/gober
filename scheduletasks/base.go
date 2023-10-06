@@ -3,9 +3,10 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"time"
+
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/stream/consumer/competing"
-	"time"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/stream"
@@ -43,7 +44,7 @@ type tm[DT any] struct {
 	cancel   context.CancelFunc
 }
 
-func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, ctx context.Context) (ed Tasks[DT], err error) {
+func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
 	dataTypeName = dataTypeName + "_scheduled"
 	es, err := competing.New[tm[DT]](s, p, store.STREAM_START, dataTypeName, time.Minute*15, ctx)
 	if err != nil {
@@ -99,39 +100,42 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		}
 	}()
 
-	go func() {
-		for {
-			select {
-			case <-t.ctx.Done():
-				return
-			case e := <-esTasks.Stream():
-				go func() {
-					defer func() {
-						err := recover()
-						if err != nil {
-							log.WithError(fmt.Errorf("%v", err)).Error("panic while executing")
+	//Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
+	for i := 0; i < workers; i++ {
+		go func() {
+			for {
+				select {
+				case <-t.ctx.Done():
+					return
+				case e := <-esTasks.Stream():
+					func() {
+						defer func() {
+							err := recover()
+							if err != nil {
+								log.WithError(fmt.Errorf("%v", err)).Error("panic while executing")
+								return
+							}
+						}()
+						log.Debug("selected task", "event", e)
+						// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
+						if !execute(e.Data.Task) {
+							log.Warning("there was an error while executing task. not finishing")
 							return
 						}
+						log.Debug("executed task", "event", e)
+						if e.Data.Metadata.Interval != NoInterval {
+							err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
+							if err != nil {
+								log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
+								return
+							}
+						}
+						e.Acc()
 					}()
-					log.Debug("selected task", "event", e)
-					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
-					if !execute(e.Data.Task) {
-						log.Warning("there was an error while executing task. not finishing")
-						return
-					}
-					log.Debug("executed task", "event", e)
-					if e.Data.Metadata.Interval != NoInterval {
-						err = t.Create(e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
-						if err != nil {
-							log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
-							return
-						}
-					}
-					e.Acc()
-				}()
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	ed = &t
 	return
