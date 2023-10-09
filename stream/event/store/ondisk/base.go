@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -151,14 +152,16 @@ func (es *Stream) Stream(
 				position = uint64(es.data.len.Load())
 			}
 			readTo := uint64(0)
-			scanner := bufio.NewScanner(db)
-			scanner.Buffer(make([]byte, KB*4, MB*12), MB*12) //This does not seem to work how i thing :/
-			scanner.Split(bufio.ScanLines)
-			for readTo < position && scanner.Scan() {
-				// scanner.Text()
-				readTo++
-			}
+			scanner := newScanner(db)
 			var se storeEvent
+			for readTo < position && scanner.Scan() {
+				t := scanner.Text()
+				err = json.UnmarshalFromString(t, &se)
+				if err != nil {
+					log.WithError(err).Fatal("while unmarshalling event from store", "name", es.name, "json", t)
+				}
+				readTo = se.Position
+			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -166,8 +169,7 @@ func (es *Stream) Stream(
 				case <-es.ctx.Done():
 					return
 				default:
-					scanner = bufio.NewScanner(db)
-					scanner.Split(bufio.ScanLines)
+					scanner = newScanner(db)
 					for scanner.Scan() {
 						t := scanner.Text()
 						err = json.UnmarshalFromString(t, &se)
@@ -179,7 +181,7 @@ func (es *Stream) Stream(
 							Position: se.Position,
 							Created:  se.Created,
 						}
-						readTo++
+						readTo = se.Position
 					}
 					if readTo >= uint64(es.data.len.Load()) {
 						es.data.newData.L.Lock()
@@ -191,6 +193,13 @@ func (es *Stream) Stream(
 		}
 	}()
 	return
+}
+
+func newScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, KB, MB*12), MB*12)
+	scanner.Split(bufio.ScanLines)
+	return scanner
 }
 
 func (es *Stream) Name() string {

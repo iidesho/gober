@@ -41,6 +41,7 @@ func TestStore(t *testing.T) {
 	data := make(map[string]interface{})
 	data["id"] = 1
 	data["name"] = "test"
+	data["data"] = make([]byte, MB*6)
 
 	bytes, err := json.Marshal(data)
 	if err != nil {
