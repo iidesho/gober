@@ -152,7 +152,7 @@ func (es *Stream) Stream(
 			}
 			readTo := uint64(0)
 			scanner := bufio.NewScanner(db)
-			scanner.Buffer(make([]byte, KB, MB*12), MB*12)
+			scanner.Buffer(make([]byte, KB*4, MB*12), MB*12) //This does not seem to work how i thing :/
 			scanner.Split(bufio.ScanLines)
 			for readTo < position && scanner.Scan() {
 				// scanner.Text()
