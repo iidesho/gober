@@ -1,8 +1,8 @@
 package ondisk
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +17,7 @@ import (
 	"github.com/cantara/gober/stream/event/store"
 )
 
-var json = jsoniter.ConfigDefault
+var json = jsoniter.ConfigFastest
 
 const (
 	B  = 1
@@ -67,6 +67,7 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 		ctx:       ctx,
 	}
 	go func() {
+		stream := json.NewEncoder(es.data.db)
 		for {
 			select {
 			case <-ctx.Done():
@@ -85,19 +86,7 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 						Position: uint64(es.data.len.Add(1)),
 						Created:  time.Now(),
 					}
-					data, err := json.MarshalToString(se)
-					if err != nil {
-						log.WithError(err).Error("while marshalling event")
-						if e.Status != nil {
-							e.Status <- event.WriteStatus{
-								Error: err,
-							}
-						}
-						return
-					}
-
-					// es.data.db = append(es.data.db, se)
-					_, err = es.data.db.WriteString(data + "\n")
+					err := stream.Encode(se)
 					if err != nil {
 						log.WithError(err).Error("while writing event to file")
 						if e.Status != nil {
@@ -127,10 +116,7 @@ func (es *Stream) Write() chan<- store.WriteEvent {
 	return es.writeChan
 }
 
-func (es *Stream) Stream(
-	from store.StreamPosition,
-	ctx context.Context,
-) (out <-chan store.ReadEvent, err error) {
+func (es *Stream) Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.ReadEvent, err error) {
 	db, err := os.OpenFile(es.data.db.Name(), os.O_RDONLY, 0640)
 	if err != nil {
 		return
@@ -152,13 +138,16 @@ func (es *Stream) Stream(
 				position = uint64(es.data.len.Load())
 			}
 			readTo := uint64(0)
-			scanner := newScanner(db)
+			stream := json.NewDecoder(db)
 			var se storeEvent
-			for readTo < position && scanner.Scan() {
-				t := scanner.Text()
-				err = json.UnmarshalFromString(t, &se)
+			for readTo < position {
+				err := stream.Decode(&se)
 				if err != nil {
-					log.WithError(err).Fatal("while unmarshalling event from store", "name", es.name, "json", t)
+					if errors.Is(err, io.EOF) {
+						time.Sleep(time.Millisecond * 250)
+						continue
+					}
+					log.WithError(err).Fatal("while unmarshalling event from store", "name", es.name)
 				}
 				readTo = se.Position
 			}
@@ -169,20 +158,21 @@ func (es *Stream) Stream(
 				case <-es.ctx.Done():
 					return
 				default:
-					scanner = newScanner(db)
-					for scanner.Scan() {
-						t := scanner.Text()
-						err = json.UnmarshalFromString(t, &se)
-						if err != nil {
-							log.WithError(err).Fatal("while unmarshalling event from store", "name", es.name, "json", t)
+					err := stream.Decode(&se)
+					if err != nil {
+						if errors.Is(err, io.EOF) {
+							time.Sleep(time.Millisecond * 250)
+							continue
 						}
-						eventChan <- store.ReadEvent{
-							Event:    se.Event,
-							Position: se.Position,
-							Created:  se.Created,
-						}
-						readTo = se.Position
+						log.WithError(err).Fatal("while unmarshalling event from store", "name", es.name)
 					}
+					eventChan <- store.ReadEvent{
+						Event:    se.Event,
+						Position: se.Position,
+						Created:  se.Created,
+					}
+					readTo = se.Position
+					//Did read more here before updating. Could continue to loop over until EOF instead
 					if readTo >= uint64(es.data.len.Load()) {
 						es.data.newData.L.Lock()
 						es.data.newData.Wait()
@@ -193,13 +183,6 @@ func (es *Stream) Stream(
 		}
 	}()
 	return
-}
-
-func newScanner(r io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, KB, MB*12), MB*12)
-	scanner.Split(bufio.ScanLines)
-	return scanner
 }
 
 func (es *Stream) Name() string {
