@@ -16,7 +16,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
 	github.com/pkg/errors v0.9.1
-	golang.org/x/crypto v0.9.0
+	golang.org/x/crypto v0.14.0
 	golang.org/x/exp v0.0.0-20230213192124-5e25df0256eb
 	nhooyr.io/websocket v1.8.9
 )
@@ -48,8 +48,8 @@ require (
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/sys v0.8.0 // indirect
-	golang.org/x/text v0.9.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
 	google.golang.org/genproto v0.0.0-20200815001618-f69a88009b70 // indirect
 	google.golang.org/grpc v1.35.0 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
