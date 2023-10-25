@@ -83,11 +83,11 @@ func (cons *consensus) Request(id string) bool {
 				}
 				if cons.id != data.Requester {
 					// Did not consent!
-					log.Info("did not get consent")
+					log.Trace("did not get consent")
 					return
 				}
 				if containsConsent(data.Consenter, cr.Consents) >= 0 {
-					log.Info("already has consent from consenter")
+					log.Trace("already has consent from consenter")
 					return
 				}
 				cr.Consents = append(cr.Consents, Consent{
@@ -102,7 +102,7 @@ func (cons *consensus) Request(id string) bool {
 	}
 	crStored, _ := crs.Peek()
 	if crStored.Requester != cr.Requester || !crStored.Timeout.Equal(cr.Timeout) {
-		log.Info("request state", "stored", crStored, "req", cr, "timeout", crStored.Timeout.Round(time.Microsecond))
+		log.Debug("request state", "stored", crStored, "req", cr, "timeout", crStored.Timeout.Round(time.Microsecond))
 		return false
 	}
 	log.Trace("consent request finished", "consent", cr)

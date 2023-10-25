@@ -72,7 +72,7 @@ func (c *service[T]) timeoutHandler(events <-chan event.ReadEvent[tm[T]]) {
 	timeouts := sync.NewMap[context.CancelFunc]()
 	for e := range events {
 		if e.Type == event.Deleted {
-			log.Info("got new event to cancel time out")
+			log.Trace("got new event to cancel time out")
 			id := e.Data.Id.String()
 			cancel, ok := timeouts.Get(id)
 			if !ok {
@@ -82,7 +82,7 @@ func (c *service[T]) timeoutHandler(events <-chan event.ReadEvent[tm[T]]) {
 			cancel()
 			continue
 		}
-		log.Info("got new event to time out")
+		log.Trace("got new event to time out")
 		//This is gona use too much ram, however it is okay for now
 		ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
 		timeouts.Set(e.Data.Id.String(), cancel)
@@ -100,14 +100,14 @@ func (c *service[T]) timeoutHandler(events <-chan event.ReadEvent[tm[T]]) {
 
 func (c *service[T]) compete(e event.ReadEvent[tm[T]]) {
 	id := e.Data.Id.String()
-	log.Info("competing")
+	log.Trace("competing")
 	won := c.cons.Request(id) //Might need to difirentiate on won lost and completed
 	if !won {
-		log.Info("did not win consesus", "id", id)
+		log.Debug("did not win consesus", "id", id)
 		// Add timeout wait
 		return
 	}
-	log.Info("won competition")
+	log.Trace("won competition")
 	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
 	select {
 	case <-ctx.Done():
@@ -139,7 +139,7 @@ func (c *service[T]) compete(e event.ReadEvent[tm[T]]) {
 		},
 	}:
 	}
-	log.Info("wrote to selectedOutput")
+	log.Trace("wrote to selectedOutput")
 }
 
 func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeout chan<- event.ReadEvent[tm[T]]) {
@@ -177,7 +177,7 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 				v.completed = true
 				es[id] = v
 			}
-			log.Info("accing reading of self write")
+			log.Trace("accing reading of self write")
 			e.Acc()
 		default:
 			more = false
@@ -192,25 +192,25 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 		timeout <- v.event
 	}
 
-	log.Info("backpressure finished")
+	log.Trace("backpressure finished")
 
 	for e := range events { //Since this stream is controlled by us, we range over it until it closes
-		log.Info("range read", "event", e.Data.Id.String())
+		log.Debug("range read", "event", e.Data.Id.String())
 		e.Acc()
 		switch e.Type {
 		case event.Created:
 			//New event, compete for it
-			log.Info("competing for event", "id", e.Data.Id.String())
+			log.Trace("competing for event", "id", e.Data.Id.String())
 			c.compete(e.ReadEvent)
 		case event.Updated:
 			//should indicate changes in the event, not sure what to do here.
 		case event.Deleted:
 			//This should indicate a finished event. Not sure what to do here.
-			log.Info("read a completed event", "id", e.Data.Id.String())
+			log.Trace("read a completed event", "id", e.Data.Id.String())
 		}
-		log.Info("writing to timeout chan")
+		log.Trace("writing to timeout chan")
 		timeout <- e.ReadEvent
-		log.Info("wrote to timeout chan")
+		log.Trace("wrote to timeout chan")
 	}
 }
 
@@ -241,7 +241,7 @@ func (c *service[T]) readWrites() {
 					Data: t,
 				}
 			})
-			log.Info("worte mapped event", "id", id)
+			log.Debug("worte mapped event", "id", id)
 		}
 	}
 }
