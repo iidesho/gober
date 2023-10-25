@@ -51,7 +51,7 @@ type mapData[DT, MT any] struct {
 	getKey            func(d MT) string
 	discoveryPath     string
 	positionKey       []byte
-	server            *webserver.Server
+	server            webserver.Server
 }
 
 type metadata[MT any] struct {
@@ -77,7 +77,7 @@ type discoveryMetadata[MT any] struct {
 	Meta     metadata[MT]
 }
 
-func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
+func Init[DT, MT any](serv webserver.Server, s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
 	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName).
 		WithMaxTableSize(1024 * 1024 * 8).
 		WithValueLogFileSize(1024 * 1024 * 8).
@@ -104,7 +104,7 @@ func Init[DT, MT any](serv *webserver.Server, s stream.Stream, dataTypeName, dat
 		ctx:               ctx,
 	}
 
-	serv.Base.GET(m.discoveryPath, func(c *gin.Context) {
+	serv.Base().GET(m.discoveryPath, func(c *gin.Context) {
 		keyStr := c.Param("key")
 		if keyStr == "" {
 			webserver.ErrorResponse(c, "key not provided", http.StatusNotFound)

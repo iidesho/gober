@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"time"
+
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/webserver"
 	"github.com/cantara/gober/websocket"
 	"github.com/cantara/gober/websocket/example"
 	"github.com/gin-gonic/gin"
-	"time"
 )
 
 func main() {
@@ -22,7 +23,7 @@ func main() {
 		return
 	}
 
-	websocket.Serve[example.PongData](serv.API, "/ping", nil,
+	websocket.Serve[example.PongData](serv.API(), "/ping", nil,
 		func(reader <-chan example.PongData, writer chan<- websocket.Write[example.PongData], params gin.Params, ctx context.Context) {
 			defer close(writer)
 			for read := range reader {

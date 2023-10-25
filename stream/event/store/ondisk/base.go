@@ -113,6 +113,7 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 					}
 				}
 
+				s.data.db.Sync() //Should add this outside a read while readable loop to reduce overhead, possibly
 				s.data.newData.Broadcast()
 			}()
 		}

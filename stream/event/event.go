@@ -43,7 +43,7 @@ type ReadEventWAcc[T any] struct {
 
 type WriteEvent[T any] struct {
 	event  Event[T]
-	Status chan store.WriteStatus
+	status chan store.WriteStatus
 }
 
 type WriteEventReadStatus[T any] interface {
@@ -61,14 +61,14 @@ func Map[OT, NT any](e WriteEventReadStatus[OT], f func(OT) NT) WriteEventReadSt
 			Data:     f(e.Event().Data),
 			Metadata: e.Event().Metadata,
 		},
-		Status: e.StatusChan(),
+		status: e.StatusChan(),
 	}
 }
 
 func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] { //Dont think i like this
 	return &WriteEvent[T]{
 		event:  e,
-		Status: make(chan store.WriteStatus, 1),
+		status: make(chan store.WriteStatus, 1),
 	}
 }
 
@@ -77,19 +77,19 @@ func (e *WriteEvent[T]) Event() *Event[T] {
 }
 
 func (e *WriteEvent[T]) Done() <-chan store.WriteStatus {
-	return e.Status
+	return e.status
 }
 
 func (e *WriteEvent[T]) Close(status store.WriteStatus) {
-	if e.Status == nil {
+	if e.status == nil {
 		return
 	}
-	e.Status <- status
-	close(e.Status)
+	e.status <- status
+	close(e.status)
 }
 
 func (e *WriteEvent[T]) StatusChan() chan store.WriteStatus {
-	return e.Status
+	return e.status
 }
 
 func (e *WriteEvent[T]) Store() *store.WriteEvent {
@@ -115,7 +115,7 @@ func (e *WriteEvent[T]) Store() *store.WriteEvent {
 			Data:     dByte,
 			Metadata: mByte,
 		},
-		Status: e.Status,
+		Status: e.status,
 	}
 }
 

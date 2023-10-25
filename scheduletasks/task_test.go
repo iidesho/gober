@@ -8,6 +8,8 @@ import (
 	"time"
 
 	log "github.com/cantara/bragi/sbragi"
+	"github.com/cantara/gober/consensus"
+	"github.com/cantara/gober/discovery/local"
 	"github.com/cantara/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 )
@@ -36,7 +38,7 @@ func cryptKeyProvider(_ string) log.RedactedString {
 var ct *testing.T
 
 func executeFunc(d dd) bool {
-	log.Info(fmt.Sprintf("Executed after time %v with count %d", d, count), "data", d, "count", count)
+	log.Info("Executed", "data", d, "count", count)
 	if count > 16 {
 		ctxGlobalCancel()
 		ct.Error("catchup ran too many times")
@@ -64,6 +66,7 @@ func executeFunc(d dd) bool {
 }
 
 func TestInit(t *testing.T) {
+
 	//dl, _ := log.NewDebugLogger()
 	//dl.SetDefault()
 	ct = t
@@ -74,22 +77,29 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	edt, err := Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
+	token := "someTestToken"
+	p, err := consensus.Init(3134, token, local.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	edt, err := Init[dd](store, p.AddTopic, "testdata_schedule1", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts2, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
+	ts2, err = Init[dd](store, p.AddTopic, "testdata_schedule2", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts3, err = Init[dd](store, "testdata_schedule", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
+	ts3, err = Init[dd](store, p.AddTopic, "testdata_schedule3", "1.0.0", cryptKeyProvider, executeFunc, 5, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	ts = edt
+	go p.Run()
+	time.Sleep(time.Microsecond)
 	return
 }
 
@@ -165,12 +175,18 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		b.Error(err)
 		return
 	}
+	token := "someTestToken"
+	p, err := consensus.Init(3134, token, local.New())
+	if err != nil {
+		b.Fatal(err)
+	}
 
-	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Info("benchmark task ran", "data", d); return true }, 10, ctx) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](store, p.AddTopic, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Info("benchmark task ran", "data", d); return true }, 10, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return
 	}
+	go p.Run()
 	data := dd{
 		Id:   1,
 		Name: "test",

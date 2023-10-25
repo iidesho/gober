@@ -3,13 +3,14 @@ package websocket
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/webserver"
-	"github.com/gin-gonic/gin"
 	"net/url"
 	"sync"
 	"testing"
 	"time"
+
+	log "github.com/cantara/bragi/sbragi"
+	"github.com/cantara/gober/webserver"
+	"github.com/gin-gonic/gin"
 )
 
 type TT struct {
@@ -27,7 +28,7 @@ func TestServe(t *testing.T) {
 		return
 	}
 	gt = t
-	Serve[TT](serv.API, "/wstest", nil, func(reader <-chan TT, writer chan<- Write[TT], params gin.Params, ctx context.Context) {
+	Serve[TT](serv.API(), "/wstest", nil, func(reader <-chan TT, writer chan<- Write[TT], params gin.Params, ctx context.Context) {
 		defer close(writer)
 		wg.Add(1)
 		defer wg.Done()

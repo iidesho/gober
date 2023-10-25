@@ -56,16 +56,24 @@ func init() {
 	}
 }
 
-type Server struct {
-	r    *gin.Engine
-	port uint16
-	Base *gin.RouterGroup
-	API  *gin.RouterGroup
+type Server interface {
+	Base() *gin.RouterGroup
+	API() *gin.RouterGroup
+	Run()
+	Port() uint16
+	Url() (u *url.URL)
 }
 
-func Init(port uint16, from_base bool) (*Server, error) {
+type server struct {
+	r    *gin.Engine
+	port uint16
+	base *gin.RouterGroup
+	api  *gin.RouterGroup
+}
+
+func Init(port uint16, from_base bool) (Server, error) {
 	h := health.Init()
-	s := &Server{
+	s := server{
 		r:    gin.New(),
 		port: port,
 	}
@@ -85,19 +93,19 @@ func Init(port uint16, from_base bool) (*Server, error) {
 	//config := cors.DefaultConfig()
 	//config.AllowOrigins = []string{"*"}
 	s.r.Use(cors.Default()) //cors.New(config))
-	s.Base = s.r.Group("")
+	s.base = s.r.Group("")
 	if health.Name == "" || from_base {
-		s.API = s.Base.Group("/")
+		s.api = s.base.Group("/")
 	} else {
-		s.API = s.Base.Group("/" + health.Name)
+		s.api = s.base.Group("/" + health.Name)
 	}
-	s.API.GET("/health", func(c *gin.Context) {
+	s.api.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, h.GetHealthReport())
 	})
 	user := os.Getenv("debug.user")
 	pass := os.Getenv("debug.pass")
 	if user != "" && pass != "" && health.Name != "" {
-		debug := s.API.Group("/debug")
+		debug := s.api.Group("/debug")
 		debug.Use(gin.BasicAuth(gin.Accounts{user: pass}))
 		debug.GET("/pprof/*type", func(c *gin.Context) {
 			fmt.Println(c.Param("type"))
@@ -113,25 +121,32 @@ func Init(port uint16, from_base bool) (*Server, error) {
 			}
 		})
 	}
-	return s, nil
+	return &s, nil
 }
 
-func (s Server) Run() {
+func (s *server) Base() *gin.RouterGroup {
+	return s.base
+}
+func (s *server) API() *gin.RouterGroup {
+	return s.api
+}
+
+func (s *server) Run() {
 	err := s.r.Run(fmt.Sprintf(":%d", s.Port()))
 	if err != nil {
 		log.WithError(err).Fatal("while starting or running webserver")
 	}
 }
 
-func (s Server) Port() uint16 {
+func (s *server) Port() uint16 {
 	return s.port
 }
 
-func (s Server) Url() (u *url.URL) {
+func (s *server) Url() (u *url.URL) {
 	u = &url.URL{}
 	u.Scheme = "http"
 	u.Host = fmt.Sprintf("%s:%d", health.GetOutboundIP(), s.Port())
-	u.Path = strings.TrimSuffix(s.Base.BasePath(), "/")
+	u.Path = strings.TrimSuffix(s.base.BasePath(), "/")
 	return
 }
 

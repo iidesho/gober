@@ -1,4 +1,4 @@
-package syncmap
+package sync
 
 import (
 	"fmt"
@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-var smap SyncMap[int]
+var smap Map[int]
 
 func TestNew(t *testing.T) {
-	smap = New[int]()
+	smap = NewMap[int]()
 	if smap == nil {
 		t.Error("unable to create map")
 		return
@@ -45,7 +45,7 @@ func TestSyncMap_GetMap(t *testing.T) {
 	}
 }
 
-var bsmap = New[int]()
+var bsmap = NewMap[int]()
 
 func BenchmarkMultiReadWrite(b *testing.B) {
 	go func() {

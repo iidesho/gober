@@ -10,6 +10,8 @@ import (
 	"github.com/gofrs/uuid"
 
 	log "github.com/cantara/bragi/sbragi"
+	"github.com/cantara/gober/consensus"
+	"github.com/cantara/gober/discovery/local"
 	"github.com/cantara/gober/stream/event"
 	"github.com/cantara/gober/stream/event/store"
 	"github.com/cantara/gober/stream/event/store/ondisk"
@@ -37,22 +39,34 @@ func cryptKeyProvider(_ string) log.RedactedString {
 }
 
 func TestInit(t *testing.T) {
+	//dl, _ := log.NewDebugLogger()
+	//dl.SetDefault()
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
 	pers, err := ondisk.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	c, err = New[dd](pers, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
+
+	token := "someTestToken"
+	p, err := consensus.Init(3133, token, local.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = New[dd](pers, p.AddTopic, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
+	go p.Run()
+	time.Sleep(time.Microsecond)
 	return
 }
 
 func TestStoreOrder(t *testing.T) {
+	wg := sync.WaitGroup{}
 	for i := 1; i <= 5; i++ {
+		log.Info("loop start", "id", i)
 		data := dd{
 			Id:   i,
 			Name: "test",
@@ -68,24 +82,26 @@ func TestStoreOrder(t *testing.T) {
 				DataType: "datatype",
 			},
 		}
-		wg := sync.WaitGroup{}
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
 			log.Info("reading event")
 			read := <-c.Stream()
-			log.Info("read event", "event", read)
+			log.Info("read event", "event", read.Data.Id)
 			events[i] = read
 			read.Acc()
-		}()
+			log.Info("acced read event")
+		}(i)
 
 		we := event.NewWriteEvent(e)
+		log.Info("writing event", "id", i)
 		c.Write() <- we
 		status := <-we.Done()
 		if status.Error != nil {
 			t.Error(status.Error)
 			return
 		}
+		log.Info("wrote event", "id", i)
 		/*
 			_, err := c.Store(e)
 			if err != nil {
@@ -93,9 +109,10 @@ func TestStoreOrder(t *testing.T) {
 				return
 			}
 		*/
-		log.Info("waiting for event to read")
-		wg.Wait()
+		log.Info("loop end", "id", i)
 	}
+	log.Info("waiting for event to read")
+	wg.Wait()
 	return
 }
 
@@ -138,12 +155,14 @@ func TestTimeout(t *testing.T) {
 	}
 
 	we := event.NewWriteEvent(e)
+	log.Info("writing event to timeout")
 	c.Write() <- we
 	status := <-we.Done()
 	if status.Error != nil {
 		t.Error(status.Error)
 		return
 	}
+	log.Info("wrote event to timeout")
 	/*
 		c.Write() <- event.WriteEvent[dd]{
 			Event: e,

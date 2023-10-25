@@ -12,7 +12,7 @@ func TestPanicRecover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serv.API.GET("panic", func(c *gin.Context) {
+	serv.API().GET("panic", func(c *gin.Context) {
 		panic("TEST")
 	})
 	go serv.Run()

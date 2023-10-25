@@ -8,7 +8,7 @@ import (
 	"github.com/cantara/gober/stream"
 	"github.com/cantara/gober/stream/consumer"
 	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/syncmap"
+	"github.com/cantara/gober/sync"
 
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/stream/event/store"
@@ -27,7 +27,7 @@ type EventMap[DT any] interface {
 }
 
 type mapData[DT any] struct {
-	data             syncmap.SyncMap[DT]
+	data             sync.Map[DT]
 	eventTypeName    string
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
@@ -42,7 +42,7 @@ type kv[DT any] struct {
 func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
 	es, err := consumer.New[kv[DT]](pers, p, ctx)
 	m := mapData[DT]{
-		data:             syncmap.New[DT](),
+		data:             sync.NewMap[DT](),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,

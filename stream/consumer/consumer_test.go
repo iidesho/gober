@@ -86,14 +86,11 @@ func TestStoreOrder(t *testing.T) {
 		}()
 		we := event.NewWriteEvent(e)
 		c.Write() <- we
-		<-we.Done()
-		/*
-			_, err := c.Store(e)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-		*/
+		status := <-we.Done()
+		if status.Error != nil {
+			t.Error(status.Error)
+			return
+		}
 		wg.Wait()
 	}
 	return
