@@ -50,7 +50,24 @@ type Stream struct {
 func Init(name string, ctx context.Context) (s *Stream, err error) {
 	writeChan := make(chan store.WriteEvent)
 	os.Mkdir("streams", 0750)
-	f, err := os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0640)
+	f, err := os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_CREATE|os.O_RDONLY, 0640)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	j := json.NewDecoder(f)
+	var se storeEvent
+	p := uint64(0)
+	for j.More() {
+		err = j.Decode(&se)
+		if err != nil {
+			return
+		}
+		if p < se.Position {
+			p = se.Position
+		}
+	}
+	f, err = os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0640)
 	if err != nil {
 		return
 	}
@@ -59,12 +76,14 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 			db:  f,
 			len: &atomic.Int64{},
 			//dbLock:  &sync.Mutex{},
-			newData: sync.NewCond(&sync.Mutex{}),
+			newData:  sync.NewCond(&sync.Mutex{}),
+			position: p,
 		},
 		name:      name,
 		writeChan: writeChan,
 		ctx:       ctx,
 	}
+	s.data.len.Store(int64(p))
 	go writeStrem(s, writeChan)
 	return
 }
@@ -113,7 +132,7 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 					}
 				}
 
-				s.data.db.Sync() //Should add this outside a read while readable loop to reduce overhead, possibly
+				//Should not be needed as the file is opened with os.SYNC s.data.db.Sync() //Should add this outside a read while readable loop to reduce overhead, possibly
 				s.data.newData.Broadcast()
 			}()
 		}
