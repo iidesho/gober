@@ -17,7 +17,7 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.14.0
-	golang.org/x/exp v0.0.0-20230213192124-5e25df0256eb
+	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	nhooyr.io/websocket v1.8.10
 )
 
