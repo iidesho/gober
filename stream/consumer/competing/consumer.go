@@ -1,6 +1,7 @@
 package competing
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -21,7 +22,7 @@ type service[T any] struct {
 	timeout        time.Duration
 	selector       uuid.UUID
 	completed      sync.SLK
-	competeChan    chan event.ReadEvent[tm[T]]
+	selectable     chan event.ReadEvent[tm[T]]
 	selectedOutput chan event.ReadEventWAcc[T]
 	writeStream    chan event.WriteEventReadStatus[T]
 	cons           consensus.Consensus
@@ -53,7 +54,7 @@ func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKe
 		timeout:        timeoutDuration,
 		selector:       name,
 		completed:      sync.NewSLK(),
-		competeChan:    make(chan event.ReadEvent[tm[T]], 100),
+		selectable:     make(chan event.ReadEvent[tm[T]], 100),
 		selectedOutput: make(chan event.ReadEventWAcc[T], 0),
 		writeStream:    make(chan event.WriteEventReadStatus[T], 10),
 		cons:           cons,
@@ -63,95 +64,168 @@ func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKe
 	if err != nil {
 		return
 	}
+	go c.readWrites()
 	timeoutChan := make(chan event.ReadEvent[tm[T]], 3)
 	go c.readStream(eventStream, timeoutChan)
-	go c.readWrites()
-	go c.timeoutHandler(timeoutChan)
-	go c.competeHandler()
+	timeouts := sync.NewQue[timedat[tm[T]]]()
+	go c.timeoutManager(timeouts, timeoutChan)
+	go c.timeoutHandler(timeouts)
+	go c.selectableHandler(timeoutChan)
 
 	out = &c
 	return
 }
 
-func (c *service[T]) timeoutHandler(events <-chan event.ReadEvent[tm[T]]) {
-	timeouts := sync.NewMap[context.CancelFunc]()
+type timedat[T any] struct {
+	e event.ReadEvent[T]
+	t time.Time
+}
+
+func (c *service[T]) timeoutManager(timeouts sync.Que[timedat[tm[T]]], events <-chan event.ReadEvent[tm[T]]) {
 	for e := range events {
 		if e.Type == event.Deleted {
-			log.Info("got new event to cancel time out")
-			id := e.Data.Id.String()
-			cancel, ok := timeouts.Get(id)
-			if !ok {
-				continue
-			}
-			timeouts.Delete(id)
-			cancel()
+			timeouts.Delete(func(v timedat[tm[T]]) bool {
+				return bytes.Equal(v.e.Data.Id.Bytes(), e.Data.Id.Bytes())
+			})
 			continue
 		}
-		log.Info("got new event to time out")
-		//This is gona use too much ram, however it is okay for now
-		ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-		timeouts.Set(e.Data.Id.String(), cancel)
-		go func(e event.ReadEvent[tm[T]], ctx context.Context) {
-			<-ctx.Done()
-			cancel, ok := timeouts.Get(e.Data.Id.String())
-			if !ok {
+		timeouts.Push(timedat[tm[T]]{
+			e: e,
+			t: time.Now().Add(c.timeout + time.Millisecond*10), //Adding 10 milliseconds to give some wiggle room with the consesus timouts
+		})
+	}
+}
+
+func (c *service[T]) timeoutHandler(timeouts sync.Que[timedat[tm[T]]]) {
+	//timeouts := sync.NewMap[context.CancelFunc]()
+	for {
+		select {
+		case <-timeouts.HasData():
+		case <-c.ctx.Done():
+			return
+		}
+		timeout, ok := timeouts.Peek()
+		if !ok {
+			continue
+		}
+		select {
+		case <-time.After(time.Until(timeout.t)):
+			now := time.Now()
+			for timeout, ok = timeouts.Peek(); ok && now.After(timeout.t); timeout, ok = timeouts.Peek() {
+				timeout, ok = timeouts.Pop()
+				if c.completed.Get(timeout.e.Data.Id.String()) {
+					log.Trace("timed out a completed event, no need to make it selectable", "id", timeout.e.Data.Id.String())
+					continue
+				}
+				log.Trace("event timed out, writing to compete chan", "id", timeout.e.Data.Id.String())
+				c.selectable <- timeout.e
+				log.Trace("event timed out, wrote to compete chan", "id", timeout.e.Data.Id.String())
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+type seldat[T any] struct {
+	e      event.ReadEvent[T]
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
+	selectables := sync.NewQue[event.ReadEvent[tm[T]]]()
+	var selected *seldat[tm[T]]
+	//ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
+	for {
+		if selected == nil {
+			select {
+			case e := <-c.selectable:
+				if e.Type == event.Deleted {
+					selectables.Delete(func(v event.ReadEvent[tm[T]]) bool {
+						return bytes.Equal(e.Data.Id.Bytes(), v.Data.Id.Bytes())
+					})
+				} else {
+					log.Trace("adding selectable event", "id", e.Data.Id.String())
+					selectables.Push(e)
+				}
+			case <-selectables.HasData():
+				e, ok := selectables.Pop()
+				if !ok {
+					continue
+				}
+				id := e.Data.Id.String()
+				if c.completed.Get(id) {
+					log.Trace("selectable was already completed and no longer selectable")
+					continue
+				}
+				log.Trace("competing")
+				timeout <- e
+				won := c.cons.Request(id) //Might need to difirentiate on won lost and completed
+				if !won {
+					//time.Sleep(time.Second)
+					log.Trace("did not win consesus", "id", id)
+					continue
+				}
+				log.Trace("won competition")
+				ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
+				selected = &seldat[tm[T]]{
+					e:      e,
+					ctx:    ctx,
+					cancel: cancel,
+				}
+			case <-c.ctx.Done():
 				return
 			}
-			cancel()
-			c.competeChan <- e
-		}(e, ctx)
-	}
-}
-func (c *service[T]) compete(e event.ReadEvent[tm[T]]) {
-	if c.completed.Get(e.Data.Id.String()) {
-		log.Info("already completed, no need to compete", "id", e.Data.Id.String())
-		return
-	}
-	id := e.Data.Id.String()
-	log.Info("competing")
-	won := c.cons.Request(id) //Might need to difirentiate on won lost and completed
-	if !won {
-		log.Debug("did not win consesus", "id", id)
-		// Add timeout wait
-		return
-	}
-	log.Info("won competition")
-	ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
-	select {
-	case <-ctx.Done():
-		c.compete(e)
-	case c.selectedOutput <- event.ReadEventWAcc[T]{
-		ReadEvent: event.ReadEvent[T]{
-			Event: event.Event[T]{
-				Type:     e.Type,
-				Data:     e.Data.Data,
-				Metadata: e.Metadata,
-			},
-			Position: e.Position,
-			Created:  e.Created,
-		},
-		CTX: ctx,
-		Acc: func() {
-			cancel()
-			we := event.NewWriteEvent[tm[T]](event.Event[tm[T]]{
-				Type:     event.Deleted,
-				Data:     e.Data,
-				Metadata: e.Metadata,
-			})
-			c.stream.Write() <- we
-			status := <-we.Done()
-			if status.Error != nil {
-				log.WithError(status.Error).Error("while writing completion event")
+		} else {
+			select {
+			case e := <-c.selectable:
+				if e.Type == event.Deleted {
+					if bytes.Equal(selected.e.Data.Id.Bytes(), e.Data.Id.Bytes()) {
+						selected = nil
+					}
+					selectables.Delete(func(v event.ReadEvent[tm[T]]) bool {
+						return bytes.Equal(e.Data.Id.Bytes(), v.Data.Id.Bytes())
+					})
+				} else {
+					log.Trace("adding selectable event", "id", e.Data.Id.String())
+					selectables.Push(e)
+				}
+			case <-selected.ctx.Done():
+				selected = nil
+			case c.selectedOutput <- event.ReadEventWAcc[T]{
+				ReadEvent: event.ReadEvent[T]{
+					Event: event.Event[T]{
+						Type:     selected.e.Type,
+						Data:     selected.e.Data.Data,
+						Metadata: selected.e.Metadata,
+					},
+					Position: selected.e.Position,
+					Created:  selected.e.Created,
+				},
+				CTX: selected.ctx,
+				Acc: func(cancel context.CancelFunc, e event.ReadEvent[tm[T]]) func() {
+					return func() {
+						cancel()
+						we := event.NewWriteEvent[tm[T]](event.Event[tm[T]]{
+							Type:     event.Deleted,
+							Data:     e.Data,
+							Metadata: e.Metadata,
+						})
+						c.stream.Write() <- we
+						status := <-we.Done()
+						if status.Error != nil {
+							log.WithError(status.Error).Error("while writing completion event")
+						}
+						c.cons.Completed(e.Data.Id.String())
+					}
+				}(selected.cancel, selected.e),
+			}:
+				selected = nil
+			case <-c.ctx.Done():
+				return
 			}
-			c.cons.Completed(id)
-		},
-	}:
-	}
-	log.Info("wrote to selectedOutput")
-}
-func (c *service[T]) competeHandler() {
-	for e := range c.competeChan {
-		c.compete(e)
+		}
 	}
 }
 
@@ -172,8 +246,12 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 	log.WithError(err).Trace("got stream end", "end", end)
 	for p < end { //catchup loop, read until no more backpressure
 		e := <-events
+		e.Acc()
+		p = e.Position
 		switch e.Type {
 		case event.Created:
+			fallthrough
+		case event.Updated:
 			id := e.Event.Data.Id.String()
 			if !es[id].completed {
 				es[id] = struct {
@@ -184,53 +262,50 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 					event:     e.ReadEvent,
 				}
 			}
-		case event.Updated:
-			//should indicate changes in the event, not sure what to do here.
 		case event.Deleted:
 			id := e.Event.Data.Id.String()
 			v := es[id]
 			v.completed = true
 			es[id] = v
 		}
-		e.Acc()
-		p = e.Position
 	}
 
 	for k, v := range es {
 		if v.completed {
-			c.completed.Add(k, c.timeout*3)
+			c.completed.Add(k, c.timeout*30)
+			log.Trace("found completed from backpressure")
 			continue
 		}
-		log.Info("competing for backpressure")
+		log.Trace("found selectable from backpressure")
 		// another dirty hack, should not use go
 		//go c.compete(v.event)
-		c.competeChan <- v.event
-		timeout <- v.event
+		c.selectable <- v.event
+		//timeout <- v.event
 	}
 
-	log.Info("backpressure finished")
+	log.Trace("backpressure finished")
 
 	for e := range events { //Since this stream is controlled by us, we range over it until it closes
-		log.Info("range read", "event", e.Data.Id.String())
+		log.Trace("range read", "event", e.Data.Id.String())
 		e.Acc()
 		switch e.Type {
 		case event.Created:
+			fallthrough
+		case event.Updated:
 			//New event, compete for it
-			log.Info("competing for event", "id", e.Data.Id.String())
+			log.Trace("competing for event", "id", e.Data.Id.String())
 			//Move competing to a sepparate thread as it will get stuck and should use a stack or something instead to decide
 			//Adding go for now as a work around
 			//go c.compete(e.ReadEvent)
-			c.competeChan <- e.ReadEvent
-		case event.Updated:
-			//should indicate changes in the event, not sure what to do here.
 		case event.Deleted:
 			//This should indicate a finished event. Not sure what to do here.
-			log.Info("read a completed event", "id", e.Data.Id.String())
-			c.completed.Add(e.Data.Id.String(), c.timeout*3)
+			log.Trace("read a completed event", "id", e.Data.Id.String())
+			c.completed.Add(e.Data.Id.String(), c.timeout*30)
+			log.Trace("writing to timeout chan")
+			timeout <- e.ReadEvent
+			log.Trace("wrote to timeout chan")
 		}
-		log.Info("writing to timeout chan")
-		timeout <- e.ReadEvent
-		log.Info("wrote to timeout chan")
+		c.selectable <- e.ReadEvent
 	}
 }
 

@@ -39,7 +39,7 @@ var ct *testing.T
 
 var intervalChan = make(chan struct{})
 
-func executeFunc(d dd) bool {
+func executeFunc(d dd, ctx context.Context) bool {
 	log.Info("Executed", "data", d, "count", count)
 	if count > 16 {
 		ctxGlobalCancel()
@@ -65,8 +65,12 @@ func executeFunc(d dd) bool {
 	}
 	//time.Sleep(10 * time.Second)
 
-	time.Sleep(5 * time.Second)
-	defer wg.Done()
+	select {
+	case <-time.After(5 * time.Second):
+		defer wg.Done()
+	case <-ctx.Done():
+		return false
+	}
 	return true
 }
 
@@ -194,7 +198,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	edt, err := Init[dd](store, p.AddTopic, "testdata", "1.0.0", cryptKeyProvider, func(d dd) bool { log.Info("benchmark task ran", "data", d); return true }, time.Second, false, 10, ctx) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](store, p.AddTopic, "testdata", "1.0.0", cryptKeyProvider, func(d dd, _ context.Context) bool { /*log.Info("benchmark task ran", "data", d);*/ return true }, time.Second, false, 10, ctx) //FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

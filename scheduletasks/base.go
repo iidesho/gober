@@ -48,7 +48,7 @@ type tm[DT any] struct {
 	cancel   context.CancelFunc
 }
 
-func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT) bool, timeout time.Duration, skipable bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
+func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT, context.Context) bool, timeout time.Duration, skipable bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
 	dataTypeName = dataTypeName + "_task"
 	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, timeout, ctx) //This 15 min timout might be a huge issue
 	if err != nil {
@@ -74,21 +74,21 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 							return
 						}
 					}()
-					log.Info("selected task", "event", e)
+					log.Trace("selected task", "event", e)
 					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
-					if !execute(e.Data.Task) {
+					if !execute(e.Data.Task, e.CTX) {
 						log.Warning("there was an error while executing task. not finishing")
 						return
 					}
-					log.Info("executed task", "event", e)
+					log.Trace("executed task", "event", e)
 					if e.Data.Metadata.Interval != NoInterval {
-						log.Info("creating next task")
+						log.Trace("creating next task")
 						err = t.create(e.Data.Metadata.Id, e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
 						if err != nil {
 							log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
 							return
 						}
-						log.Info("created next task")
+						log.Trace("created next task")
 					}
 					e.Acc()
 				}()
@@ -112,35 +112,47 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 			s.tasks = append(s.tasks, e.Data.Metadata)
 		}
 		s.taskLock.Unlock()
-		log.Info("won event", "id", e.Data.Metadata.Id, "skippable", skipable, "interval", e.Data.Metadata.Interval, "after", e.Data.Metadata.After, "before_now", time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)))
+		log.Trace("won event", "id", e.Data.Metadata.Id, "skippable", skipable, "interval", e.Data.Metadata.Interval, "after", e.Data.Metadata.After, "before_now", time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)))
 		if skipable && e.Data.Metadata.Interval != NoInterval && time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)) {
-			log.Info("skipping event, execution to late", "id", e.Data.Metadata.Id)
+			log.Trace("skipping event, execution to late", "id", e.Data.Metadata.Id)
 			//My issue is right here, it is not getting acepted as written
 			err := s.create(e.Data.Metadata.Id, e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
 			if err != nil {
 				log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
 				return
 			}
-			log.Info("accing skipped event, execution to late", "id", e.Data.Metadata.Id)
+			log.Trace("accing skipped event, execution to late", "id", e.Data.Metadata.Id)
 			e.Acc()
-			log.Info("acced skipped event, execution to late", "id", e.Data.Metadata.Id)
+			log.Trace("acced skipped event, execution to late", "id", e.Data.Metadata.Id)
+			continue
+		}
+		from, to := time.Now(), e.Data.Metadata.After
+		waitTime := to.Sub(from)
+		if waitTime > timeout {
+			log.Trace("no need to start waiting, timeout is before execution", "from", from, "to", to, "wait_time", waitTime, "timeout", timeout)
 			continue
 		}
 		go func(e event.ReadEventWAcc[tm[DT]]) {
-			from, to := time.Now(), e.Data.Metadata.After
-			waitTime := to.Sub(from)
 			log.Trace("waiting until it is time to do work", "from", from, "to", to, "wait_time", waitTime)
 			select {
 			case <-s.ctx.Done():
+				log.Trace("service context timed out")
 				return
 			case <-e.CTX.Done():
+				log.Trace("event context timed out")
 				return
 			case <-time.After(waitTime):
 			}
+			log.Trace("time to do work, writing to exec chan")
 			select {
 			case execChan <- e:
+				log.Trace("wrote to exec chan")
 			case <-s.ctx.Done():
+				log.Trace("service context timed out")
+				return
 			case <-e.CTX.Done():
+				log.Trace("event context timed out")
+				return
 			}
 		}(e)
 	}
@@ -173,11 +185,11 @@ func (t *scheduledtasks[DT]) create(id string, a time.Time, i time.Duration, dt 
 			Id:       id,
 		},
 	}))
-	log.Info("created event", "id", id)
+	log.Trace("created event", "id", id)
 	t.es.Write() <- we
-	log.Info("wrote event", "id", id)
+	log.Trace("wrote event", "id", id)
 	ws := <-we.Done()
-	log.Info("got event status", "id", id)
+	log.Trace("got event status", "id", id)
 	return ws.Error
 }
 

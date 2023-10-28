@@ -184,7 +184,8 @@ func TestTimeout(t *testing.T) {
 	log.Info("reading event to acc")
 	select {
 	case read = <-c.Stream():
-	default:
+	case <-time.After(20 * time.Second):
+		//default:
 		t.Error("task was not ready to select")
 		return
 	}
