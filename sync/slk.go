@@ -36,8 +36,11 @@ func (s *slk) Get(key string) (ok bool) {
 	if !ok {
 		return
 	}
+	if timeout.After(time.Now()) {
+		return true
+	}
 	go s.Delete(key) //TODO: change it to use a watcher thread instead of this simple hack. This cuold leak mem by not cleaning old values that is not getting accessed
-	return time.Now().After(timeout)
+	return false     //time.Now().After(timeout)
 }
 
 func (s *slk) Delete(key string) {
