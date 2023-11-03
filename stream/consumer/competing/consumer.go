@@ -272,7 +272,7 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 
 	for k, v := range es {
 		if v.completed {
-			c.completed.Add(k, c.timeout*30)
+			c.completed.Add(k, time.Hour*24*365) //c.timeout*30)
 			log.Trace("found completed from backpressure")
 			continue
 		}
@@ -300,7 +300,7 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 		case event.Deleted:
 			//This should indicate a finished event. Not sure what to do here.
 			log.Trace("read a completed event", "id", e.Data.Id.String())
-			c.completed.Add(e.Data.Id.String(), c.timeout*30)
+			c.completed.Add(e.Data.Id.String(), time.Hour*24*365) //c.timeout*30)
 			log.Trace("writing to timeout chan")
 			timeout <- e.ReadEvent
 			log.Trace("wrote to timeout chan")
