@@ -52,7 +52,10 @@ const timeoutOffsett = time.Second * 5
 
 func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT, context.Context) bool, timeout time.Duration, skipable bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
 	dataTypeName = dataTypeName + "_task"
-	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, func(v tm[DT]) time.Duration {
+	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, func(v tm[DT]) (t time.Duration) {
+		defer func() {
+			log.Info("timeout calculated", "duration", t)
+		}()
 		if v.Metadata.Id == "" {
 			return timeout
 		}
