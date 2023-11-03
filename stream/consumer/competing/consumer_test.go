@@ -53,7 +53,15 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err = New[dd](pers, p.AddTopic, cryptKeyProvider, store.STREAM_START, "datatype", time.Second*15, ctxGlobal)
+	c, err = New[dd](pers, p.AddTopic, cryptKeyProvider, store.STREAM_START, "datatype", func(v dd) time.Duration {
+		if v.Id == 0 {
+			return time.Microsecond * 500
+		}
+		if v.Id == 10 {
+			return time.Second * 3
+		}
+		return time.Second * 1
+	}, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -176,24 +184,24 @@ func TestTimeout(t *testing.T) {
 	log.Info("reading event to discard")
 	read := <-c.Stream()
 	log.Info("read", "event", read)
-	log.Info("waiting until after timeout (20s)")
-	time.Sleep(time.Second * 20)
+	log.Info("waiting until after timeout (5s)")
+	time.Sleep(time.Second * 5)
 	//log.Info("accing event after timeout and it should have been discarded") //This and the next one should probably not be true anymore :/
 	//read.Acc()
 
 	log.Info("reading event to acc")
 	select {
 	case read = <-c.Stream():
-	case <-time.After(20 * time.Second):
+	case <-time.After(5 * time.Second):
 		//default:
 		t.Error("task was not ready to select")
 		return
 	}
 	log.Info("read", "event", read)
 	read.Acc()
-	log.Info("verifying there is no extra events a peering (40s)")
+	log.Info("verifying there is no extra events a peering (9s)")
 	select {
-	case <-time.After(40 * time.Second):
+	case <-time.After(9 * time.Second):
 	case read = <-c.Stream():
 		t.Error("task still existed after timeout: ", read)
 		return

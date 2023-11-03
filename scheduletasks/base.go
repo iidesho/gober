@@ -48,9 +48,19 @@ type tm[DT any] struct {
 	cancel   context.CancelFunc
 }
 
+const timeoutOffsett = time.Second * 5
+
 func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT, context.Context) bool, timeout time.Duration, skipable bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
 	dataTypeName = dataTypeName + "_task"
-	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, timeout, ctx) //This 15 min timout might be a huge issue
+	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, func(v tm[DT]) time.Duration {
+		if v.Metadata.Id == "" {
+			return timeout
+		}
+		if v.Metadata.After.After(time.Now().Add(timeout + timeoutOffsett)) {
+			return v.Metadata.After.Sub(time.Now()) - time.Second
+		}
+		return timeout + timeoutOffsett
+	}, ctx) //This 15 min timout might be a huge issue
 	if err != nil {
 		return
 	}

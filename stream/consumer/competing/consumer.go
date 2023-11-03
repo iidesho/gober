@@ -16,16 +16,19 @@ import (
 	"github.com/gofrs/uuid"
 )
 
+type timeoutFunk[T any] func(v T) time.Duration
+
 type service[T any] struct {
-	stream         consumer.Consumer[tm[T]]
-	cryptoKey      stream.CryptoKeyProvider
-	timeout        time.Duration
+	stream    consumer.Consumer[tm[T]]
+	cryptoKey stream.CryptoKeyProvider
+	//timeout        time.Duration
 	selector       uuid.UUID
 	completed      sync.SLK
 	selectable     chan event.ReadEvent[tm[T]]
 	selectedOutput chan event.ReadEventWAcc[T]
 	writeStream    chan event.WriteEventReadStatus[T]
 	cons           consensus.Consensus
+	timeout        timeoutFunk[T]
 	ctx            context.Context
 }
 
@@ -34,7 +37,7 @@ type tm[T any] struct {
 	Data T         `json:"data"`
 }
 
-func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeoutDuration time.Duration, ctx context.Context) (out Consumer[T], err error) {
+func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeout timeoutFunk[T], ctx context.Context) (out Consumer[T], err error) {
 	fs, err := consumer.New[tm[T]](s, cryptoKey, ctx)
 	if err != nil {
 		return
@@ -43,21 +46,23 @@ func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKe
 	if err != nil {
 		return
 	}
-	cons, err := consBuilder("competing_"+datatype, timeoutDuration+time.Millisecond)
+	var t T
+	cons, err := consBuilder("competing_"+datatype, timeout(t))
 	if err != nil {
 		return
 	}
 
 	c := service[T]{
-		stream:         fs,
-		cryptoKey:      cryptoKey,
-		timeout:        timeoutDuration,
+		stream:    fs,
+		cryptoKey: cryptoKey,
+		//timeout:        timeoutDuration,
 		selector:       name,
 		completed:      sync.NewSLK(),
 		selectable:     make(chan event.ReadEvent[tm[T]], 100),
 		selectedOutput: make(chan event.ReadEventWAcc[T], 0),
 		writeStream:    make(chan event.WriteEventReadStatus[T], 10),
 		cons:           cons,
+		timeout:        timeout,
 		ctx:            ctx,
 	}
 	eventStream, err := c.stream.Stream(event.AllTypes(), from, stream.ReadDataType(datatype), c.ctx)
@@ -91,7 +96,7 @@ func (c *service[T]) timeoutManager(timeouts sync.Que[timedat[tm[T]]], events <-
 		}
 		timeouts.Push(timedat[tm[T]]{
 			e: e,
-			t: time.Now().Add(c.timeout + time.Millisecond*10), //Adding 10 milliseconds to give some wiggle room with the consesus timouts
+			t: time.Now().Add(c.timeout(e.Data.Data)), //c.timeout + time.Millisecond*10), //Adding 10 milliseconds to give some wiggle room with the consesus timouts
 		})
 	}
 }
@@ -168,7 +173,7 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 					continue
 				}
 				log.Trace("won competition")
-				ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
+				ctx, cancel := context.WithTimeout(c.ctx, c.timeout(e.Data.Data)) //c.timeout)
 				selected = &seldat[tm[T]]{
 					e:      e,
 					ctx:    ctx,
