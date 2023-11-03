@@ -151,3 +151,42 @@ func (es eventService[T]) Name() string {
 func (es eventService[T]) End() (pos uint64, err error) {
 	return es.store.End()
 }
+
+func (es eventService[T]) FilteredEnd(eventTypes []event.Type, filter Filter) (pos uint64, err error) {
+	filterEventTypes := len(eventTypes) > 0
+	ets := make(map[event.Type]struct{})
+	for _, eventType := range eventTypes {
+		ets[eventType] = struct{}{}
+	}
+	p := uint64(0)
+	end, err := es.End()
+	if err != nil {
+		return
+	}
+	s, err := es.store.Stream(store.STREAM_START, es.ctx)
+	if err != nil {
+		return
+	}
+	log.WithError(err).Info("got stream end", "end", end, "stream", es.Name())
+	for p < end {
+		e := <-s
+		p = e.Position
+		t := event.TypeFromString(e.Type)
+		if filterEventTypes {
+			if _, ok := ets[t]; !ok {
+				continue
+			}
+		}
+		var metadata event.Metadata
+		err := json.Unmarshal(e.Metadata, &metadata)
+		log.WithError(err).Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
+		if err != nil {
+			continue
+		}
+		if filter(metadata) {
+			continue
+		}
+		pos = p
+	}
+	return
+}

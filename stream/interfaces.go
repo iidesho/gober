@@ -20,6 +20,7 @@ type FilteredStream[T any] interface {
 	Stream(eventTypes []event.Type, from store.StreamPosition, filter Filter, ctx context.Context) (out <-chan event.ReadEvent[T], err error)
 	End() (pos uint64, err error)
 	Name() string
+	FilteredEnd(eventTypes []event.Type, filter Filter) (pos uint64, err error)
 }
 
 //FilteredStream(eventTypes []event.Type, from store.StreamPosition, filter Filter[MT], cryptKey CryptoKeyProvider, ctx context.Context) (out <-chan event.Event[DT, any], err error)

@@ -173,6 +173,10 @@ func (c *consumer[T]) Name() string {
 	return c.stream.Name()
 }
 
+func (c *consumer[T]) FilteredEnd(eventTypes []event.Type, filter stream.Filter) (pos uint64, err error) {
+	return c.stream.FilteredEnd(eventTypes, filter)
+}
+
 func EncryptEvent[T any](e *event.Event[T], cryptoKey stream.CryptoKeyProvider) (es event.Event[[]byte], err error) {
 	data, err := json.Marshal(e.Data)
 	if err != nil {

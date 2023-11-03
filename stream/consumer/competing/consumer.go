@@ -21,6 +21,7 @@ type timeoutFunk[T any] func(v T) time.Duration
 type service[T any] struct {
 	stream    consumer.Consumer[tm[T]]
 	cryptoKey stream.CryptoKeyProvider
+	dataType  string
 	//timeout        time.Duration
 	selector       uuid.UUID
 	completed      sync.SLK
@@ -55,6 +56,7 @@ func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKe
 	c := service[T]{
 		stream:    fs,
 		cryptoKey: cryptoKey,
+		dataType:  datatype,
 		//timeout:        timeoutDuration,
 		selector:       name,
 		completed:      sync.NewSLK(),
@@ -247,8 +249,8 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 		event     event.ReadEvent[tm[T]]
 	}{}
 	p := uint64(0)
-	end, err := c.stream.End()
-	log.WithError(err).Trace("got stream end", "end", end)
+	end, err := c.End()
+	log.WithError(err).Trace("got stream end", "end", end, "stream", c.stream.Name())
 	for p < end { //catchup loop, read until no more backpressure
 		e := <-events
 		e.Acc()
@@ -278,10 +280,8 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 	for k, v := range es {
 		if v.completed {
 			c.completed.Add(k, time.Hour*24*365) //c.timeout*30)
-			log.Trace("found completed from backpressure")
 			continue
 		}
-		log.Trace("found selectable from backpressure")
 		// another dirty hack, should not use go
 		//go c.compete(v.event)
 		c.selectable <- v.event
@@ -355,7 +355,7 @@ func (c *service[T]) Stream() <-chan event.ReadEventWAcc[T] {
 }
 
 func (c *service[T]) End() (pos uint64, err error) {
-	return c.stream.End()
+	return c.stream.FilteredEnd(event.AllTypes(), stream.ReadDataType(c.dataType))
 }
 
 func (c *service[T]) Name() string {

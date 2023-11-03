@@ -52,13 +52,28 @@ const timeoutOffsett = time.Second * 5
 
 func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT, context.Context) bool, timeout time.Duration, skipable bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
 	dataTypeName = dataTypeName + "_task"
-	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, func(v tm[DT]) (t time.Duration) {
+	t := scheduledtasks[DT]{
+		dataType: dataTypeName,
+		version:  dataTypeVersion,
+		ctx:      ctx,
+	}
+	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, func(v tm[DT]) (to time.Duration) {
 		defer func() {
-			log.Info("timeout calculated", "duration", t)
+			log.Info("timeout calculated", "duration", to, "name", v.Metadata.Id, "type", dataTypeName)
 		}()
 		if v.Metadata.Id == "" {
 			return timeout
 		}
+		t.taskLock.Lock()
+		i := contains(v.Metadata.Id, t.tasks)
+		if i >= 0 {
+			if v.Metadata.After.After(t.tasks[i].After) {
+				t.tasks[i] = v.Metadata
+			}
+		} else {
+			t.tasks = append(t.tasks, v.Metadata)
+		}
+		t.taskLock.Unlock()
 		if v.Metadata.After.After(time.Now().Add(timeout + timeoutOffsett)) {
 			return v.Metadata.After.Sub(time.Now()) - time.Second
 		}
@@ -67,12 +82,7 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 	if err != nil {
 		return
 	}
-	t := scheduledtasks[DT]{
-		dataType: dataTypeName,
-		version:  dataTypeVersion,
-		ctx:      ctx,
-		es:       es,
-	}
+	t.es = es
 
 	//Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
 	exec := make(chan event.ReadEventWAcc[tm[DT]], 0)
@@ -124,15 +134,8 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 
 func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execChan chan event.ReadEventWAcc[tm[DT]]) {
 	for e := range s.es.Stream() {
-		s.taskLock.Lock()
-		i := contains(e.Data.Metadata.Id, s.tasks)
-		if i >= 0 {
-			s.tasks[i] = e.Data.Metadata
-		} else {
-			s.tasks = append(s.tasks, e.Data.Metadata)
-		}
-		s.taskLock.Unlock()
-		log.Trace("won event", "id", e.Data.Metadata.Id, "skippable", skipable, "interval", e.Data.Metadata.Interval, "after", e.Data.Metadata.After, "before_now", time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)))
+		//Could be valuable to keep the task collection here
+		log.Info("won event", "name", s.es.Name(), "id", e.Data.Metadata.Id, "skippable", skipable, "interval", e.Data.Metadata.Interval, "after", e.Data.Metadata.After, "before_now", time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)))
 		if skipable && e.Data.Metadata.Interval != NoInterval && time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)) {
 			log.Trace("skipping event, execution to late", "id", e.Data.Metadata.Id)
 			//My issue is right here, it is not getting acepted as written
@@ -153,7 +156,7 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 			continue
 		}
 		go func(e event.ReadEventWAcc[tm[DT]]) {
-			log.Trace("waiting until it is time to do work", "from", from, "to", to, "wait_time", waitTime)
+			log.Info("waiting until it is time to do work", "from", from, "to", to, "wait_time", waitTime)
 			select {
 			case <-s.ctx.Done():
 				log.Trace("service context timed out")
@@ -163,10 +166,10 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 				return
 			case <-time.After(waitTime):
 			}
-			log.Trace("time to do work, writing to exec chan")
+			log.Info("time to do work, writing to exec chan")
 			select {
 			case execChan <- e:
-				log.Trace("wrote to exec chan")
+				log.Info("wrote to exec chan", "name", s.es.Name(), "id", e.Data.Metadata.Id, "interval", e.Data.Metadata.Interval)
 			case <-s.ctx.Done():
 				log.Trace("service context timed out")
 				return
