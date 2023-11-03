@@ -81,6 +81,13 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 						return
 					}
 					log.Trace("executed task", "event", e)
+					//Since the context can have timedout and thus another one could have been selected. This will create duplecate and competing tasks.
+					select {
+					case <-e.CTX.Done():
+						log.Warning("context closed while executing task", "name", e.Data.Metadata.Id)
+						return
+					default:
+					}
 					if e.Data.Metadata.Interval != NoInterval {
 						log.Trace("creating next task")
 						err = t.create(e.Data.Metadata.Id, e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
