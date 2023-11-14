@@ -85,9 +85,9 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 	t.es = es
 
 	//Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
-	exec := make(chan event.ReadEventWAcc[tm[DT]], 0)
+	exec := make(chan competing.ReadEventWAcc[tm[DT]], 0)
 	for i := 0; i < workers; i++ {
-		go func(events <-chan event.ReadEventWAcc[tm[DT]]) {
+		go func(events <-chan competing.ReadEventWAcc[tm[DT]]) {
 			for e := range events {
 				func() {
 					defer func() {
@@ -120,19 +120,23 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 						}
 						log.Trace("created next task")
 					}
-					e.Acc()
+					e.Acc(e.Data)
 				}()
 			}
 		}(exec)
 	}
 
 	go t.handler(timeout, skipable, exec)
+	go func() {
+		for range t.es.Completed() {
+		} //Discard all completed events
+	}()
 
 	ed = &t
 	return
 }
 
-func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execChan chan event.ReadEventWAcc[tm[DT]]) {
+func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execChan chan competing.ReadEventWAcc[tm[DT]]) {
 	for e := range s.es.Stream() {
 		//Could be valuable to keep the task collection here
 		log.Info("won event", "name", s.es.Name(), "id", e.Data.Metadata.Id, "skippable", skipable, "interval", e.Data.Metadata.Interval, "after", e.Data.Metadata.After, "before_now", time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)))
@@ -145,7 +149,7 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 				return
 			}
 			log.Trace("accing skipped event, execution to late", "id", e.Data.Metadata.Id)
-			e.Acc()
+			e.Acc(e.Data)
 			log.Trace("acced skipped event, execution to late", "id", e.Data.Metadata.Id)
 			continue
 		}
@@ -155,7 +159,7 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 			log.Trace("no need to start waiting, timeout is before execution", "from", from, "to", to, "wait_time", waitTime, "timeout", timeout)
 			continue
 		}
-		go func(e event.ReadEventWAcc[tm[DT]]) {
+		go func(e competing.ReadEventWAcc[tm[DT]]) {
 			log.Info("waiting until it is time to do work", "from", from, "to", to, "wait_time", waitTime)
 			select {
 			case <-s.ctx.Done():

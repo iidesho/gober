@@ -21,7 +21,7 @@ var c Consumer[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
-var events = make(map[int]event.ReadEventWAcc[dd])
+var events = make(map[int]ReadEventWAcc[dd])
 
 var STREAM_NAME = "TestCompetingConsumer_" + uuid.Must(uuid.NewV7()).String()
 
@@ -97,7 +97,7 @@ func TestStoreOrder(t *testing.T) {
 			read := <-c.Stream()
 			log.Info("read event", "event", read.Data.Id)
 			events[i] = read
-			read.Acc()
+			read.Acc(read.Data)
 			log.Info("acced read event")
 		}(i)
 
@@ -198,7 +198,7 @@ func TestTimeout(t *testing.T) {
 		return
 	}
 	log.Info("read", "event", read)
-	read.Acc()
+	read.Acc(read.Data)
 	log.Info("verifying there is no extra events a peering (9s)")
 	select {
 	case <-time.After(9 * time.Second):

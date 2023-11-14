@@ -107,23 +107,26 @@ func (es eventService[T]) Stream(eventTypes []event.Type, from store.StreamPosit
 				return
 			case e := <-s:
 				t := event.TypeFromString(e.Type)
+				log.Trace("read event", "type", t)
 				if filterEventTypes {
 					if _, ok := ets[t]; !ok {
+						log.Debug("filtered event", "type", t)
 						continue
 					}
 				}
 				var metadata event.Metadata
 				err := json.Unmarshal(e.Metadata, &metadata)
-				log.WithError(err).Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
+				log.WithError(err).Trace("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 				if err != nil {
 					continue
 				}
 				if filter(metadata) {
+					log.Debug("Filtering metadata", "metadata", metadata)
 					continue
 				}
 				var d T
 				err = json.Unmarshal(e.Data, &d)
-				log.WithError(err).Debug("Unmarshalling event data", "event", string(e.Data), "data", d)
+				log.WithError(err).Trace("Unmarshalling event data", "event", string(e.Data), "data", d)
 				if err != nil {
 					continue
 				}

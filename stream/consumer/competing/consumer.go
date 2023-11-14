@@ -23,14 +23,15 @@ type service[T any] struct {
 	cryptoKey stream.CryptoKeyProvider
 	dataType  string
 	//timeout        time.Duration
-	selector       uuid.UUID
-	completed      sync.SLK
-	selectable     chan event.ReadEvent[tm[T]]
-	selectedOutput chan event.ReadEventWAcc[T]
-	writeStream    chan event.WriteEventReadStatus[T]
-	cons           consensus.Consensus
-	timeout        timeoutFunk[T]
-	ctx            context.Context
+	selector        uuid.UUID
+	completed       sync.SLK
+	selectable      chan event.ReadEvent[tm[T]]
+	selectedOutput  chan ReadEventWAcc[T]
+	completedOutput chan event.ReadEvent[T]
+	writeStream     chan event.WriteEventReadStatus[T]
+	cons            consensus.Consensus
+	timeout         timeoutFunk[T]
+	ctx             context.Context
 }
 
 type tm[T any] struct {
@@ -58,14 +59,15 @@ func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKe
 		cryptoKey: cryptoKey,
 		dataType:  datatype,
 		//timeout:        timeoutDuration,
-		selector:       name,
-		completed:      sync.NewSLK(),
-		selectable:     make(chan event.ReadEvent[tm[T]], 100),
-		selectedOutput: make(chan event.ReadEventWAcc[T], 0),
-		writeStream:    make(chan event.WriteEventReadStatus[T], 10),
-		cons:           cons,
-		timeout:        timeout,
-		ctx:            ctx,
+		selector:        name,
+		completed:       sync.NewSLK(),
+		selectable:      make(chan event.ReadEvent[tm[T]], 100),
+		selectedOutput:  make(chan ReadEventWAcc[T], 0),
+		completedOutput: make(chan event.ReadEvent[T], 1024),
+		writeStream:     make(chan event.WriteEventReadStatus[T], 10),
+		cons:            cons,
+		timeout:         timeout,
+		ctx:             ctx,
 	}
 	eventStream, err := c.stream.Stream(event.AllTypes(), from, stream.ReadDataType(datatype), c.ctx)
 	if err != nil {
@@ -200,7 +202,7 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 				}
 			case <-selected.ctx.Done():
 				selected = nil
-			case c.selectedOutput <- event.ReadEventWAcc[T]{
+			case c.selectedOutput <- ReadEventWAcc[T]{
 				ReadEvent: event.ReadEvent[T]{
 					Event: event.Event[T]{
 						Type:     selected.e.Type,
@@ -211,12 +213,15 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 					Created:  selected.e.Created,
 				},
 				CTX: selected.ctx,
-				Acc: func(cancel context.CancelFunc, e event.ReadEvent[tm[T]]) func() {
-					return func() {
+				Acc: func(cancel context.CancelFunc, e event.ReadEvent[tm[T]]) func(T) {
+					return func(data T) {
 						cancel()
 						we := event.NewWriteEvent[tm[T]](event.Event[tm[T]]{
-							Type:     event.Deleted,
-							Data:     e.Data,
+							Type: event.Deleted,
+							Data: tm[T]{
+								Id:   e.Data.Id,
+								Data: data,
+							}, //e.Data,
 							Metadata: e.Metadata,
 						})
 						c.stream.Write() <- we
@@ -280,6 +285,15 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 	for k, v := range es {
 		if v.completed {
 			c.completed.Add(k, time.Hour*24*365) //c.timeout*30)
+			c.completedOutput <- event.ReadEvent[T]{
+				Event: event.Event[T]{
+					Type:     v.event.Type,
+					Data:     v.event.Data.Data,
+					Metadata: v.event.Metadata,
+				},
+				Position: v.event.Position,
+				Created:  v.event.Created,
+			}
 			continue
 		}
 		// another dirty hack, should not use go
@@ -309,6 +323,15 @@ func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeou
 			log.Trace("writing to timeout chan")
 			timeout <- e.ReadEvent
 			log.Trace("wrote to timeout chan")
+			c.completedOutput <- event.ReadEvent[T]{
+				Event: event.Event[T]{
+					Type:     e.Type,
+					Data:     e.Data.Data,
+					Metadata: e.Metadata,
+				},
+				Position: e.Position,
+				Created:  e.Created,
+			}
 		}
 		c.selectable <- e.ReadEvent
 	}
@@ -335,6 +358,13 @@ func (c *service[T]) readWrites() {
 			}
 			//Seems like it should be possible to do away with this map function, if id is required or generated on the event. But then argh
 			we.Event().Type = event.Created
+			log.Debug("writing mapped event", "id", id)
+			if we.Event().Metadata.DataType == "" {
+				we.Event().Metadata.DataType = c.dataType
+			}
+			if we.Event().Metadata.Version == "" {
+				we.Event().Metadata.Version = "v0.0.0"
+			}
 			c.stream.Write() <- event.Map[T, tm[T]](we, func(t T) tm[T] {
 				return tm[T]{
 					Id:   id,
@@ -350,8 +380,12 @@ func (c *service[T]) Write() chan<- event.WriteEventReadStatus[T] {
 	return c.writeStream
 }
 
-func (c *service[T]) Stream() <-chan event.ReadEventWAcc[T] {
+func (c *service[T]) Stream() <-chan ReadEventWAcc[T] {
 	return c.selectedOutput
+}
+
+func (c *service[T]) Completed() <-chan event.ReadEvent[T] {
+	return c.completedOutput
 }
 
 func (c *service[T]) End() (pos uint64, err error) {
