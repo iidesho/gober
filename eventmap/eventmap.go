@@ -39,7 +39,7 @@ type kv[DT any] struct {
 	Value DT     `json:"value"`
 }
 
-func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context) (ed EventMap[DT], err error) {
+func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context, opts ...func(event.Type, *DT)) (ed EventMap[DT], err error) {
 	es, err := consumer.New[kv[DT]](pers, p, ctx)
 	m := mapData[DT]{
 		data:             sync.NewMap[DT](),
@@ -63,6 +63,9 @@ func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p strea
 			case e := <-readChan:
 				func() {
 					defer e.Acc()
+					for _, opt := range opts {
+						opt(e.Type, &e.Data.Value)
+					}
 					if e.Type == event.Deleted {
 						m.data.Delete(e.Data.Key)
 						return

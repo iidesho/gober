@@ -12,6 +12,7 @@ type Map[T any] interface {
 	GetOrInit(key string, init func() T) (data T, isNew bool)
 	GetMap() map[string]T
 	Delete(key string)
+	CompareAndSwap(key string, n T, swap func(stored T) bool) (swapped bool)
 }
 
 func NewMap[T any]() Map[T] {
@@ -73,5 +74,20 @@ func (s *sMap[T]) Delete(key string) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	delete(s.data, key)
+	return
+}
+
+func (s *sMap[T]) CompareAndSwap(key string, n T, swap func(stored T) bool) (swapped bool) {
+	stored, ok := s.Get(key)
+	if ok && !swap(stored) {
+		return
+	}
+	s.rwLock.Lock()
+	defer s.rwLock.Unlock()
+	stored, ok = s.data[key]
+	if !ok || swap(stored) {
+		s.data[key] = n
+		return true
+	}
 	return
 }

@@ -65,6 +65,16 @@ func Map[OT, NT any](e WriteEventReadStatus[OT], f func(OT) NT) WriteEventReadSt
 	}
 }
 
+func NewWrite[T any](t Type, data T, m Metadata) WriteEventReadStatus[T] {
+	return &WriteEvent[T]{
+		event: Event[T]{
+			Type:     t,
+			Data:     data,
+			Metadata: m,
+		},
+		status: make(chan store.WriteStatus, 1),
+	}
+}
 func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] { //Dont think i like this
 	return &WriteEvent[T]{
 		event:  e,

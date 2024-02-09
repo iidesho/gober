@@ -2,8 +2,13 @@ package consumer
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"os"
 	"time"
 
+	"github.com/cantara/bragi/sbragi"
 	log "github.com/cantara/bragi/sbragi"
 	"github.com/cantara/gober/crypto"
 	"github.com/cantara/gober/mergedcontext"
@@ -12,6 +17,7 @@ import (
 	"github.com/cantara/gober/stream/event/store"
 	"github.com/gofrs/uuid"
 	jsoniter "github.com/json-iterator/go"
+	"go.uber.org/atomic"
 )
 
 var json = jsoniter.ConfigDefault
@@ -24,6 +30,7 @@ type consumer[T any] struct {
 	completables       map[string]transactionCheck
 	accChan            chan uint64
 	writeStream        chan event.WriteEventReadStatus[T]
+	pos                func(int)
 	ctx                context.Context
 }
 
@@ -87,6 +94,67 @@ func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, ctx context
 
 func (c *consumer[T]) Write() chan<- event.WriteEventReadStatus[T] {
 	return c.writeStream
+}
+
+func (c *consumer[T]) StreamPers(eventTypes []event.Type, filter stream.Filter, ctx context.Context) (<-chan event.ReadEventWAcc[T], error) {
+	if c.pos != nil {
+		return nil, fmt.Errorf("persistent stream already exists")
+	}
+	var f *os.File
+	var err error
+	f, err = os.OpenFile(fmt.Sprintf("streams/%s_pos", c.Name()), os.O_CREATE|os.O_SYNC|os.O_RDWR, 0640)
+	if sbragi.WithError(err).Trace("opening position file for stream", "stream", c.Name()) {
+		return nil, err
+	}
+	context.AfterFunc(ctx, func() {
+		sbragi.WithError(f.Close()).Trace("cloding position file", "stream", c.Name())
+	})
+	var b []byte
+	b, err = io.ReadAll(f)
+	if sbragi.WithError(err).Trace("reading pos", "stream", c.Name()) {
+		return nil, err
+	}
+	pos := store.STREAM_START
+	if len(b) > 0 {
+		pos = store.StreamPosition(binary.NativeEndian.Uint64(b))
+	}
+	var s <-chan event.ReadEventWAcc[T]
+	s, err = c.streamReadEvents(eventTypes, pos, filter, ctx)
+	if sbragi.WithError(err).Trace("opening persistent read stream", "stream", c.Name()) {
+		return nil, err
+	}
+	out := make(chan event.ReadEventWAcc[T], 0)
+	go func() { //Might want to make this a recoverable function
+		pos := atomic.NewUint64(uint64(pos))
+		for e := range s {
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.ctx.Done():
+				return
+			case out <- event.ReadEventWAcc[T]{
+				ReadEvent: e.ReadEvent,
+				Acc: func() {
+					e.Acc()
+					if p := pos.Load(); e.Position > p {
+						for e.Position > p && !pos.CompareAndSwap(p, e.Position) {
+							p = pos.Load()
+						}
+						if p = pos.Load(); e.Position == p {
+							//f.Truncate(0)
+							b := make([]byte, 8)
+							binary.NativeEndian.PutUint64(b, p)
+							f.WriteAt(b, 0)
+							//Should i trunc it here?
+						}
+					}
+				},
+				CTX: e.CTX,
+			}:
+			}
+		}
+	}()
+	return out, nil
 }
 
 func (c *consumer[T]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.ReadEventWAcc[T], err error) {
