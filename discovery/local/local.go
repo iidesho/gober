@@ -1,6 +1,6 @@
 package local
 
-import "github.com/cantara/gober/discovery"
+import "github.com/iidesho/gober/discovery"
 
 type local struct {
 }

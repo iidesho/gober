@@ -10,9 +10,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cantara/bragi"
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/webserver/health"
+	"github.com/iidesho/bragi"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/webserver/health"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"

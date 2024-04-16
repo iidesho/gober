@@ -3,8 +3,8 @@ package stream
 import (
 	"context"
 
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type Stream interface {

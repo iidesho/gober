@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/gofrs/uuid"
 
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 var (

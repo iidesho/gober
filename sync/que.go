@@ -3,7 +3,7 @@ package sync
 import (
 	"sync"
 
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 )
 
 type Que[T any] interface {

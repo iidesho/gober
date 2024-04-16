@@ -7,7 +7,7 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"errors"
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 	"io"
 	"strings"
 

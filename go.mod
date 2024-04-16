@@ -1,4 +1,4 @@
-module github.com/cantara/gober
+module github.com/iidesho/gober
 
 go 1.21
 
@@ -6,7 +6,7 @@ toolchain go1.21.0
 
 require (
 	github.com/EventStore/EventStore-Client-Go v1.0.2
-	github.com/cantara/bragi v0.7.4
+	github.com/iidesho/bragi v0.7.4
 	github.com/dgraph-io/badger v1.6.2
 	github.com/gin-contrib/cors v1.4.0
 	github.com/gin-gonic/gin v1.9.1

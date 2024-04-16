@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type inMemEvent struct {

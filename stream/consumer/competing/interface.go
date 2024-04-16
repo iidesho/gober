@@ -3,7 +3,7 @@ package competing
 import (
 	"context"
 
-	"github.com/cantara/gober/stream/event"
+	"github.com/iidesho/gober/stream/event"
 )
 
 type Consumer[T any] interface {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream/event/store"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream/event/store"
 	jsoniter "github.com/json-iterator/go"
 )
 

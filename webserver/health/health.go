@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 )
 
 var Version string

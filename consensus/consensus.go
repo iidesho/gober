@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/sync"
-	"github.com/cantara/gober/webserver"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/sync"
+	"github.com/iidesho/gober/webserver"
 )
 
 type Consensus interface {

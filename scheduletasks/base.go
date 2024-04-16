@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/consensus"
-	"github.com/cantara/gober/stream/consumer/competing"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/stream/consumer/competing"
 
-	"github.com/cantara/gober/crypto"
-	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/crypto"
+	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type Tasks[DT any] interface {

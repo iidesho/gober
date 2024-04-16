@@ -3,7 +3,7 @@ package websocket
 import (
 	"context"
 	"errors"
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/gobwas/ws"
 	"io"
 	"net"

@@ -3,9 +3,9 @@ package consumer
 import (
 	"context"
 
-	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type Consumer[T any] interface {

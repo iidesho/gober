@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/discovery/local"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/discovery/local"
 )
 
 var c Consensus

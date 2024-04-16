@@ -9,12 +9,12 @@ import (
 
 	"github.com/gofrs/uuid"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/consensus"
-	"github.com/cantara/gober/discovery/local"
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
-	"github.com/cantara/gober/stream/event/store/ondisk"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/discovery/local"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 )
 
 var c Consumer[dd]

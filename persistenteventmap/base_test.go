@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream/event/store/ondisk"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 	"github.com/gofrs/uuid"
 )
 

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/discovery"
-	"github.com/cantara/gober/sync"
-	"github.com/cantara/gober/webserver"
-	"github.com/cantara/gober/webserver/health"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/discovery"
+	"github.com/iidesho/gober/sync"
+	"github.com/iidesho/gober/webserver"
+	"github.com/iidesho/gober/webserver/health"
 	"github.com/gin-gonic/gin"
 	"github.com/gofrs/uuid"
 )

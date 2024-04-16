@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/gin-gonic/gin"
 	"github.com/gobwas/ws"
 	jsoniter "github.com/json-iterator/go"

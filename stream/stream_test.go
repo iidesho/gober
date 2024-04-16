@@ -9,11 +9,11 @@ import (
 
 	"github.com/gofrs/uuid"
 
-	"github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
-	"github.com/cantara/gober/stream/event/store/inmemory"
-	"github.com/cantara/gober/stream/event/store/ondisk"
+	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event/store/inmemory"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 )
 
 var es FilteredStream[[]byte]

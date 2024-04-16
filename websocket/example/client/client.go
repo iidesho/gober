@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/websocket"
-	"github.com/cantara/gober/websocket/example"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/websocket"
+	"github.com/iidesho/gober/websocket/example"
 	"net/url"
 	"time"
 )

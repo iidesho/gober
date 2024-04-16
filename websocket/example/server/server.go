@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/webserver"
-	"github.com/cantara/gober/websocket"
-	"github.com/cantara/gober/websocket/example"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/webserver"
+	"github.com/iidesho/gober/websocket"
+	"github.com/iidesho/gober/websocket/example"
 	"github.com/gin-gonic/gin"
 )
 

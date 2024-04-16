@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store/eventstore"
-	"github.com/cantara/gober/stream/event/store/inmemory"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store/eventstore"
+	"github.com/iidesho/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 )
 

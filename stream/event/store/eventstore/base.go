@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/stream/event"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream/event"
 
 	//"github.com/EventStore/EventStore-Client-Go/esdb/v2"
 	"github.com/EventStore/EventStore-Client-Go/esdb"
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type Client struct {

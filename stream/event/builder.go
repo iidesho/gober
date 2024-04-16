@@ -1,7 +1,7 @@
 package event
 
 import (
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/gofrs/uuid"
 )
 

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cantara/gober/discovery"
+	"github.com/iidesho/gober/discovery"
 	jsoniter "github.com/json-iterator/go"
 )
 

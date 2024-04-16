@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 	jsoniter "github.com/json-iterator/go"
 
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 var json = jsoniter.ConfigFastest

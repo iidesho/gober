@@ -10,19 +10,19 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cantara/gober/stream/consumer"
-	"github.com/cantara/gober/webserver"
+	"github.com/iidesho/gober/stream/consumer"
+	"github.com/iidesho/gober/webserver"
 	"github.com/dgraph-io/badger"
 	"github.com/dgraph-io/badger/options"
 	"github.com/gin-gonic/gin"
 	"github.com/gofrs/uuid"
 
-	log "github.com/cantara/bragi/sbragi"
+	log "github.com/iidesho/bragi/sbragi"
 
-	"github.com/cantara/gober/crypto"
-	"github.com/cantara/gober/stream"
-	"github.com/cantara/gober/stream/event"
-	"github.com/cantara/gober/stream/event/store"
+	"github.com/iidesho/gober/crypto"
+	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type EventMap[DT, MT any] interface {

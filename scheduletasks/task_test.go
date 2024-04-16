@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/consensus"
-	"github.com/cantara/gober/discovery/local"
-	"github.com/cantara/gober/stream/event/store/inmemory"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/discovery/local"
+	"github.com/iidesho/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 )
 

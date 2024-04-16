@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/cantara/bragi/sbragi"
-	"github.com/cantara/gober/webserver"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/webserver"
 	"github.com/gin-gonic/gin"
 )
 
