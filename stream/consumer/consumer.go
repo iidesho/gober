@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/crypto"
@@ -15,7 +16,6 @@ import (
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
-	"github.com/gofrs/uuid"
 	jsoniter "github.com/json-iterator/go"
 	"go.uber.org/atomic"
 )
@@ -191,7 +191,7 @@ func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadS
 				return
 			case e := <-eventStream:
 				p, err := c.store(e)
-				log.WithError(err).Debug("store", "pos", p)
+				log.WithError(err).Debug("store", "stream", c.stream.Name(), "pos", p)
 
 			}
 		}
