@@ -16,17 +16,6 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-type EventMap[DT any] interface {
-	Get(key string) (data DT, err error)
-	Exists(key string) (exists bool)
-	//Len() (l int)
-	//Keys() (keys []string)
-	//Range(f func(key string, data DT) error)
-	Delete(data DT) (err error)
-	Set(data DT) (err error)
-	Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error)
-}
-
 type transactionCheck struct {
 }
 

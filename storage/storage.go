@@ -11,12 +11,6 @@ import (
 
 var json = jsoniter.ConfigFastest
 
-type Storage[T any] interface {
-	Set(k string, v T, opts ...OptFunc) error
-	Get(k string) (v T, err error)
-	Delete(k string, opts ...OptFunc) error
-}
-
 type PosStorage[T any] interface {
 	Storage[T]
 
