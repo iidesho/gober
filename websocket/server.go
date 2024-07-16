@@ -4,31 +4,35 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/gin-gonic/gin"
-	"github.com/gobwas/ws"
-	jsoniter "github.com/json-iterator/go"
 	"io"
 	"net"
+	"net/http"
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gobwas/ws"
+	log "github.com/iidesho/bragi/sbragi"
+	jsoniter "github.com/json-iterator/go"
 )
 
 var json = jsoniter.ConfigDefault
 
 var BufferSize = 100
 
-func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Context) bool, wsfunc WSHandler[T]) {
-	r.GET(path, func(c *gin.Context) {
-		if acceptFunc != nil && !acceptFunc(c) {
+func ServeGin[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Context) bool, wsfunc WSHandler[T]) {
+}
+func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if acceptFunc != nil && !acceptFunc(r) {
 			return //Could be smart to have some check of weather or not the statuscode code has been set.
 		}
-		conn, _, _, err := ws.UpgradeHTTP(c.Request, c.Writer)
+		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
-			log.WithError(err).Fatal("while accepting websocket", "request", c.Request)
+			log.WithError(err).Fatal("while accepting websocket", "request", r)
 		}
-		ctx, cancel := context.WithCancel(c.Request.Context())
+		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 		clientClosed := false
 		reader := make(chan T, BufferSize)
@@ -101,7 +105,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 							cancel()
 							return
 						}
-						log.WithError(err).Error("while writing to websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(write).String()) // This could end up logging person sensitive data.
+						log.WithError(err).Error("while writing to websocket", "request", r, "type", reflect.TypeOf(write).String()) // This could end up logging person sensitive data.
 						return
 					}
 				case <-sucker.pingTicker.C:
@@ -151,7 +155,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 							log.Info("websocket is closed, server closing...") //This works, but gave a wrong impression, changed slightly
 							return
 						}
-						log.WithError(err).Error("while server reading from websocket", "path", path, "request", c.Request, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
+						log.WithError(err).Error("while server reading from websocket", "request", r, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
 						return
 					}
 					reader <- read
@@ -159,7 +163,7 @@ func Serve[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Contex
 			}
 		}()
 		wsfunc(reader, writer, c.Params, ctx)
-	})
+	}
 }
 
 type webSucker[T any] struct {
@@ -502,7 +506,7 @@ func websocketHeaderBytes(h ws.Header) []byte {
 	return bts[:n]
 }
 
-type WSHandler[T any] func(<-chan T, chan<- Write[T], gin.Params, context.Context)
+type WSHandler[T any] func(<-chan T, chan<- Write[T], *http.Request, context.Context)
 
 var ErrNotImplemented = errors.New("operation not implemented")
 var ErrNoErrorHandled = errors.New("handled")
