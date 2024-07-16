@@ -6,12 +6,12 @@ import (
 	"errors"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/sync"
 	"github.com/gofrs/uuid"
 )
@@ -39,7 +39,15 @@ type tm[T any] struct {
 	Data T         `json:"data"`
 }
 
-func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKey stream.CryptoKeyProvider, from store.StreamPosition, datatype string, timeout timeoutFunk[T], ctx context.Context) (out Consumer[T], err error) {
+func New[T any](
+	s stream.Stream,
+	consBuilder consensus.ConsBuilderFunc,
+	cryptoKey stream.CryptoKeyProvider,
+	from store.StreamPosition,
+	datatype string,
+	timeout timeoutFunk[T],
+	ctx context.Context,
+) (out Consumer[T], err error) {
 	fs, err := consumer.New[tm[T]](s, cryptoKey, ctx)
 	if err != nil {
 		return
@@ -69,7 +77,12 @@ func New[T any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, cryptoKe
 		timeout:         timeout,
 		ctx:             ctx,
 	}
-	eventStream, err := c.stream.Stream(event.AllTypes(), from, stream.ReadDataType(datatype), c.ctx)
+	eventStream, err := c.stream.Stream(
+		event.AllTypes(),
+		from,
+		stream.ReadDataType(datatype),
+		c.ctx,
+	)
 	if err != nil {
 		return
 	}
@@ -90,7 +103,10 @@ type timedat[T any] struct {
 	t time.Time
 }
 
-func (c *service[T]) timeoutManager(timeouts sync.Que[timedat[tm[T]]], events <-chan event.ReadEvent[tm[T]]) {
+func (c *service[T]) timeoutManager(
+	timeouts sync.Que[timedat[tm[T]]],
+	events <-chan event.ReadEvent[tm[T]],
+) {
 	for e := range events {
 		if e.Type == event.Deleted {
 			timeouts.Delete(func(v timedat[tm[T]]) bool {
@@ -100,7 +116,9 @@ func (c *service[T]) timeoutManager(timeouts sync.Que[timedat[tm[T]]], events <-
 		}
 		timeouts.Push(timedat[tm[T]]{
 			e: e,
-			t: time.Now().Add(c.timeout(e.Data.Data)), //c.timeout + time.Millisecond*10), //Adding 10 milliseconds to give some wiggle room with the consesus timouts
+			t: time.Now().
+				Add(c.timeout(e.Data.Data)),
+			//c.timeout + time.Millisecond*10), //Adding 10 milliseconds to give some wiggle room with the consesus timouts
 		})
 	}
 }
@@ -123,12 +141,24 @@ func (c *service[T]) timeoutHandler(timeouts sync.Que[timedat[tm[T]]]) {
 			for timeout, ok = timeouts.Peek(); ok && now.After(timeout.t); timeout, ok = timeouts.Peek() {
 				timeout, ok = timeouts.Pop()
 				if c.completed.Get(timeout.e.Data.Id.String()) {
-					log.Trace("timed out a completed event, no need to make it selectable", "id", timeout.e.Data.Id.String())
+					log.Trace(
+						"timed out a completed event, no need to make it selectable",
+						"id",
+						timeout.e.Data.Id.String(),
+					)
 					continue
 				}
-				log.Trace("event timed out, writing to compete chan", "id", timeout.e.Data.Id.String())
+				log.Trace(
+					"event timed out, writing to compete chan",
+					"id",
+					timeout.e.Data.Id.String(),
+				)
 				c.selectable <- timeout.e
-				log.Trace("event timed out, wrote to compete chan", "id", timeout.e.Data.Id.String())
+				log.Trace(
+					"event timed out, wrote to compete chan",
+					"id",
+					timeout.e.Data.Id.String(),
+				)
 			}
 		case <-c.ctx.Done():
 			return
@@ -241,7 +271,10 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 	}
 }
 
-func (c *service[T]) readStream(events <-chan event.ReadEventWAcc[tm[T]], timeout chan<- event.ReadEvent[tm[T]]) {
+func (c *service[T]) readStream(
+	events <-chan event.ReadEventWAcc[tm[T]],
+	timeout chan<- event.ReadEvent[tm[T]],
+) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("recovered", "error", r)

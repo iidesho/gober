@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
-	"github.com/iidesho/gober/stream/event/store/eventstore"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
 	"github.com/gofrs/uuid"
 )
@@ -51,12 +51,7 @@ func main() {
 			return
 		}
 	} else {
-		cl, err := eventstore.NewClient("localhost")
-		if err != nil {
-			log.WithError(err).Fatal("while creating eventstore client")
-			return
-		}
-		pers, err = eventstore.NewStream(cl, STREAM_NAME, ctx)
+		pers, err = ondisk.Init(STREAM_NAME, ctx)
 		if err != nil {
 			log.WithError(err).Fatal("while connecting to storage")
 			return
@@ -96,8 +91,23 @@ func main() {
 		dur := fin.Sub(start)
 		eps := float64(size) / float64(dur/time.Second)
 		mbps := eps * float64(eventSize) / 1000000
-		log.Info("Finished writing events", "number of events", size, "start time", start, "end time", fin,
-			"duration", dur, "event size (B)", eventSize, "events / second", eps, "MB/s", mbps)
+		log.Info(
+			"Finished writing events",
+			"number of events",
+			size,
+			"start time",
+			start,
+			"end time",
+			fin,
+			"duration",
+			dur,
+			"event size (B)",
+			eventSize,
+			"events / second",
+			eps,
+			"MB/s",
+			mbps,
+		)
 	}(time.Now())
 	//writeEventStream := c.Write()
 	we := event.NewWriteEvent(event.Event[[]byte]{

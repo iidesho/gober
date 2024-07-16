@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/stream/event"
+	log "github.com/iidesho/bragi/sbragi"
 
 	//"github.com/EventStore/EventStore-Client-Go/esdb/v2"
-	"github.com/EventStore/EventStore-Client-Go/esdb"
 	"github.com/iidesho/gober/stream/event/store"
+	"github.com/EventStore/EventStore-Client-Go/esdb"
 )
 
 type Client struct {
@@ -101,7 +101,11 @@ func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err er
 				}
 
 				log.Info("writing events", "number of events", i)
-				wr, err := s.c.c.AppendToStream(ctx, s.name, esdb.AppendToStreamOptions{}, events[:i]...)
+				wr, err := s.c.c.AppendToStream(
+					ctx,
+					s.name,
+					esdb.AppendToStreamOptions{},
+					events[:i]...)
 				writeStatus := store.WriteStatus{
 					Error: err,
 					Time:  time.Now(),
@@ -122,7 +126,10 @@ func (s *Stream) Write() chan<- store.WriteEvent {
 	return s.writeChan
 }
 
-func (s *Stream) Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.ReadEvent, err error) {
+func (s *Stream) Stream(
+	from store.StreamPosition,
+	ctx context.Context,
+) (out <-chan store.ReadEvent, err error) {
 	var esFrom esdb.StreamPosition
 
 	eventChan := make(chan store.ReadEvent, 10)
@@ -157,7 +164,12 @@ func (s *Stream) Stream(from store.StreamPosition, ctx context.Context) (out <-c
 	return
 }
 
-func (s *Stream) readStream(esFrom *esdb.StreamPosition, backoff time.Duration, eventChan chan<- store.ReadEvent, ctx context.Context) {
+func (s *Stream) readStream(
+	esFrom *esdb.StreamPosition,
+	backoff time.Duration,
+	eventChan chan<- store.ReadEvent,
+	ctx context.Context,
+) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("recovered", "backoff", backoff.String(), "error", r)

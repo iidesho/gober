@@ -2,22 +2,16 @@ package consumer
 
 import (
 	"context"
-	"encoding/binary"
-	"fmt"
-	"io"
-	"os"
 	"time"
 
-	"github.com/gofrs/uuid"
-	"github.com/iidesho/bragi/sbragi"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/crypto"
-	"github.com/iidesho/gober/mergedcontext"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/crypto"
+	"github.com/iidesho/gober/mergedcontext"
+	"github.com/gofrs/uuid"
 	jsoniter "github.com/json-iterator/go"
-	"go.uber.org/atomic"
 )
 
 var json = jsoniter.ConfigDefault
@@ -30,16 +24,19 @@ type consumer[T any] struct {
 	completables       map[string]transactionCheck
 	accChan            chan uint64
 	writeStream        chan event.WriteEventReadStatus[T]
-	pos                func(int)
 	ctx                context.Context
 }
 
 type transactionCheck struct {
-	position uint64
 	complete func()
+	position uint64
 }
 
-func New[T any](s stream.Stream, cryptoKey stream.CryptoKeyProvider, ctx context.Context) (out Consumer[T], err error) {
+func New[T any](
+	s stream.Stream,
+	cryptoKey stream.CryptoKeyProvider,
+	ctx context.Context,
+) (out Consumer[T], err error) {
 	fs, err := stream.Init[[]byte](s, ctx)
 	if err != nil {
 		return
@@ -96,68 +93,12 @@ func (c *consumer[T]) Write() chan<- event.WriteEventReadStatus[T] {
 	return c.writeStream
 }
 
-func (c *consumer[T]) StreamPers(eventTypes []event.Type, filter stream.Filter, ctx context.Context) (<-chan event.ReadEventWAcc[T], error) {
-	if c.pos != nil {
-		return nil, fmt.Errorf("persistent stream already exists")
-	}
-	var f *os.File
-	var err error
-	f, err = os.OpenFile(fmt.Sprintf("streams/%s_pos", c.Name()), os.O_CREATE|os.O_SYNC|os.O_RDWR, 0640)
-	if sbragi.WithError(err).Trace("opening position file for stream", "stream", c.Name()) {
-		return nil, err
-	}
-	context.AfterFunc(ctx, func() {
-		sbragi.WithError(f.Close()).Trace("cloding position file", "stream", c.Name())
-	})
-	var b []byte
-	b, err = io.ReadAll(f)
-	if sbragi.WithError(err).Trace("reading pos", "stream", c.Name()) {
-		return nil, err
-	}
-	pos := store.STREAM_START
-	if len(b) > 0 {
-		pos = store.StreamPosition(binary.NativeEndian.Uint64(b))
-	}
-	var s <-chan event.ReadEventWAcc[T]
-	s, err = c.streamReadEvents(eventTypes, pos, filter, ctx)
-	if sbragi.WithError(err).Trace("opening persistent read stream", "stream", c.Name()) {
-		return nil, err
-	}
-	out := make(chan event.ReadEventWAcc[T], 0)
-	go func() { //Might want to make this a recoverable function
-		pos := atomic.NewUint64(uint64(pos))
-		for e := range s {
-			select {
-			case <-ctx.Done():
-				return
-			case <-c.ctx.Done():
-				return
-			case out <- event.ReadEventWAcc[T]{
-				ReadEvent: e.ReadEvent,
-				Acc: func() {
-					e.Acc()
-					if p := pos.Load(); e.Position > p {
-						for e.Position > p && !pos.CompareAndSwap(p, e.Position) {
-							p = pos.Load()
-						}
-						if p = pos.Load(); e.Position == p {
-							//f.Truncate(0)
-							b := make([]byte, 8)
-							binary.NativeEndian.PutUint64(b, p)
-							f.WriteAt(b, 0)
-							//Should i trunc it here?
-						}
-					}
-				},
-				CTX: e.CTX,
-			}:
-			}
-		}
-	}()
-	return out, nil
-}
-
-func (c *consumer[T]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.ReadEventWAcc[T], err error) {
+func (c *consumer[T]) Stream(
+	eventTypes []event.Type,
+	from store.StreamPosition,
+	filter stream.Filter,
+	ctx context.Context,
+) (out <-chan event.ReadEventWAcc[T], err error) {
 	return c.streamReadEvents(eventTypes, from, filter, ctx)
 }
 
@@ -183,7 +124,9 @@ func (c *consumer[T]) store(e event.WriteEventReadStatus[T]) (position uint64, e
 	return
 }
 
-func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadStatus[T]) (err error) {
+func (c *consumer[T]) streamWriteEvents(
+	eventStream <-chan event.WriteEventReadStatus[T],
+) (err error) {
 	go func() {
 		for {
 			select {
@@ -191,7 +134,7 @@ func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadS
 				return
 			case e := <-eventStream:
 				p, err := c.store(e)
-				log.WithError(err).Debug("store", "stream", c.stream.Name(), "pos", p)
+				log.WithError(err).Debug("store", "pos", p)
 
 			}
 		}
@@ -199,7 +142,12 @@ func (c *consumer[T]) streamWriteEvents(eventStream <-chan event.WriteEventReadS
 	return
 }
 
-func (c *consumer[T]) streamReadEvents(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.ReadEventWAcc[T], err error) {
+func (c *consumer[T]) streamReadEvents(
+	eventTypes []event.Type,
+	from store.StreamPosition,
+	filter stream.Filter,
+	ctx context.Context,
+) (out <-chan event.ReadEventWAcc[T], err error) {
 	mctx, cancel := mergedcontext.MergeContexts(c.ctx, ctx)
 	s, err := c.stream.Stream(eventTypes, from, filter, mctx)
 	if err != nil {
@@ -241,11 +189,17 @@ func (c *consumer[T]) Name() string {
 	return c.stream.Name()
 }
 
-func (c *consumer[T]) FilteredEnd(eventTypes []event.Type, filter stream.Filter) (pos uint64, err error) {
+func (c *consumer[T]) FilteredEnd(
+	eventTypes []event.Type,
+	filter stream.Filter,
+) (pos uint64, err error) {
 	return c.stream.FilteredEnd(eventTypes, filter)
 }
 
-func EncryptEvent[T any](e *event.Event[T], cryptoKey stream.CryptoKeyProvider) (es event.Event[[]byte], err error) {
+func EncryptEvent[T any](
+	e *event.Event[T],
+	cryptoKey stream.CryptoKeyProvider,
+) (es event.Event[[]byte], err error) {
 	data, err := json.Marshal(e.Data)
 	if err != nil {
 		return
@@ -266,7 +220,10 @@ func EncryptEvent[T any](e *event.Event[T], cryptoKey stream.CryptoKeyProvider) 
 	return
 }
 
-func DecryptEvent[T any](e event.ReadEvent[[]byte], cryptoKey stream.CryptoKeyProvider) (out event.ReadEvent[T], err error) {
+func DecryptEvent[T any](
+	e event.ReadEvent[[]byte],
+	cryptoKey stream.CryptoKeyProvider,
+) (out event.ReadEvent[T], err error) {
 	dataJson, err := crypto.Decrypt(e.Data, cryptoKey(e.Metadata.Key))
 	if err != nil {
 		log.WithError(err).Warning("Decrypting event data error")

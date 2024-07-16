@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/gofrs/uuid"
-
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/gofrs/uuid"
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigDefault
 
 var (
 	es     *Stream
@@ -29,21 +31,25 @@ func TestPreInit(t *testing.T) {
 }
 
 func TestInit(t *testing.T) {
+	t.Log("init test started")
 	/*
 		dl, _ := log.NewDebugLogger()
 		dl.SetDefault()
 	*/
 	ctx, cancel = context.WithCancel(context.Background())
 	var err error
+	t.Log("init test init started")
 	es, err = Init(STREAM_NAME, ctx)
+	t.Log("init test init ended")
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	return
+	t.Log("init test ended")
 }
 
 func TestStore(t *testing.T) {
+	t.Log("store test started")
 	data := make(map[string]interface{})
 	data["id"] = 1
 	data["name"] = "test"
@@ -55,15 +61,20 @@ func TestStore(t *testing.T) {
 		return
 	}
 	status := make(chan store.WriteStatus, 1)
+	t.Log("store test write started")
 	es.Write() <- store.WriteEvent{
 		Event: store.Event{
-			Id:   uuid.Must(uuid.NewV7()),
-			Type: string(event.Created),
-			Data: bytes,
+			Id:       uuid.Must(uuid.NewV7()),
+			Type:     string(event.Created),
+			Data:     bytes,
+			Metadata: bytes,
 		},
 		Status: status,
 	}
+	t.Log("store test write ended")
+	t.Log("store test status read started")
 	s := <-status
+	t.Log("store test status read ended")
 	if s.Error != nil {
 		t.Error(s.Error)
 		return
@@ -76,18 +87,23 @@ func TestStore(t *testing.T) {
 		t.Error("cannot write at position 0")
 		return
 	}
-	return
+	t.Log("store test ended")
 }
 
 func TestStream(t *testing.T) {
+	t.Log("stream test started")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	t.Log("stream test create stream started")
 	s, err := es.Stream(position, ctx)
+	t.Log("stream test create stream ended")
 	if err != nil {
 		t.Error(err)
 		return
 	}
+	t.Log("stream test stream read started")
 	e := <-s
+	t.Log("stream test stream read ended")
 	position = store.StreamPosition(e.Position)
 	if e.Type != string(event.Created) {
 		t.Error(fmt.Errorf("missmatch inMemEvent types"))
@@ -97,7 +113,28 @@ func TestStream(t *testing.T) {
 		t.Error(fmt.Errorf("missing inMemEvent id"))
 		return
 	}
-	return
+	data := make(map[string]interface{})
+	err = json.Unmarshal(e.Data, &data)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if data["name"] != "test" {
+		t.Error("data name is wrong")
+		return
+	}
+	meta := make(map[string]interface{})
+	err = json.Unmarshal(e.Metadata, &meta)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if meta["name"] != "test" {
+		t.Error("data name is wrong")
+		return
+	}
+
+	t.Log("stream test ended")
 }
 
 func TestStoreMultiple(t *testing.T) {
@@ -115,9 +152,10 @@ func TestStoreMultiple(t *testing.T) {
 		status := make(chan store.WriteStatus, 1)
 		es.Write() <- store.WriteEvent{
 			Event: store.Event{
-				Id:   uuid.Must(uuid.NewV7()),
-				Type: string(event.Created),
-				Data: bytes,
+				Id:       uuid.Must(uuid.NewV7()),
+				Type:     string(event.Created),
+				Data:     bytes,
+				Metadata: bytes,
 			},
 			Status: status,
 		}
@@ -135,7 +173,6 @@ func TestStoreMultiple(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestStreamMultiple(t *testing.T) {
@@ -146,8 +183,10 @@ func TestStreamMultiple(t *testing.T) {
 	}
 	prevPos := uint64(position)
 	for i := 0; i < 10; i++ {
+		t.Log("reading stream multiple", "i", i)
 		e := <-s
 		position = store.StreamPosition(e.Position)
+		t.Log("position", "pos", position)
 		if prevPos < e.Position {
 			prevPos = e.Position
 		} else {
@@ -163,7 +202,6 @@ func TestStreamMultiple(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestStoreAndStream(t *testing.T) {

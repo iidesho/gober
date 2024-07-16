@@ -9,24 +9,24 @@ import (
 )
 
 type inMemEvent struct {
+	Created  time.Time
 	Event    store.Event
 	Position uint64
-	Created  time.Time
 }
 
 // stream Need to add a way to not store multiple events with the same id in the same stream.
 type stream struct {
-	db       []inMemEvent
 	dbLock   *sync.Mutex
 	newData  *sync.Cond
+	db       []inMemEvent
 	position uint64
 }
 
 type Stream struct {
-	data      stream
-	name      string
-	writeChan chan<- store.WriteEvent
 	ctx       context.Context
+	writeChan chan<- store.WriteEvent
+	name      string
+	data      stream
 }
 
 func Init(name string, ctx context.Context) (es *Stream, err error) {
@@ -82,7 +82,10 @@ func (es *Stream) Write() chan<- store.WriteEvent {
 	return es.writeChan
 }
 
-func (es *Stream) Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.ReadEvent, err error) {
+func (es *Stream) Stream(
+	from store.StreamPosition,
+	ctx context.Context,
+) (out <-chan store.ReadEvent, err error) {
 	eventChan := make(chan store.ReadEvent, 2)
 	out = eventChan
 	go func() {

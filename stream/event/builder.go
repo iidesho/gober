@@ -6,10 +6,10 @@ import (
 )
 
 type builder struct {
-	Id       uuid.UUID
+	Metadata Metadata
 	Type     Type
 	Data     []byte
-	Metadata Metadata
+	Id       uuid.UUID
 }
 
 type Builder interface {
@@ -42,7 +42,7 @@ func (e builder) WithMetadata(data Metadata) builder {
 func (e builder) BuildRead() (ev ByteReadEvent, err error) {
 	if e.Type == "" {
 		log.Error("missing event type in builder")
-		err = InvalidTypeError
+		err = ErrInvalidType
 		return
 	}
 	e.Metadata.EventType = e.Type
@@ -59,7 +59,7 @@ func (e builder) BuildRead() (ev ByteReadEvent, err error) {
 func (e builder) BuildStore() (ev WriteEvent[[]byte], err error) {
 	if e.Type == "" {
 		log.Error("missing event type in builder")
-		err = InvalidTypeError
+		err = ErrInvalidType
 		return
 	}
 	if e.Id.IsNil() {

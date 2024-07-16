@@ -1,4 +1,4 @@
-package consumer
+package consumer_test
 
 import (
 	"context"
@@ -6,18 +6,19 @@ import (
 	"sync"
 	"testing"
 
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream"
-	"github.com/iidesho/gober/stream/event/store/inmemory"
-	"github.com/iidesho/gober/stream/event/store/ondisk"
-
-	"github.com/gofrs/uuid"
-
+	"github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
+	"github.com/iidesho/gober/stream/event/store/inmemory"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
+	log "github.com/iidesho/bragi/sbragi"
+
+	"github.com/gofrs/uuid"
 )
 
-var c Consumer[dd]
+var c consumer.Consumer[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
@@ -26,7 +27,7 @@ var events = make(map[int]event.ReadEvent[dd])
 var STREAM_NAME = "TestConsumer_" + uuid.Must(uuid.NewV7()).String()
 
 type md struct {
-	Extra string `json:"extra"`
+	Extra bcts.SmallBytes `json:"extra"`
 }
 
 type dd struct {
@@ -45,7 +46,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	c, err = New[dd](pers, cryptKeyProvider, ctxGlobal)
+	c, err = consumer.New[dd](pers, cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -67,13 +68,13 @@ func TestStoreOrder(t *testing.T) {
 			Name: "test",
 		}
 		meta := md{
-			Extra: "extra metadata test",
+			Extra: bcts.SmallBytes("extra metadata test"),
 		}
 		e := event.Event[dd]{
 			Type: event.Created,
 			Data: data,
 			Metadata: event.Metadata{
-				Extra: map[string]any{"extra": meta.Extra},
+				Extra: map[bcts.TinyString]bcts.SmallBytes{"extra": meta.Extra},
 			},
 		}
 		wg := sync.WaitGroup{}
@@ -111,7 +112,7 @@ func TestStreamOrder(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch event data name"))
 			return
 		}
-		if e.Metadata.Extra["extra"] != "extra metadata test" {
+		if string(e.Metadata.Extra["extra"]) != "extra metadata test" {
 			t.Error(fmt.Errorf("missmatch event metadata extra"))
 			return
 		}
@@ -136,7 +137,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	c, err := New[[]byte](pers, cryptKeyProvider, ctx)
+	c, err := consumer.New[[]byte](pers, cryptKeyProvider, ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -170,7 +171,9 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			Type: event.Created,
 			Data: make([]byte, 1024),
 			Metadata: event.Metadata{
-				Extra: map[string]any{"extra": "extra metadata test"},
+				Extra: map[bcts.TinyString]bcts.SmallBytes{
+					"extra": bcts.SmallBytes("extra metadata test"),
+				},
 			},
 		})
 		events[i] = we

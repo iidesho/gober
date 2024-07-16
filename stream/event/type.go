@@ -29,4 +29,4 @@ func TypeFromString(s string) Type {
 	return Invalid
 }
 
-var InvalidTypeError = fmt.Errorf("event type is invalid")
+var ErrInvalidType = fmt.Errorf("event type is invalid")

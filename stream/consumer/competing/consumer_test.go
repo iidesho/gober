@@ -1,4 +1,4 @@
-package competing
+package competing_test
 
 import (
 	"context"
@@ -9,29 +9,31 @@ import (
 
 	"github.com/gofrs/uuid"
 
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/consensus"
-	"github.com/iidesho/gober/discovery/local"
+	"github.com/iidesho/gober/bcts"
+	"github.com/iidesho/gober/stream/consumer/competing"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 	"github.com/iidesho/gober/stream/event/store/ondisk"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/discovery/local"
 )
 
-var c Consumer[dd]
+var c competing.Consumer[dd]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
-var events = make(map[int]ReadEventWAcc[dd])
+var events = make(map[int]competing.ReadEventWAcc[dd])
 
 var STREAM_NAME = "TestCompetingConsumer_" + uuid.Must(uuid.NewV7()).String()
 
 type md struct {
-	Extra string `json:"extra"`
+	Extra bcts.SmallBytes `json:"extra"`
 }
 
 type dd struct {
-	Id   int    `json:"id"`
 	Name string `json:"name"`
+	Id   int    `json:"id"`
 }
 
 func cryptKeyProvider(_ string) log.RedactedString {
@@ -53,15 +55,23 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err = New[dd](pers, p.AddTopic, cryptKeyProvider, store.STREAM_START, "datatype", func(v dd) time.Duration {
-		if v.Id == 0 {
-			return time.Microsecond * 500
-		}
-		if v.Id == 10 {
-			return time.Second * 3
-		}
-		return time.Second * 1
-	}, ctxGlobal)
+	c, err = competing.New[dd](
+		pers,
+		p.AddTopic,
+		cryptKeyProvider,
+		store.STREAM_START,
+		"datatype",
+		func(v dd) time.Duration {
+			if v.Id == 0 {
+				return time.Microsecond * 500
+			}
+			if v.Id == 10 {
+				return time.Second * 3
+			}
+			return time.Second * 1
+		},
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
@@ -80,13 +90,13 @@ func TestStoreOrder(t *testing.T) {
 			Name: "test",
 		}
 		meta := md{
-			Extra: "extra metadata test",
+			Extra: bcts.SmallBytes("extra metadata test"),
 		}
 		e := event.Event[dd]{
 			Type: event.Created,
 			Data: data,
 			Metadata: event.Metadata{
-				Extra:    map[string]any{"extra": meta.Extra},
+				Extra:    map[bcts.TinyString]bcts.SmallBytes{"extra": meta.Extra},
 				DataType: "datatype",
 			},
 		}
@@ -136,7 +146,7 @@ func TestStreamOrder(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch event data name"))
 			return
 		}
-		if e.Metadata.Extra["extra"] != "extra metadata test" {
+		if string(e.Metadata.Extra["extra"]) != "extra metadata test" {
 			t.Error(fmt.Errorf("missmatch event metadata extra"))
 			return
 		}

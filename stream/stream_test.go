@@ -1,4 +1,4 @@
-package stream
+package stream_test
 
 import (
 	"bytes"
@@ -7,28 +7,32 @@ import (
 	"log"
 	"testing"
 
-	"github.com/gofrs/uuid"
-
-	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
+	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
-	"github.com/iidesho/gober/stream/event/store/inmemory"
 	"github.com/iidesho/gober/stream/event/store/ondisk"
+	"github.com/gofrs/uuid"
+	jsoniter "github.com/json-iterator/go"
+
+	"github.com/iidesho/bragi/sbragi"
 )
 
-var es FilteredStream[[]byte]
+var json = jsoniter.ConfigDefault
+
+var es stream.FilteredStream[[]byte]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
 type md struct {
-	Extra string `json:"extra"`
+	Extra bcts.SmallBytes `json:"extra"`
 }
 
 type dd struct {
-	Id   int    `json:"id"`
 	Name string `json:"name"`
+	Id   int    `json:"id"`
 }
 
 func TestInit(t *testing.T) {
@@ -40,14 +44,15 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	est, err := Init[[]byte](pers, ctxGlobal)
+	est, err := stream.Init[[]byte](pers, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	es = est
-	return
 }
+
+var extraKey = bcts.TinyString("extra")
 
 func TestStoreOrder(t *testing.T) {
 	writer := es.Write()
@@ -57,7 +62,7 @@ func TestStoreOrder(t *testing.T) {
 			Name: "test",
 		}
 		meta := md{
-			Extra: "extra metadata test",
+			Extra: bcts.SmallBytes("extra metadata test"),
 		}
 		bdata, err := json.Marshal(data)
 		if err != nil {
@@ -69,14 +74,16 @@ func TestStoreOrder(t *testing.T) {
 			WithType(event.Created).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
-				Extra: map[string]any{"extra": meta.Extra},
+				Extra: map[bcts.TinyString]bcts.SmallBytes{
+					extraKey: meta.Extra,
+				},
 			}).
 			BuildStore()
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		we := event.NewWriteEvent[[]byte](*e.Event())
+		we := event.NewWriteEvent(*e.Event())
 		writer <- we
 		<-we.Done()
 		/*
@@ -87,13 +94,17 @@ func TestStoreOrder(t *testing.T) {
 			}
 		*/
 	}
-	return
 }
 
 func TestStreamOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := es.Stream([]event.Type{event.Created}, store.STREAM_START, ReadEventType(event.Created), ctx)
+	stream, err := es.Stream(
+		[]event.Type{event.Created},
+		store.STREAM_START,
+		stream.ReadEventType(event.Created),
+		ctx,
+	)
 	if err != nil {
 		t.Error(err)
 		return
@@ -122,7 +133,7 @@ func TestStreamOrder(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch event data name"))
 			return
 		}
-		if e.Metadata.Extra["extra"] != "extra metadata test" {
+		if string(e.Metadata.Extra[extraKey]) != "extra metadata test" {
 			t.Error(fmt.Errorf("missmatch event metadata extra"))
 			return
 		}
@@ -131,7 +142,6 @@ func TestStreamOrder(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestStoreDuplicate(t *testing.T) {
@@ -141,7 +151,7 @@ func TestStoreDuplicate(t *testing.T) {
 			Name: "test",
 		}
 		meta := md{
-			Extra: "extra metadata test",
+			Extra: bcts.SmallBytes("extra metadata test"),
 		}
 		bdata, err := json.Marshal(data)
 		if err != nil {
@@ -152,7 +162,9 @@ func TestStoreDuplicate(t *testing.T) {
 			WithType(event.Created).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
-				Extra: map[string]any{"extra": meta.Extra},
+				Extra: map[bcts.TinyString]bcts.SmallBytes{
+					extraKey: meta.Extra,
+				},
 			}).
 			BuildStore()
 		if err != nil {
@@ -165,13 +177,17 @@ func TestStoreDuplicate(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestStreamDuplicate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stream, err := es.Stream([]event.Type{event.Created}, store.STREAM_START, ReadEventType(event.Created), ctx)
+	stream, err := es.Stream(
+		[]event.Type{event.Created},
+		store.STREAM_START,
+		stream.ReadEventType(event.Created),
+		ctx,
+	)
 	if err != nil {
 		t.Error(err)
 		return
@@ -196,7 +212,7 @@ func TestStreamDuplicate(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch event data name"))
 			return
 		}
-		if e.Metadata.Extra["extra"] != "extra metadata test" {
+		if string(e.Metadata.Extra[extraKey]) != "extra metadata test" {
 			t.Error(fmt.Errorf("missmatch event metadata extra"))
 			return
 		}
@@ -205,7 +221,6 @@ func TestStreamDuplicate(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestTairdown(t *testing.T) {
@@ -216,12 +231,12 @@ func BenchmarkStoreAndStream(b *testing.B) {
 	//log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	pers, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	pers, err := ondisk.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	est, err := Init[[]byte](pers, ctx)
+	est, err := stream.Init[[]byte](pers, ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -233,7 +248,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			Name: "test" + b.Name(),
 		}
 		meta := md{
-			Extra: "extra metadata test",
+			Extra: bcts.SmallBytes("extra metadata test"),
 		}
 		bdata, err := json.Marshal(data)
 		if err != nil {
@@ -244,16 +259,23 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			WithType(event.Created).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
-				Extra: map[string]any{"extra": meta.Extra},
+				Extra: map[bcts.TinyString]bcts.SmallBytes{
+					extraKey: meta.Extra,
+				},
 			}).
 			BuildStore()
 		if err != nil {
 			b.Error(err)
 			return
 		}
-		events[i] = event.NewWriteEvent[[]byte](*e.Event())
+		events[i] = event.NewWriteEvent(*e.Event())
 	}
-	stream, err := est.Stream([]event.Type{event.Created}, store.STREAM_START, ReadAll(), ctx)
+	stream, err := est.Stream(
+		[]event.Type{event.Created},
+		store.STREAM_START,
+		stream.ReadAll(),
+		ctx,
+	)
 	b.ResetTimer()
 	writer := est.Write()
 	for i := 0; i < b.N; i++ {

@@ -1,6 +1,7 @@
 package ondisk
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,13 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
-	jsoniter "github.com/json-iterator/go"
-
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream/event/store"
+	log "github.com/iidesho/bragi/sbragi"
 )
-
-var json = jsoniter.ConfigFastest
 
 const (
 	B  = 1
@@ -26,9 +24,74 @@ const (
 )
 
 type storeEvent struct {
+	Created  time.Time
 	Event    store.Event
 	Position uint64
-	Created  time.Time
+	//Version  uint8 // Do not need this to be in memory as the version is only relevant for on disk format
+}
+
+func (e storeEvent) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0))
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTime(w, e.Created)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteSmallString(w, e.Event.Type)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteBytes(w, e.Event.Data)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteBytes(w, e.Event.Metadata)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteStaticBytes(w, e.Event.Id.Bytes())
+	if err != nil {
+		return
+	}
+	err = bcts.WriteUInt64(w, e.Position)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (se *storeEvent) ReadBytes(r io.Reader) (err error) {
+	var v uint8
+	err = bcts.ReadUInt8(r, &v)
+	if err != nil {
+		return
+	}
+	if v != 0 {
+		return fmt.Errorf("invalid stored event version, %s=%d, %s=%d", "expected", 0, "got", v)
+	}
+	err = bcts.ReadTime(r, &se.Created)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadSmallString(r, &se.Event.Type)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadBytes(r, &se.Event.Data)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadBytes(r, &se.Event.Metadata)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadStaticBytes(r, se.Event.Id[:])
+	if err != nil {
+		return
+	}
+	return bcts.ReadUInt64(r, &se.Position)
 }
 
 // stream Need to add a way to not store multiple events with the same id in the same stream.
@@ -41,10 +104,10 @@ type stream struct {
 }
 
 type Stream struct {
+	ctx       context.Context
+	writeChan chan<- store.WriteEvent
 	data      stream
 	name      string
-	writeChan chan<- store.WriteEvent
-	ctx       context.Context
 }
 
 func Init(name string, ctx context.Context) (s *Stream, err error) {
@@ -55,17 +118,19 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 		return
 	}
 	defer f.Close()
-	j := json.NewDecoder(f)
+	r := f
+	//j := json.NewDecoder(f)
 	var se storeEvent
 	p := uint64(0)
-	for j.More() {
-		err = j.Decode(&se)
-		if err != nil {
-			return
+	if err != io.EOF {
+		for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
+			if p < se.Position {
+				p = se.Position
+			}
 		}
-		if p < se.Position {
-			p = se.Position
-		}
+	}
+	if err != nil && err != io.EOF {
+		return
 	}
 	f, err = os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0640)
 	if err != nil {
@@ -97,7 +162,7 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 		log.WithError(fmt.Errorf("%v", r)).Error("recovering write stream", "stream", s.name)
 		writeStrem(s, writes)
 	}()
-	stream := json.NewEncoder(s.data.db)
+	w := bufio.NewWriter(s.data.db)
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -114,7 +179,10 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 					Position: uint64(s.data.len.Add(1)),
 					Created:  time.Now(),
 				}
-				err := stream.Encode(se)
+				err := se.WriteBytes(w)
+				//_, err := w.Write(se.Bytes())
+				// Should trunc the file to size minus n returned here on error
+				//err := binary.Write(s.data.db, binary.LittleEndian, se)
 				if err != nil {
 					log.WithError(err).Error("while writing event to file")
 					if e.Status != nil {
@@ -143,7 +211,10 @@ func (s *Stream) Write() chan<- store.WriteEvent {
 	return s.writeChan
 }
 
-func (s *Stream) Stream(from store.StreamPosition, ctx context.Context) (out <-chan store.ReadEvent, err error) {
+func (s *Stream) Stream(
+	from store.StreamPosition,
+	ctx context.Context,
+) (out <-chan store.ReadEvent, err error) {
 	eventChan := make(chan store.ReadEvent, 2)
 	out = eventChan
 	go readStream(s, eventChan, uint64(from), ctx)
@@ -171,8 +242,8 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 		log.WithError(err).Fatal("while opening stream file")
 		return
 	}
+	r := db
 	defer db.Close()
-	stream := json.NewDecoder(db)
 	select {
 	case <-ctx.Done():
 		exit = true
@@ -189,7 +260,8 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 	readTo := uint64(0)
 	var se storeEvent
 	for readTo < position {
-		err := stream.Decode(&se)
+		err = se.ReadBytes(r)
+		//err = binary.Read(db, binary.LittleEndian, &se)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				time.Sleep(time.Millisecond * 250)
@@ -209,18 +281,8 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 			exit = true
 			return
 		default:
-			for stream.More() {
+			for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
 				log.Trace("has more", "name", s.name)
-				err := stream.Decode(&se)
-				if err != nil {
-					/*Should not happen
-					if errors.Is(err, io.EOF) {
-						time.Sleep(time.Millisecond * 250)
-						continue
-					}
-					*/
-					log.WithError(err).Fatal("while unmarshalling event from store", "name", s.name)
-				}
 				events <- store.ReadEvent{
 					Event:    se.Event,
 					Position: se.Position,
@@ -228,16 +290,30 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 				}
 				position = se.Position
 			}
-			log.Trace("empty checking if there has come new data", "name", s.name, "p", position, "dl", s.data.len.Load(), "dp", s.data.position)
+			if err != io.EOF {
+				time.Sleep(time.Second)
+				log.WithError(err).Fatal("while reading event from store", "name", s.name)
+			}
+			log.Trace(
+				"empty checking if there has come new data",
+				"name",
+				s.name,
+				"p",
+				position,
+				"dl",
+				s.data.len.Load(),
+				"dp",
+				s.data.position,
+			)
 			if position >= uint64(s.data.len.Load()) {
 				log.Trace("waiting for new data", "name", s.name)
 				s.data.newData.L.Lock()
 				s.data.newData.Wait()
 				s.data.newData.L.Unlock()
 			} else {
-				time.Sleep(time.Millisecond * 250)
+				log.Warning("hit EOF with data left in file??", "pos", position, "stream_pos", s.data.len.Load())
+				time.Sleep(time.Second)
 			}
-			stream = json.NewDecoder(db)
 		}
 	}
 }

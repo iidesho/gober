@@ -8,29 +8,27 @@ import (
 )
 
 type Event struct {
-	Id       uuid.UUID `json:"id"`
 	Type     string    `json:"type"`
 	Data     []byte    `json:"data"`
 	Metadata []byte    `json:"metadata"`
+	Id       uuid.UUID `json:"id"`
 }
 
 type ReadEvent struct {
+	Created time.Time `json:"created"`
 	Event
-
-	Position uint64    `json:"position"`
-	Created  time.Time `json:"created"`
+	Position uint64 `json:"position"`
 }
 
 type WriteEvent struct {
-	Event
-
 	Status chan<- WriteStatus
+	Event
 }
 
 type WriteStatus struct {
+	Time     time.Time
 	Error    error
 	Position uint64
-	Time     time.Time
 }
 
 type StreamPosition uint64

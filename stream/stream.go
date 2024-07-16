@@ -1,11 +1,12 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/mergedcontext"
 	jsoniter "github.com/json-iterator/go"
 
@@ -23,10 +24,10 @@ type eventService[T any] struct {
 
 type Filter func(md event.Metadata) bool
 
-type CryptoKeyProvider func(key string) string
+type CryptoKeyProvider func(key string) sbragi.RedactedString
 
-func StaticProvider(key string) func(_ string) string {
-	return func(_ string) string {
+func StaticProvider(key sbragi.RedactedString) func(_ string) sbragi.RedactedString {
+	return func(_ string) sbragi.RedactedString {
 		return key
 	}
 }
@@ -44,7 +45,7 @@ func ReadDataType(t string) Filter {
 }
 
 func Init[T any](st Stream, ctx context.Context) (out FilteredStream[T], err error) {
-	writes := make(chan event.WriteEventReadStatus[T], 0)
+	writes := make(chan event.WriteEventReadStatus[T])
 	es := eventService[T]{
 		store:  st,
 		writes: writes,
@@ -56,7 +57,7 @@ func Init[T any](st Stream, ctx context.Context) (out FilteredStream[T], err err
 			e := we.Event()
 			if e.Type == event.Invalid {
 				we.Close(store.WriteStatus{
-					Error: fmt.Errorf("event type %s, error:%v", e.Type, event.InvalidTypeError),
+					Error: fmt.Errorf("event type %s, error:%v", e.Type, event.ErrInvalidType),
 				})
 				continue
 			}
@@ -78,13 +79,18 @@ func (es eventService[T]) Write() chan<- event.WriteEventReadStatus[T] {
 }
 
 func (es eventService[T]) Store(e event.Event[T]) (position uint64, err error) {
-	we := event.NewWriteEvent[T](e)
+	we := event.NewWriteEvent(e)
 	es.writes <- we
 	s := <-we.Done()
 	return s.Position, s.Error
 }
 
-func (es eventService[T]) Stream(eventTypes []event.Type, from store.StreamPosition, filter Filter, ctx context.Context) (out <-chan event.ReadEvent[T], err error) {
+func (es eventService[T]) Stream(
+	eventTypes []event.Type,
+	from store.StreamPosition,
+	filter Filter,
+	ctx context.Context,
+) (out <-chan event.ReadEvent[T], err error) {
 	filterEventTypes := len(eventTypes) > 0
 	ets := make(map[event.Type]struct{})
 	for _, eventType := range eventTypes {
@@ -96,7 +102,7 @@ func (es eventService[T]) Stream(eventTypes []event.Type, from store.StreamPosit
 		cancel()
 		return
 	}
-	eventChan := make(chan event.ReadEvent[T], 0)
+	eventChan := make(chan event.ReadEvent[T])
 	out = eventChan
 	go func() {
 		defer cancel()
@@ -107,26 +113,29 @@ func (es eventService[T]) Stream(eventTypes []event.Type, from store.StreamPosit
 				return
 			case e := <-s:
 				t := event.TypeFromString(e.Type)
-				log.Trace("read event", "type", t)
+				sbragi.Trace("read event", "type", t)
 				if filterEventTypes {
 					if _, ok := ets[t]; !ok {
-						log.Debug("filtered event", "type", t)
+						sbragi.Debug("filtered event", "type", t)
 						continue
 					}
 				}
 				var metadata event.Metadata
-				err := json.Unmarshal(e.Metadata, &metadata)
-				log.WithError(err).Trace("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
+				err := metadata.ReadBytes(bytes.NewReader(e.Metadata))
+				//err := json.Unmarshal(e.Metadata, &metadata)
+				sbragi.WithError(err).
+					Trace("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 				if err != nil {
 					continue
 				}
 				if filter(metadata) {
-					log.Debug("Filtering metadata", "metadata", metadata)
+					sbragi.Debug("Filtering metadata", "metadata", metadata)
 					continue
 				}
 				var d T
 				err = json.Unmarshal(e.Data, &d)
-				log.WithError(err).Trace("Unmarshalling event data", "event", string(e.Data), "data", d)
+				sbragi.WithError(err).
+					Trace("Unmarshalling event data", "event", string(e.Data), "data", d)
 				if err != nil {
 					continue
 				}
@@ -155,7 +164,10 @@ func (es eventService[T]) End() (pos uint64, err error) {
 	return es.store.End()
 }
 
-func (es eventService[T]) FilteredEnd(eventTypes []event.Type, filter Filter) (pos uint64, err error) {
+func (es eventService[T]) FilteredEnd(
+	eventTypes []event.Type,
+	filter Filter,
+) (pos uint64, err error) {
 	filterEventTypes := len(eventTypes) > 0
 	ets := make(map[event.Type]struct{})
 	for _, eventType := range eventTypes {
@@ -170,7 +182,7 @@ func (es eventService[T]) FilteredEnd(eventTypes []event.Type, filter Filter) (p
 	if err != nil {
 		return
 	}
-	log.WithError(err).Info("got stream end", "end", end, "stream", es.Name())
+	sbragi.WithError(err).Info("got stream end", "end", end, "stream", es.Name())
 	for p < end {
 		e := <-s
 		p = e.Position
@@ -182,7 +194,8 @@ func (es eventService[T]) FilteredEnd(eventTypes []event.Type, filter Filter) (p
 		}
 		var metadata event.Metadata
 		err := json.Unmarshal(e.Metadata, &metadata)
-		log.WithError(err).Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
+		sbragi.WithError(err).
+			Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 		if err != nil {
 			continue
 		}
