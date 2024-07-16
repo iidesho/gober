@@ -6,23 +6,28 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iidesho/gober/stream/event/store/ondisk"
+	"github.com/gofrs/uuid"
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
-	"github.com/gofrs/uuid"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 )
 
-var STREAM_NAME = "BenchmarkConsumer_" + uuid.Must(uuid.NewV7()).String()
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
+var (
+	STREAM_NAME  = "BenchmarkConsumer_" + uuid.Must(uuid.NewV7()).String()
+	testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+)
 
-var size int
-var eventSize int
-var inmem bool
+var (
+	size      int
+	eventSize int
+	inmem     bool
+)
 
 func init() {
-	const ( //TODO: Add bootstrap git as a separate command from bootstrap.
+	const ( // TODO: Add bootstrap git as a separate command from bootstrap.
 		defaultInmem          = false
 		inmemUsage            = "use in memory store"
 		defaultNumberOfEvents = 10000000
@@ -37,9 +42,10 @@ func init() {
 	flag.IntVar(&eventSize, "size", defaultEventSize, eventSizeUsage)
 	flag.IntVar(&eventSize, "s", defaultEventSize, eventSizeUsage+" (shorthand)")
 }
+
 func main() {
 	flag.Parse()
-	//log.SetLevel(log.ERROR) TODO: should add to sbragi
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var pers stream.Stream
@@ -109,12 +115,12 @@ func main() {
 			mbps,
 		)
 	}(time.Now())
-	//writeEventStream := c.Write()
+	// writeEventStream := c.Write()
 	we := event.NewWriteEvent(event.Event[[]byte]{
 		Type: event.Created,
 		Data: make([]byte, eventSize),
 		Metadata: event.Metadata{
-			Extra: map[string]any{"extra": "extra metadata test"},
+			Extra: map[bcts.TinyString]bcts.SmallBytes{"extra": []byte("extra metadata test")},
 		},
 	})
 	var wg sync.WaitGroup
@@ -122,7 +128,6 @@ func main() {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < size; i++ {
-
 			/*
 				data := dd{
 					Id:   i,
@@ -130,7 +135,7 @@ func main() {
 				}
 			*/
 			//events[i] = we
-			c.Write() <- we //events[i]
+			c.Write() <- we // events[i]
 			//<-events[i].Done()
 		}
 	}()

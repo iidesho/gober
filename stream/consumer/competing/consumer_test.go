@@ -9,21 +9,23 @@ import (
 
 	"github.com/gofrs/uuid"
 
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
+	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/discovery/local"
 	"github.com/iidesho/gober/stream/consumer/competing"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 	"github.com/iidesho/gober/stream/event/store/ondisk"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/consensus"
-	"github.com/iidesho/gober/discovery/local"
 )
 
-var c competing.Consumer[dd]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
-var events = make(map[int]competing.ReadEventWAcc[dd])
+var (
+	c               competing.Consumer[dd]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+	events          = make(map[int]competing.ReadEventWAcc[dd])
+)
 
 var STREAM_NAME = "TestCompetingConsumer_" + uuid.Must(uuid.NewV7()).String()
 
@@ -36,13 +38,13 @@ type dd struct {
 	Id   int    `json:"id"`
 }
 
-func cryptKeyProvider(_ string) log.RedactedString {
+func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 
 func TestInit(t *testing.T) {
-	//dl, _ := log.NewDebugLogger()
-	//dl.SetDefault()
+	// dl, _ := log.NewDebugLogger()
+	// dl.SetDefault()
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
 	pers, err := ondisk.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
@@ -196,14 +198,14 @@ func TestTimeout(t *testing.T) {
 	log.Info("read", "event", read)
 	log.Info("waiting until after timeout (5s)")
 	time.Sleep(time.Second * 5)
-	//log.Info("accing event after timeout and it should have been discarded") //This and the next one should probably not be true anymore :/
-	//read.Acc()
+	// log.Info("accing event after timeout and it should have been discarded") //This and the next one should probably not be true anymore :/
+	// read.Acc()
 
 	log.Info("reading event to acc")
 	select {
 	case read = <-c.Stream():
 	case <-time.After(5 * time.Second):
-		//default:
+		// default:
 		t.Error("task was not ready to select")
 		return
 	}

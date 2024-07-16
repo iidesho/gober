@@ -4,13 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/iidesho/gober/stream"
-	"github.com/iidesho/gober/stream/event"
-	"github.com/iidesho/gober/stream/event/store"
+	"github.com/gofrs/uuid"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/mergedcontext"
-	"github.com/gofrs/uuid"
+	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
 	jsoniter "github.com/json-iterator/go"
 )
 
@@ -45,8 +45,8 @@ func New[T any](
 		stream:             fs,
 		cryptoKey:          cryptoKey,
 		newTransactionChan: make(chan transactionCheck, 0),
-		completables:       make(map[string]transactionCheck), //NewMap[transactionCheck](),
-		accChan:            make(chan uint64, 0),              //1000),
+		completables:       make(map[string]transactionCheck), // NewMap[transactionCheck](),
+		accChan:            make(chan uint64, 0),              // 1000),
 		writeStream:        make(chan event.WriteEventReadStatus[T], 0),
 		ctx:                ctx,
 	}
@@ -59,11 +59,11 @@ func New[T any](
 			case completable := <-c.newTransactionChan:
 				if c.currentPosition >= completable.position {
 					completable.complete()
-					//close(completeChan.completeChan) // <- struct{}{}
+					// close(completeChan.completeChan) // <- struct{}{}
 					continue
 				}
 				c.completables[uuid.Must(uuid.NewV7()).String()] = completable
-				//c.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
+				// c.completeChans.Store(uuid.Must(uuid.NewV7()).String(), completeChan)
 			case position := <-c.accChan:
 				if c.currentPosition < position {
 					c.currentPosition = position
@@ -73,7 +73,7 @@ func New[T any](
 						continue
 					}
 					completable.complete()
-					//close(completable.completeChan) // <- struct{}{}
+					// close(completable.completeChan) // <- struct{}{}
 					delete(c.completables, id)
 				}
 			}

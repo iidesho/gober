@@ -7,22 +7,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/uuid"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/discovery/local"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
-	"github.com/gofrs/uuid"
 )
 
-var ts Tasks[dd]
-var ts2 Tasks[dd]
-var ts3 Tasks[dd]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
-var td dd
-var wg sync.WaitGroup
-var count int
+var (
+	ts              Tasks[dd]
+	ts2             Tasks[dd]
+	ts3             Tasks[dd]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+	td              dd
+	wg              sync.WaitGroup
+	count           int
+)
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -31,7 +33,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) log.RedactedString {
+func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 
@@ -58,12 +60,12 @@ func executeFunc(d dd, ctx context.Context) bool {
 		return false
 	}
 	if count%2 == 0 {
-		//return false
+		// return false
 	}
 	if count == 6 {
 		close(intervalChan)
 	}
-	//time.Sleep(10 * time.Second)
+	// time.Sleep(10 * time.Second)
 
 	select {
 	case <-time.After(5 * time.Second):
@@ -75,13 +77,12 @@ func executeFunc(d dd, ctx context.Context) bool {
 }
 
 func TestInit(t *testing.T) {
-
-	//dl, _ := log.NewDebugLogger()
-	//dl.SetDefault()
+	// dl, _ := log.NewDebugLogger()
+	// dl.SetDefault()
 	ct = t
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
 	store, err := inmemory.Init(STREAM_NAME, ctxGlobal)
-	//store, err := eventstore.Init()
+	// store, err := eventstore.Init()
 	if err != nil {
 		t.Error(err)
 		return
@@ -91,17 +92,50 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edt, err := Init[dd](store, p.AddTopic, "testdata_schedule1", "1.0.0", cryptKeyProvider, executeFunc, time.Second*15, false, 5, ctxGlobal)
+	edt, err := Init[dd](
+		store,
+		p.AddTopic,
+		"testdata_schedule1",
+		"1.0.0",
+		cryptKeyProvider,
+		executeFunc,
+		time.Second*15,
+		false,
+		5,
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts2, err = Init[dd](store, p.AddTopic, "testdata_schedule2", "1.0.0", cryptKeyProvider, executeFunc, time.Second*15, true, 5, ctxGlobal)
+	ts2, err = Init[dd](
+		store,
+		p.AddTopic,
+		"testdata_schedule2",
+		"1.0.0",
+		cryptKeyProvider,
+		executeFunc,
+		time.Second*15,
+		true,
+		5,
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	ts3, err = Init[dd](store, p.AddTopic, "testdata_schedule3", "1.0.0", cryptKeyProvider, executeFunc, time.Second*15, false, 5, ctxGlobal)
+	ts3, err = Init[dd](
+		store,
+		p.AddTopic,
+		"testdata_schedule3",
+		"1.0.0",
+		cryptKeyProvider,
+		executeFunc,
+		time.Second*15,
+		false,
+		5,
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
@@ -184,7 +218,7 @@ var benchRun = 0
 
 func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	benchRun++
-	//log.SetLevel(log.ERROR) TODO: should add to sbragi
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 	store, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
@@ -198,7 +232,18 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	edt, err := Init[dd](store, p.AddTopic, "testdata", "1.0.0", cryptKeyProvider, func(d dd, _ context.Context) bool { /*log.Info("benchmark task ran", "data", d);*/ return true }, time.Second, false, 10, ctx) //FIXME: There seems to be an issue with reusing streams
+	edt, err := Init[dd](
+		store,
+		p.AddTopic,
+		"testdata",
+		"1.0.0",
+		cryptKeyProvider,
+		func(d dd, _ context.Context) bool { /*log.Info("benchmark task ran", "data", d);*/ return true },
+		time.Second,
+		false,
+		10,
+		ctx,
+	) // FIXME: There seems to be an issue with reusing streams
 	if err != nil {
 		b.Error(err)
 		return

@@ -21,12 +21,18 @@ var json = jsoniter.ConfigDefault
 
 var BufferSize = 100
 
-func ServeGin[T any](r *gin.RouterGroup, path string, acceptFunc func(c *gin.Context) bool, wsfunc WSHandler[T]) {
+func ServeGin[T any](
+	r *gin.RouterGroup,
+	path string,
+	acceptFunc func(c *gin.Context) bool,
+	wsfunc WSHandler[T],
+) {
 }
+
 func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if acceptFunc != nil && !acceptFunc(r) {
-			return //Could be smart to have some check of weather or not the statuscode code has been set.
+			return // Could be smart to have some check of weather or not the statuscode code has been set.
 		}
 		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
@@ -84,7 +90,12 @@ func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) ht
 		go func() {
 			defer func() {
 				if !clientClosed {
-					err = ws.WriteFrame(conn, ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")))
+					err = ws.WriteFrame(
+						conn,
+						ws.NewCloseFrame(
+							ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed"),
+						),
+					)
 					log.WithError(err).Info("writing client websocket close frame")
 				}
 				log.WithError(conn.Close()).Info("closing client net conn")
@@ -97,7 +108,7 @@ func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) ht
 					if !ok {
 						return
 					}
-					//err := WriteWebsocket[T](connWriter, write)
+					// err := WriteWebsocket[T](connWriter, write)
 					err := sucker.Write(write)
 					if err != nil {
 						if errors.Is(err, net.ErrClosed) {
@@ -105,14 +116,17 @@ func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) ht
 							cancel()
 							return
 						}
-						log.WithError(err).Error("while writing to websocket", "request", r, "type", reflect.TypeOf(write).String()) // This could end up logging person sensitive data.
+						log.WithError(err).
+							Error("while writing to websocket", "request", r, "type", reflect.TypeOf(write).String())
+
+							// This could end up logging person sensitive data.
 						return
 					}
 				case <-sucker.pingTicker.C:
 					err = sucker.Ping()
 					if err != nil {
 						if errors.Is(err, ErrNoErrorHandled) {
-							//log.Debug("no ping already waiting for pong from client")
+							// log.Debug("no ping already waiting for pong from client")
 							continue
 						}
 						if errors.Is(err, net.ErrClosed) {
@@ -134,7 +148,7 @@ func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) ht
 				case <-ctx.Done():
 					return
 				default:
-					//read, err = ReadWebsocket[T](conn, connWriter)
+					// read, err = ReadWebsocket[T](conn, connWriter)
 					read, err = sucker.Read()
 					if err != nil {
 						if errors.Is(err, ErrNoErrorHandled) {
@@ -152,17 +166,22 @@ func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) ht
 						if errors.Is(err, io.EOF) {
 							clientClosed = true
 							cancel()
-							log.Info("websocket is closed, server closing...") //This works, but gave a wrong impression, changed slightly
+							log.Info(
+								"websocket is closed, server closing...",
+							) // This works, but gave a wrong impression, changed slightly
 							return
 						}
-						log.WithError(err).Error("while server reading from websocket", "request", r, "type", reflect.TypeOf(read).String()) // This could end up logging person sensitive data.
+						log.WithError(err).
+							Error("while server reading from websocket", "request", r, "type", reflect.TypeOf(read).String())
+
+							// This could end up logging person sensitive data.
 						return
 					}
 					reader <- read
 				}
 			}
 		}()
-		wsfunc(reader, writer, c.Params, ctx)
+		wsfunc(reader, writer, nil, ctx)
 	}
 }
 
@@ -223,8 +242,7 @@ func (sucker *webSucker[T]) Write(write Write[T]) (err error) {
 			Mask:   [4]byte{},
 			Length: int64(len(payload)),
 		}), payload...))
-	*/
-	if err != nil {
+	*/if err != nil {
 		if write.Err != nil {
 			write.Err <- err
 		}
@@ -234,7 +252,7 @@ func (sucker *webSucker[T]) Write(write Write[T]) (err error) {
 }
 
 func (sucker *webSucker[T]) Read() (out T, err error) {
-	//defer sucker.pingTicker.Reset(sucker.pingTimout)
+	// defer sucker.pingTicker.Reset(sucker.pingTimout)
 	header, err := ws.ReadHeader(sucker.conn)
 	if err != nil {
 		if errors.Is(err, net.ErrClosed) {
@@ -508,8 +526,10 @@ func websocketHeaderBytes(h ws.Header) []byte {
 
 type WSHandler[T any] func(<-chan T, chan<- Write[T], *http.Request, context.Context)
 
-var ErrNotImplemented = errors.New("operation not implemented")
-var ErrNoErrorHandled = errors.New("handled")
+var (
+	ErrNotImplemented = errors.New("operation not implemented")
+	ErrNoErrorHandled = errors.New("handled")
+)
 
 const (
 	bit0 = 0x80

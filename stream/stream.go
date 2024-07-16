@@ -24,10 +24,10 @@ type eventService[T any] struct {
 
 type Filter func(md event.Metadata) bool
 
-type CryptoKeyProvider func(key string) sbragi.RedactedString
+type CryptoKeyProvider func(key string) string
 
-func StaticProvider(key sbragi.RedactedString) func(_ string) sbragi.RedactedString {
-	return func(_ string) sbragi.RedactedString {
+func StaticProvider(key string) func(_ string) string {
+	return func(_ string) string {
 		return key
 	}
 }
@@ -122,7 +122,7 @@ func (es eventService[T]) Stream(
 				}
 				var metadata event.Metadata
 				err := metadata.ReadBytes(bytes.NewReader(e.Metadata))
-				//err := json.Unmarshal(e.Metadata, &metadata)
+				// err := json.Unmarshal(e.Metadata, &metadata)
 				sbragi.WithError(err).
 					Trace("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 				if err != nil {

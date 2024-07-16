@@ -3,17 +3,19 @@ package eventmap
 import (
 	"context"
 	"fmt"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/stream/event/store/ondisk"
 	"testing"
+
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 
 	"github.com/google/uuid"
 )
 
-var ed EventMap[dd]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
+var (
+	ed              EventMap[dd]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+)
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.New().String()
 
@@ -22,7 +24,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) log.RedactedString {
+func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 

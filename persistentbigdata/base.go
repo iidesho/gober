@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
-	"github.com/iidesho/gober/stream/consumer"
-	"github.com/iidesho/gober/webserver"
 	"github.com/dgraph-io/badger"
 	"github.com/dgraph-io/badger/options"
 	"github.com/gin-gonic/gin"
 	"github.com/gofrs/uuid"
+	"github.com/iidesho/gober/bcts"
+	"github.com/iidesho/gober/stream/consumer"
+	"github.com/iidesho/gober/webserver"
 
 	log "github.com/iidesho/bragi/sbragi"
 
@@ -35,8 +37,7 @@ type EventMap[DT, MT any] interface {
 	Exists(key string) (exists bool)
 }
 
-type transactionCheck struct {
-}
+type transactionCheck struct{}
 
 type mapData[DT, MT any] struct {
 	data              *badger.DB
@@ -77,8 +78,17 @@ type discoveryMetadata[MT any] struct {
 	Meta     metadata[MT]
 }
 
-func Init[DT, MT any](serv webserver.Server, s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(d MT) string, ctx context.Context) (ed EventMap[DT, MT], err error) {
-	db, err := badger.Open(badger.DefaultOptions("./eventmap/" + dataTypeName).
+func Init[DT, MT any](
+	serv webserver.Server,
+	s stream.Stream,
+	dataTypeName, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	getKey func(d MT) string,
+	ctx context.Context,
+) (ed EventMap[DT, MT], err error) {
+	dir := "./eventmap/" + dataTypeName
+	os.MkdirAll(dir, 0750)
+	db, err := badger.Open(badger.DefaultOptions(dir).
 		WithMaxTableSize(1024 * 1024 * 8).
 		WithValueLogFileSize(1024 * 1024 * 8).
 		WithValueLogLoadingMode(options.FileIO))
@@ -144,7 +154,6 @@ func Init[DT, MT any](serv webserver.Server, s stream.Stream, dataTypeName, data
 			return
 		}
 		c.JSON(http.StatusOK, data)
-		return
 	})
 
 	from := store.STREAM_START
@@ -227,12 +236,12 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 				Version:  m.dataTypeVersion,
 				DataType: m.dataTypeName,
 				Key:      crypto.SimpleHash(dmd.Meta.NewId.String()),
-				Extra:    map[string]any{"instance": m.instance},
+				Extra:    map[bcts.TinyString]bcts.SmallBytes{"instance": m.instance.Bytes()},
 			},
 		}
 		we := event.NewWriteEvent(es)
 		m.es.Write() <- we
-		<-we.Done() //Missing error
+		<-we.Done() // Missing error
 		/*
 			_, err = m.es.Store(es)
 			if err != nil {
@@ -252,7 +261,9 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 		}
 		_, raw, err := externalImage[DT](dmd.Endpoint)
 		if err != nil {
-			log.WithError(err).Warning("while getting updated big data") // Should probably use tasks to verify completions instead.
+			log.WithError(err).
+				Warning("while getting updated big data")
+				// Should probably use tasks to verify completions instead.
 			dmd = discoveryMetadata[MT]{
 				Key:      dmd.Key,
 				Instance: m.instance,
@@ -267,12 +278,12 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 					Version:  m.dataTypeVersion,
 					DataType: m.dataTypeName,
 					Key:      crypto.SimpleHash(dmd.Meta.NewId.String()),
-					Extra:    map[string]any{"instance": m.instance},
+					Extra:    map[bcts.TinyString]bcts.SmallBytes{"instance": m.instance.Bytes()},
 				},
 			}
 			we := event.NewWriteEvent(es)
 			m.es.Write() <- we
-			<-we.Done() //Missing error
+			<-we.Done() // Missing error
 			/*
 				_, err = m.es.Store(es)
 				if err != nil {
@@ -319,7 +330,6 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 
 func (m *mapData[DT, MT]) delete(e event.ReadEvent[discoveryMetadata[MT]]) {
 	err := m.data.Update(func(txn *badger.Txn) error {
-
 		err := txn.Delete(e.Data.Meta.OldId.Bytes())
 		if err != nil {
 			return err
@@ -480,7 +490,7 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
-	<-we.Done() //Missing error
+	<-we.Done() // Missing error
 	/*
 		_, err = m.es.Store(e)
 	*/
@@ -538,7 +548,7 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
 			Key:      crypto.SimpleHash(md.NewId.String()),
-			Extra:    map[string]any{"instance": m.instance},
+			Extra:    map[bcts.TinyString]bcts.SmallBytes{"instance": m.instance.Bytes()},
 		},
 	}
 	d, err := json.Marshal(data)
@@ -554,7 +564,7 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 	}
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
-	<-we.Done() //Missing error
+	<-we.Done() // Missing error
 	/*
 		_, err = m.es.Store(e)
 		if err != nil {

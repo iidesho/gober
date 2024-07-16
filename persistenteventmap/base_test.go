@@ -6,15 +6,16 @@ import (
 	"os"
 	"testing"
 
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/stream/event/store/ondisk"
 	"github.com/gofrs/uuid"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 )
 
-var ed EventMap[dd]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
+var (
+	ed              EventMap[dd]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+)
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -23,7 +24,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) log.RedactedString {
+func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 
@@ -38,13 +39,19 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	edt, err := Init[dd](store, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd](
+		store,
+		"testdata",
+		"1.0.0",
+		cryptKeyProvider,
+		func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) },
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	ed = edt
-	return
 }
 
 func TestStore(t *testing.T) {
@@ -57,7 +64,6 @@ func TestStore(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	return
 }
 
 func TestGet(t *testing.T) {

@@ -13,16 +13,17 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
 	"github.com/iidesho/gober/stream/event/store/ondisk"
-	log "github.com/iidesho/bragi/sbragi"
 
 	"github.com/gofrs/uuid"
 )
 
-var c consumer.Consumer[dd]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
-var events = make(map[int]event.ReadEvent[dd])
+var (
+	c               consumer.Consumer[dd]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+	events          = make(map[int]event.ReadEvent[dd])
+)
 
 var STREAM_NAME = "TestConsumer_" + uuid.Must(uuid.NewV7()).String()
 
@@ -35,7 +36,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) log.RedactedString {
+func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 
@@ -129,7 +130,7 @@ func TestTairdown(t *testing.T) {
 }
 
 func BenchmarkStoreAndStream(b *testing.B) {
-	//log.SetLevel(log.ERROR) TODO: should add to sbragi
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pers, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)

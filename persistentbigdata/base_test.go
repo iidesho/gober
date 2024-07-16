@@ -3,21 +3,23 @@ package persistentbigmap
 import (
 	"context"
 	"fmt"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/stream"
-	"github.com/iidesho/gober/stream/event/store/inmemory"
-	"github.com/iidesho/gober/webserver"
-	"github.com/gofrs/uuid"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/gofrs/uuid"
+	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/event/store/inmemory"
+	"github.com/iidesho/gober/webserver"
 )
 
-var s stream.Stream
-var ed EventMap[dd, dd]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = log.RedactedString("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0=")
+var (
+	s               stream.Stream
+	ed              EventMap[dd, dd]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+)
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -26,7 +28,7 @@ type dd struct {
 	Name string `json:"name"`
 }
 
-func cryptKeyProvider(_ string) log.RedactedString {
+func cryptKeyProvider(_ string) string {
 	return testCryptKey
 }
 
@@ -48,7 +50,15 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	edt, err := Init[dd, dd](serv, s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd, dd](
+		serv,
+		s,
+		"testdata",
+		"1.0.0",
+		cryptKeyProvider,
+		func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) },
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
@@ -56,7 +66,6 @@ func TestInit(t *testing.T) {
 	ed = edt
 	go serv.Run()
 	time.Sleep(10 * time.Second)
-	return
 }
 
 func TestStore(t *testing.T) {
@@ -69,7 +78,6 @@ func TestStore(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	return
 }
 
 func TestGet(t *testing.T) {
@@ -90,6 +98,7 @@ func TestGet(t *testing.T) {
 }
 
 func TestExtraServer(t *testing.T) {
+	os.Mkdir("extraserver", 0750)
 	err := os.Chdir("extraserver")
 	if err != nil {
 		t.Error(err)
@@ -100,7 +109,15 @@ func TestExtraServer(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	edt, err := Init[dd, dd](serv, s, "testdata", "1.0.0", cryptKeyProvider, func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) }, ctxGlobal)
+	edt, err := Init[dd, dd](
+		serv,
+		s,
+		"testdata",
+		"1.0.0",
+		cryptKeyProvider,
+		func(d dd) string { return fmt.Sprintf("%d_%s", d.Id, d.Name) },
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
