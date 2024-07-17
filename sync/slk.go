@@ -19,8 +19,8 @@ func NewSLK() SLK {
 }
 
 type slk struct {
-	rwLock sync.RWMutex
 	data   map[string]time.Time
+	rwLock sync.RWMutex
 }
 
 func (s *slk) Add(key string, timeout time.Duration) {

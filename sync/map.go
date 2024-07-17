@@ -23,8 +23,8 @@ func NewMap[T any]() Map[T] {
 }
 
 type sMap[T any] struct {
-	rwLock sync.RWMutex
 	data   map[string]T
+	rwLock sync.RWMutex
 }
 
 func (s *sMap[T]) Set(key string, data T) {

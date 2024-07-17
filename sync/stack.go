@@ -15,8 +15,8 @@ func NewStack[T any]() Stack[T] {
 }
 
 type stack[T any] struct {
-	rwLock sync.Mutex
 	data   []T
+	rwLock sync.Mutex
 }
 
 func (s *stack[T]) Push(data T) {

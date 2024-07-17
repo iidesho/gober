@@ -20,9 +20,9 @@ func NewSlice[T any]() Slice[T] {
 }
 
 type slice[T any] struct {
-	rwLock sync.RWMutex
 	data   []T
 	dloc   []*sync.RWMutex
+	rwLock sync.RWMutex
 }
 
 func (s *slice[T]) Add(data T) {

@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 )
 
 type Que[T any] interface {
@@ -14,15 +15,15 @@ type Que[T any] interface {
 	HasData() <-chan struct{}
 }
 
-func NewQue[T any]() Que[T] {
-	return &que[T]{signal: make(chan struct{})}
+func NewQue[T any, RT bcts.ReadWriter[T]]() Que[T, RT] {
+	return &que[T, RT]{signal: make(chan struct{})}
 }
 
-type que[T any] struct {
-	rwLock sync.RWMutex
-	data   []T
-	has    bool
+type que[T any, RT bcts.ReadWriter[T]] struct {
 	signal chan struct{}
+	data   []RT
+	rwLock sync.RWMutex
+	has    bool
 }
 
 func (s *que[T]) Push(data T) {
