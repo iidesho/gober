@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream/event/store"
-	log "github.com/iidesho/bragi/sbragi"
 )
 
 const (
@@ -27,7 +27,7 @@ type storeEvent struct {
 	Created  time.Time
 	Event    store.Event
 	Position uint64
-	//Version  uint8 // Do not need this to be in memory as the version is only relevant for on disk format
+	// Version  uint8 // Do not need this to be in memory as the version is only relevant for on disk format
 }
 
 func (e storeEvent) WriteBytes(w *bufio.Writer) (err error) {
@@ -98,7 +98,7 @@ func (se *storeEvent) ReadBytes(r io.Reader) (err error) {
 type stream struct {
 	db  *os.File
 	len *atomic.Int64
-	//dbLock   *sync.Mutex
+	// dbLock   *sync.Mutex
 	newData  *sync.Cond
 	position uint64
 }
@@ -119,7 +119,7 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 	}
 	defer f.Close()
 	r := f
-	//j := json.NewDecoder(f)
+	// j := json.NewDecoder(f)
 	var se storeEvent
 	p := uint64(0)
 	if err != io.EOF {
@@ -140,7 +140,7 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 		data: stream{
 			db:  f,
 			len: &atomic.Int64{},
-			//dbLock:  &sync.Mutex{},
+			// dbLock:  &sync.Mutex{},
 			newData:  sync.NewCond(&sync.Mutex{}),
 			position: p,
 		},
@@ -200,7 +200,7 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 					}
 				}
 
-				//Should not be needed as the file is opened with os.SYNC s.data.db.Sync() //Should add this outside a read while readable loop to reduce overhead, possibly
+				// Should not be needed as the file is opened with os.SYNC s.data.db.Sync() //Should add this outside a read while readable loop to reduce overhead, possibly
 				s.data.newData.Broadcast()
 			}()
 		}
@@ -237,7 +237,7 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 		readStream(s, events, position, ctx)
 	}()
 	db, err := os.OpenFile(fmt.Sprintf("streams/%s", s.name), os.O_RDONLY, 0640)
-	//db, err := os.OpenFile(es.data.db.Name(), os.O_RDONLY, 0640)
+	// db, err := os.OpenFile(es.data.db.Name(), os.O_RDONLY, 0640)
 	if err != nil {
 		log.WithError(err).Fatal("while opening stream file")
 		return
@@ -253,7 +253,7 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 		return
 	default:
 	}
-	//position := uint64(from)
+	// position := uint64(from)
 	if position == uint64(store.STREAM_END) {
 		position = uint64(s.data.len.Load())
 	}
@@ -261,7 +261,7 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 	var se storeEvent
 	for readTo < position {
 		err = se.ReadBytes(r)
-		//err = binary.Read(db, binary.LittleEndian, &se)
+		// err = binary.Read(db, binary.LittleEndian, &se)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				time.Sleep(time.Millisecond * 250)

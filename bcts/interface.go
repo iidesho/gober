@@ -1,7 +1,6 @@
 package bcts
 
 import (
-	"bufio"
 	"io"
 )
 
@@ -10,7 +9,7 @@ type Reader[T any] interface {
 	*T
 }
 type Writer interface {
-	WriteBytes(*bufio.Writer) error
+	WriteBytes(io.Writer) error
 }
 type ReadWriter[T any] interface {
 	Reader[T]

@@ -1,50 +1,52 @@
 package bcts
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"time"
 )
 
-func WriteInt64[T ~int64](w *bufio.Writer, i T) error {
+func WriteInt64[T ~int64](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteInt32[T ~int32](w *bufio.Writer, i T) error {
+func WriteInt32[T ~int32](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteInt16[T ~int16](w *bufio.Writer, i T) error {
+func WriteInt16[T ~int16](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteInt8[T ~int8](w *bufio.Writer, i T) error {
+func WriteInt8[T ~int8](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteUInt64[T ~uint64](w *bufio.Writer, i T) error {
+func WriteUInt64[T ~uint64](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteUInt32[T ~uint32](w *bufio.Writer, i T) error {
+func WriteUInt32[T ~uint32](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteUInt16[T ~uint16](w *bufio.Writer, i T) error {
+func WriteUInt16[T ~uint16](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-func WriteUInt8[T ~uint8](w *bufio.Writer, i T) error {
+func WriteUInt8[T ~uint8](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }
 
-const maxUint8 = ^uint8(0)
-const maxUint16 = ^uint16(0)
-const maxUint32 = ^uint32(0)
-const maxUint64 = ^uint64(0)
+const (
+	maxUint8  = ^uint8(0)
+	maxUint16 = ^uint16(0)
+	maxUint32 = ^uint32(0)
+	maxUint64 = ^uint64(0)
+)
 
-func WriteTinyString[T ~string](w *bufio.Writer, s T) error {
+func WriteTinyString[T ~string](w io.Writer, s T) error {
 	l := len(s)
 	if l > int(maxUint8) {
 		return fmt.Errorf("string is longer than max length of a tiny string")
@@ -56,11 +58,11 @@ func WriteTinyString[T ~string](w *bufio.Writer, s T) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.WriteString(string(s))
+	_, err = w.Write([]byte(s))
 	return err
 }
 
-func WriteSmallString[T ~string](w *bufio.Writer, s T) error {
+func WriteSmallString[T ~string](w io.Writer, s T) error {
 	l := len(s)
 	if l > int(maxUint16) {
 		return fmt.Errorf("string is longer than max length of a small string")
@@ -72,11 +74,11 @@ func WriteSmallString[T ~string](w *bufio.Writer, s T) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.WriteString(string(s))
+	_, err = w.Write([]byte(s))
 	return err
 }
 
-func WriteString[T ~string](w *bufio.Writer, s T) error {
+func WriteString[T ~string](w io.Writer, s T) error {
 	l := len(s)
 	if l > int(maxUint32) {
 		return fmt.Errorf("string is longer than max length of a long string")
@@ -88,11 +90,11 @@ func WriteString[T ~string](w *bufio.Writer, s T) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.WriteString(string(s))
+	_, err = w.Write([]byte(s))
 	return err
 }
 
-func WriteTinyBytes(w *bufio.Writer, b []byte) error {
+func WriteTinyBytes(w io.Writer, b []byte) error {
 	l := len(b)
 	if l > int(maxUint8) {
 		return fmt.Errorf("byte slice is longer than max length of a tiny byte slice")
@@ -108,7 +110,7 @@ func WriteTinyBytes(w *bufio.Writer, b []byte) error {
 	return err
 }
 
-func WriteSmallBytes(w *bufio.Writer, b []byte) error {
+func WriteSmallBytes(w io.Writer, b []byte) error {
 	l := len(b)
 	if l > int(maxUint16) {
 		return fmt.Errorf("byte slice is longer than max length of a small byte slice")
@@ -124,7 +126,7 @@ func WriteSmallBytes(w *bufio.Writer, b []byte) error {
 	return err
 }
 
-func WriteBytes(w *bufio.Writer, b []byte) error {
+func WriteBytes(w io.Writer, b []byte) error {
 	l := uint32(len(b))
 	err := WriteUInt32(w, l)
 	if err != nil {
@@ -137,16 +139,16 @@ func WriteBytes(w *bufio.Writer, b []byte) error {
 	return err
 }
 
-func WriteStaticBytes(w *bufio.Writer, b []byte) error {
+func WriteStaticBytes(w io.Writer, b []byte) error {
 	_, err := w.Write(b)
 	return err
 }
 
-func WriteTime(w *bufio.Writer, t time.Time) error {
+func WriteTime(w io.Writer, t time.Time) error {
 	return WriteInt64(w, t.UTC().UnixNano())
 }
 
-func WriteMap[K ComparableWriter, T Writer](w *bufio.Writer, m map[K]T) error {
+func WriteMap[K ComparableWriter, T Writer](w io.Writer, m map[K]T) error {
 	err := WriteInt32(w, int32(len(m)))
 	if err != nil {
 		return err

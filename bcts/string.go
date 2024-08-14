@@ -1,15 +1,16 @@
 package bcts
 
 import (
-	"bufio"
 	"io"
 )
 
-type TinyString string
-type SmallString string
-type String string
+type (
+	TinyString  string
+	SmallString string
+	String      string
+)
 
-func (s TinyString) WriteBytes(w *bufio.Writer) error {
+func (s TinyString) WriteBytes(w io.Writer) error {
 	return WriteTinyString(w, s)
 }
 
@@ -17,7 +18,7 @@ func (s *TinyString) ReadBytes(r io.Reader) error {
 	return ReadTinyString(r, s)
 }
 
-func (s SmallString) WriteBytes(w *bufio.Writer) error {
+func (s SmallString) WriteBytes(w io.Writer) error {
 	return WriteSmallString(w, s)
 }
 
@@ -25,7 +26,7 @@ func (s *SmallString) ReadBytes(r io.Reader) error {
 	return ReadSmallString(r, s)
 }
 
-func (s String) WriteBytes(w *bufio.Writer) error {
+func (s String) WriteBytes(w io.Writer) error {
 	return WriteString(w, s)
 }
 

@@ -8,9 +8,9 @@ import (
 	"io"
 	"time"
 
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream/event/store"
-	log "github.com/iidesho/bragi/sbragi"
 	jsoniter "github.com/json-iterator/go"
 )
 
@@ -146,7 +146,7 @@ func Map[OT, NT any](e WriteEventReadStatus[OT], f func(OT) NT) WriteEventReadSt
 	}
 }
 
-func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] { //Dont think i like this
+func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] { // Dont think i like this
 	return &WriteEvent[T]{
 		event:  e,
 		status: make(chan store.WriteStatus, 1),
@@ -212,6 +212,8 @@ func (e *WriteEvent[T]) Store() *store.WriteEvent {
 	}
 }
 
-type ByteEvent Event[[]byte]
-type ByteWriteEvent WriteEvent[[]byte]
-type ByteReadEvent ReadEvent[[]byte]
+type (
+	ByteEvent      Event[[]byte]
+	ByteWriteEvent WriteEvent[[]byte]
+	ByteReadEvent  ReadEvent[[]byte]
+)
