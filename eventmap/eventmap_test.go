@@ -1,17 +1,20 @@
 package eventmap
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"testing"
 
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream/event/store/ondisk"
 
 	"github.com/google/uuid"
 )
 
 var (
-	ed              EventMap[dd]
+	ed              EventMap[dd, *dd]
 	ctxGlobal       context.Context
 	ctxGlobalCancel context.CancelFunc
 	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -20,8 +23,32 @@ var (
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.New().String()
 
 type dd struct {
-	Id   int    `json:"id"`
+	Id   int64  `json:"id"`
 	Name string `json:"name"`
+}
+
+func (s *dd) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteInt64(w, s.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTinyString(w, s.Name)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *dd) ReadBytes(r io.Reader) (err error) {
+	err = bcts.ReadInt64(r, &s.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadTinyString(r, &s.Name)
+	if err != nil {
+		return
+	}
+	return nil
 }
 
 func cryptKeyProvider(_ string) string {
@@ -49,7 +76,7 @@ func TestStore(t *testing.T) {
 		Id:   1,
 		Name: "test",
 	}
-	err := ed.Set("1_test", data)
+	err := ed.Set("1_test", &data)
 	if err != nil {
 		t.Error(err)
 		return

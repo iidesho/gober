@@ -6,13 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/gofrs/uuid"
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/discovery"
 	"github.com/iidesho/gober/sync"
 	"github.com/iidesho/gober/webserver"
 	"github.com/iidesho/gober/webserver/health"
-	"github.com/gin-gonic/gin"
-	"github.com/gofrs/uuid"
 )
 
 type builder struct {
@@ -74,7 +75,7 @@ func Data(c *gin.Context, code int, d any) {
 func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Consensus, err error) {
 	cons := consensus{
 		server: producer.server,
-		reqs:   sync.NewMap[sync.Stack[*topic]](),
+		reqs:   sync.NewMap[sync.Stack[topic, *topic]](),
 
 		timeout: consTimeout,
 		topic:   t,
@@ -84,7 +85,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 	})
 	//Get satus of a consent i know about
 	producer.serv.API().GET(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
-		v, ok := cons.reqs.Get(c.Param("id")[0:])
+		v, ok := cons.reqs.Get(bcts.TinyString(c.Param("id")[0:]))
 		if !ok {
 			Data(c, http.StatusBadRequest, gin.H{"status": "missing consent request"})
 			return
@@ -94,7 +95,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 	//Request consent from me
 	producer.serv.API().POST(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
 		id := c.Param("id")[0:]
-		reqs, isNew := cons.reqs.GetOrInit(id, sync.NewStack[*topic])
+		reqs, isNew := cons.reqs.GetOrInit(bcts.TinyString(id), sync.NewStack[topic, *topic])
 		if !isNew {
 			v, ok := reqs.Peek()
 			if ok && time.Now().After(v.Timeout) {
@@ -135,7 +136,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 	//Has gotten updated conseed info and informs conceed winner(me)
 	producer.serv.API().PATCH(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
 		id := c.Param("id")[0:]
-		reqs, ok := cons.reqs.Get(id)
+		reqs, ok := cons.reqs.Get(bcts.TinyString(id))
 		if !ok {
 			Data(c, http.StatusNotFound, gin.H{"status": "missing consent request id"})
 			return
@@ -160,7 +161,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 	//Conseed to me or inform me of a conseed
 	producer.serv.API().DELETE(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
 		id := c.Param("id")[0:]
-		reqs, ok := cons.reqs.Get(id)
+		reqs, ok := cons.reqs.Get(bcts.TinyString(id))
 		if !ok {
 			Data(c, http.StatusNotFound, gin.H{"status": "missing consent request id"})
 			return
@@ -178,7 +179,11 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 		}
 		if producer.id == v.Requester { //Conseeding to me
 			if data.Conseeding == nil {
-				Data(c, http.StatusBadRequest, gin.H{"status": "not conseeding when reporting conseed"})
+				Data(
+					c,
+					http.StatusBadRequest,
+					gin.H{"status": "not conseeding when reporting conseed"},
+				)
 				return
 			}
 			if v.Conseeding != nil && v.Conseeding.Before(*data.Conseeding) {

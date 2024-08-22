@@ -42,7 +42,7 @@ func main() {
 			return
 		}
 	*/
-	c, err := consumer.New[[]byte](pers, stream.StaticProvider(testCryptKey), ctx)
+	c, err := consumer.New[bcts.SmallBytes](pers, stream.StaticProvider(testCryptKey), ctx)
 	if err != nil {
 		log.WithError(err).Fatal("while creating consumer")
 		return
@@ -95,11 +95,14 @@ func main() {
 		)
 	}(time.Now())
 	// writeEventStream := c.Write()
-	we := event.NewWriteEvent(event.Event[[]byte]{
+	data := bcts.SmallBytes(make([]byte, eventSize))
+	we := event.NewWriteEvent(event.Event[bcts.SmallBytes, *bcts.SmallBytes]{
 		Type: event.Created,
-		Data: make([]byte, eventSize),
+		Data: &data,
 		Metadata: event.Metadata{
-			Extra: map[bcts.TinyString]bcts.SmallBytes{"extra": []byte("extra metadata test")},
+			Extra: map[bcts.TinyString]bcts.SmallBytes{
+				"extra": bcts.SmallBytes([]byte("extra metadata test")),
+			},
 		},
 	})
 	var wg sync.WaitGroup

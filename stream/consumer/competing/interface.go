@@ -3,20 +3,20 @@ package competing
 import (
 	"context"
 
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream/event"
 )
 
-type Consumer[T any] interface {
-	Write() chan<- event.WriteEventReadStatus[T]
-	Stream() <-chan ReadEventWAcc[T]
-	Completed() <-chan event.ReadEvent[T]
+type Consumer[BT any, T bcts.ReadWriter[BT]] interface {
+	Write() chan<- event.WriteEventReadStatus[BT, T]
+	Stream() <-chan ReadEventWAcc[BT, T]
+	Completed() <-chan event.ReadEvent[BT, T]
 	End() (pos uint64, err error)
 	Name() string
 }
 
-type ReadEventWAcc[T any] struct {
-	event.ReadEvent[T]
-
-	Acc func(T)
+type ReadEventWAcc[BT any, T bcts.ReadWriter[BT]] struct {
 	CTX context.Context
+	Acc func(T)
+	event.ReadEvent[BT, T]
 }

@@ -1,8 +1,10 @@
 package competing_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -20,11 +22,11 @@ import (
 )
 
 var (
-	c               competing.Consumer[dd]
+	c               competing.Consumer[dd, *dd]
 	ctxGlobal       context.Context
 	ctxGlobalCancel context.CancelFunc
 	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
-	events          = make(map[int]competing.ReadEventWAcc[dd])
+	events          = make(map[int]competing.ReadEventWAcc[dd, *dd])
 )
 
 var STREAM_NAME = "TestCompetingConsumer_" + uuid.Must(uuid.NewV7()).String()
@@ -35,7 +37,43 @@ type md struct {
 
 type dd struct {
 	Name string `json:"name"`
-	Id   int    `json:"id"`
+	Id   int16  `json:"id"`
+}
+
+func (s dd) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTinyString(w, s.Name)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteInt16(w, s.Id)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *dd) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid dd version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadTinyString(r, &s.Name)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadInt16(r, &s.Id)
+	if err != nil {
+		return
+	}
+	return nil
 }
 
 func cryptKeyProvider(_ string) string {
@@ -57,13 +95,13 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err = competing.New[dd](
+	c, err = competing.New(
 		pers,
 		p.AddTopic,
 		cryptKeyProvider,
 		store.STREAM_START,
 		"datatype",
-		func(v dd) time.Duration {
+		func(v *dd) time.Duration {
 			if v.Id == 0 {
 				return time.Microsecond * 500
 			}
@@ -80,12 +118,11 @@ func TestInit(t *testing.T) {
 	}
 	go p.Run()
 	time.Sleep(time.Microsecond)
-	return
 }
 
 func TestStoreOrder(t *testing.T) {
 	wg := sync.WaitGroup{}
-	for i := 1; i <= 5; i++ {
+	for i := int16(1); i <= 5; i++ {
 		log.Info("loop start", "id", i)
 		data := dd{
 			Id:   i,
@@ -94,21 +131,21 @@ func TestStoreOrder(t *testing.T) {
 		meta := md{
 			Extra: bcts.SmallBytes("extra metadata test"),
 		}
-		e := event.Event[dd]{
+		e := event.Event[dd, *dd]{
 			Type: event.Created,
-			Data: data,
+			Data: &data,
 			Metadata: event.Metadata{
 				Extra:    map[bcts.TinyString]bcts.SmallBytes{"extra": meta.Extra},
 				DataType: "datatype",
 			},
 		}
 		wg.Add(1)
-		go func(i int) {
+		go func(i int16) {
 			defer wg.Done()
 			log.Info("reading event")
 			read := <-c.Stream()
 			log.Info("read event", "event", read.Data.Id)
-			events[i] = read
+			events[int(i)] = read
 			read.Acc(read.Data)
 			log.Info("acced read event")
 		}(i)
@@ -133,12 +170,11 @@ func TestStoreOrder(t *testing.T) {
 	}
 	log.Info("waiting for event to read")
 	wg.Wait()
-	return
 }
 
 func TestStreamOrder(t *testing.T) {
-	for i := 1; i <= 5; i++ {
-		e := events[i]
+	for i := int16(1); i <= 5; i++ {
+		e := events[int(i)]
 		log.Info("events", "events", e)
 		if e.Data.Id != i {
 			t.Error(fmt.Errorf("missmatch event data id: %d != %d", e.Data.Id, i))
@@ -157,7 +193,6 @@ func TestStreamOrder(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestTimeout(t *testing.T) {
@@ -166,9 +201,9 @@ func TestTimeout(t *testing.T) {
 		Name: "test_timeout",
 	}
 
-	e := event.Event[dd]{
+	e := event.Event[dd, *dd]{
 		Type: event.Created,
-		Data: data,
+		Data: &data,
 		Metadata: event.Metadata{
 			DataType: "datatype",
 		},

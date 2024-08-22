@@ -3,8 +3,8 @@ package persistentbigmap
 import "sync"
 
 type mp[T any] struct {
-	l    sync.Mutex
 	data map[string]T
+	l    sync.Mutex
 }
 
 type Map[T any] interface {

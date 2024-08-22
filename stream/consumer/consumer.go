@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/mergedcontext"
 	"github.com/iidesho/gober/stream"
@@ -16,14 +17,14 @@ import (
 
 var json = jsoniter.ConfigDefault
 
-type consumer[T any] struct {
-	stream             stream.FilteredStream[[]byte]
+type consumer[BT any, T bcts.ReadWriter[BT]] struct {
+	stream             stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
 	cryptoKey          stream.CryptoKeyProvider
 	newTransactionChan chan transactionCheck
 	currentPosition    uint64
 	completables       map[string]transactionCheck
 	accChan            chan uint64
-	writeStream        chan event.WriteEventReadStatus[T]
+	writeStream        chan event.WriteEventReadStatus[BT, T]
 	ctx                context.Context
 }
 
@@ -32,22 +33,22 @@ type transactionCheck struct {
 	position uint64
 }
 
-func New[T any](
+func New[BT any, T bcts.ReadWriter[BT]](
 	s stream.Stream,
 	cryptoKey stream.CryptoKeyProvider,
 	ctx context.Context,
-) (out Consumer[T], err error) {
-	fs, err := stream.Init[[]byte](s, ctx)
+) (out Consumer[BT, T], err error) {
+	fs, err := stream.Init[bcts.Bytes](s, ctx)
 	if err != nil {
 		return
 	}
-	c := consumer[T]{
+	c := consumer[BT, T]{
 		stream:             fs,
 		cryptoKey:          cryptoKey,
-		newTransactionChan: make(chan transactionCheck, 0),
+		newTransactionChan: make(chan transactionCheck),
 		completables:       make(map[string]transactionCheck), // NewMap[transactionCheck](),
-		accChan:            make(chan uint64, 0),              // 1000),
-		writeStream:        make(chan event.WriteEventReadStatus[T], 0),
+		accChan:            make(chan uint64),                 // 1000),
+		writeStream:        make(chan event.WriteEventReadStatus[BT, T]),
 		ctx:                ctx,
 	}
 
@@ -89,21 +90,21 @@ func New[T any](
 	return
 }
 
-func (c *consumer[T]) Write() chan<- event.WriteEventReadStatus[T] {
+func (c *consumer[BT, T]) Write() chan<- event.WriteEventReadStatus[BT, T] {
 	return c.writeStream
 }
 
-func (c *consumer[T]) Stream(
+func (c *consumer[BT, T]) Stream(
 	eventTypes []event.Type,
 	from store.StreamPosition,
 	filter stream.Filter,
 	ctx context.Context,
-) (out <-chan event.ReadEventWAcc[T], err error) {
+) (out <-chan event.ReadEventWAcc[BT, T], err error) {
 	return c.streamReadEvents(eventTypes, from, filter, ctx)
 }
 
-func (c *consumer[T]) store(e event.WriteEventReadStatus[T]) (position uint64, err error) {
-	es, err := EncryptEvent[T](e.Event(), c.cryptoKey)
+func (c *consumer[BT, T]) store(e event.WriteEventReadStatus[BT, T]) (position uint64, err error) {
+	es, err := EncryptEvent[BT, T](e.Event(), c.cryptoKey)
 	if err != nil {
 		return
 	}
@@ -124,8 +125,8 @@ func (c *consumer[T]) store(e event.WriteEventReadStatus[T]) (position uint64, e
 	return
 }
 
-func (c *consumer[T]) streamWriteEvents(
-	eventStream <-chan event.WriteEventReadStatus[T],
+func (c *consumer[BT, T]) streamWriteEvents(
+	eventStream <-chan event.WriteEventReadStatus[BT, T],
 ) (err error) {
 	go func() {
 		for {
@@ -142,19 +143,19 @@ func (c *consumer[T]) streamWriteEvents(
 	return
 }
 
-func (c *consumer[T]) streamReadEvents(
+func (c *consumer[BT, T]) streamReadEvents(
 	eventTypes []event.Type,
 	from store.StreamPosition,
 	filter stream.Filter,
 	ctx context.Context,
-) (out <-chan event.ReadEventWAcc[T], err error) {
+) (out <-chan event.ReadEventWAcc[BT, T], err error) {
 	mctx, cancel := mergedcontext.MergeContexts(c.ctx, ctx)
 	s, err := c.stream.Stream(eventTypes, from, filter, mctx)
 	if err != nil {
 		cancel()
 		return
 	}
-	eventChan := make(chan event.ReadEventWAcc[T], 0)
+	eventChan := make(chan event.ReadEventWAcc[BT, T])
 	out = eventChan
 	go func() {
 		defer cancel()
@@ -163,12 +164,12 @@ func (c *consumer[T]) streamReadEvents(
 			case <-mctx.Done():
 				return
 			case e := <-s:
-				o, err := DecryptEvent[T](e, c.cryptoKey)
+				o, err := DecryptEvent[BT, T](e, c.cryptoKey)
 				if err != nil {
 					log.WithError(err).Error("while reading event")
 					continue
 				}
-				eventChan <- event.ReadEventWAcc[T]{
+				eventChan <- event.ReadEventWAcc[BT, T]{
 					ReadEvent: o,
 					Acc: func() {
 						c.accChan <- o.Position
@@ -181,25 +182,25 @@ func (c *consumer[T]) streamReadEvents(
 	return
 }
 
-func (c *consumer[T]) End() (pos uint64, err error) {
+func (c *consumer[BT, T]) End() (pos uint64, err error) {
 	return c.stream.End()
 }
 
-func (c *consumer[T]) Name() string {
+func (c *consumer[BT, T]) Name() string {
 	return c.stream.Name()
 }
 
-func (c *consumer[T]) FilteredEnd(
+func (c *consumer[BT, T]) FilteredEnd(
 	eventTypes []event.Type,
 	filter stream.Filter,
 ) (pos uint64, err error) {
 	return c.stream.FilteredEnd(eventTypes, filter)
 }
 
-func EncryptEvent[T any](
-	e *event.Event[T],
+func EncryptEvent[BT any, T bcts.ReadWriter[BT]](
+	e *event.Event[BT, T],
 	cryptoKey stream.CryptoKeyProvider,
-) (es event.Event[[]byte], err error) {
+) (es event.Event[bcts.Bytes, *bcts.Bytes], err error) {
 	data, err := json.Marshal(e.Data)
 	if err != nil {
 		return
@@ -220,11 +221,11 @@ func EncryptEvent[T any](
 	return
 }
 
-func DecryptEvent[T any](
-	e event.ReadEvent[[]byte],
+func DecryptEvent[BT any, T bcts.ReadWriter[BT]](
+	e event.ReadEvent[bcts.Bytes, *bcts.Bytes],
 	cryptoKey stream.CryptoKeyProvider,
-) (out event.ReadEvent[T], err error) {
-	dataJson, err := crypto.Decrypt(e.Data, cryptoKey(e.Metadata.Key))
+) (out event.ReadEvent[BT, T], err error) {
+	dataJson, err := crypto.Decrypt(*e.Data, cryptoKey(e.Metadata.Key))
 	if err != nil {
 		log.WithError(err).Warning("Decrypting event data error")
 		return
@@ -235,8 +236,8 @@ func DecryptEvent[T any](
 		log.WithError(err).Warning("Unmarshalling event data error")
 		return
 	}
-	out = event.ReadEvent[T]{
-		Event: event.Event[T]{
+	out = event.ReadEvent[BT, T]{
+		Event: event.Event[BT, T]{
 			Type:     e.Type,
 			Data:     data,
 			Metadata: e.Metadata,

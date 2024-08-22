@@ -41,6 +41,7 @@ func TestTimeout(t *testing.T) {
 	if c.Request("id2") {
 		t.Fatal("did win request before timeout")
 	}
+
 	time.Sleep(time.Second)
 	if !c.Request("id2") {
 		t.Fatal("did not win request after timeout")

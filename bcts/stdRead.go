@@ -156,3 +156,21 @@ func ReadMap[KT comparable, K ComparableReader[KT], VT any, V Reader[VT]](
 	}
 	return nil
 }
+
+func ReadSlice[TV any, T Reader[TV]](r io.Reader, s *[]T) error {
+	var l int32
+	err := ReadInt32(r, &l)
+	if err != nil {
+		return err
+	}
+	*s = make([]T, l)
+	for i := range l {
+		v := new(TV)
+		err = T(v).ReadBytes(r)
+		if err != nil {
+			return err
+		}
+		(*s)[i] = v
+	}
+	return nil
+}

@@ -25,3 +25,7 @@ type ComparableReader[T any] interface {
 	comparable
 	Reader[T]
 }
+type ComparableReadWriter[T any] interface {
+	ComparableReader[T]
+	ComparableWriter
+}

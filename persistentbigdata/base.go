@@ -3,7 +3,6 @@ package persistentbigmap
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,17 +14,19 @@ import (
 	"github.com/dgraph-io/badger/options"
 	"github.com/gin-gonic/gin"
 	"github.com/gofrs/uuid"
+	"github.com/iidesho/bragi/sbragi"
+	jsoniter "github.com/json-iterator/go"
+
 	"github.com/iidesho/gober/bcts"
-	"github.com/iidesho/gober/stream/consumer"
-	"github.com/iidesho/gober/webserver"
-
-	log "github.com/iidesho/bragi/sbragi"
-
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
+	"github.com/iidesho/gober/webserver"
 )
+
+var json = jsoniter.ConfigDefault
 
 type EventMap[DT, MT any] interface {
 	Get(key string) (data DT, err error)
@@ -40,25 +41,25 @@ type EventMap[DT, MT any] interface {
 type transactionCheck struct{}
 
 type mapData[DT, MT any] struct {
-	data              *badger.DB
-	transactionChan   chan transactionCheck
-	dataTypeName      string
-	dataTypeVersion   string
-	instance          uuid.UUID
-	provider          stream.CryptoKeyProvider
-	discoveryProvider stream.CryptoKeyProvider
-	es                consumer.Consumer[discoveryMetadata[MT]]
+	es                consumer.Consumer[bcts.Bytes, *bcts.Bytes]
+	server            webserver.Server
 	ctx               context.Context
 	getKey            func(d MT) string
+	provider          stream.CryptoKeyProvider
+	discoveryProvider stream.CryptoKeyProvider
+	data              *badger.DB
+	transactionChan   chan transactionCheck
+	dataTypeVersion   string
+	dataTypeName      string
 	discoveryPath     string
 	positionKey       []byte
-	server            webserver.Server
+	instance          uuid.UUID
 }
 
 type metadata[MT any] struct {
+	Data  MT        `json:"data"`
 	OldId uuid.UUID `json:"old_id"`
 	NewId uuid.UUID `json:"new_id"`
-	Data  MT        `json:"data"`
 }
 
 type action uint8
@@ -71,11 +72,11 @@ const (
 )
 
 type discoveryMetadata[MT any] struct {
-	Key      string    `json:"key"`
-	Action   action    `json:"action"`
-	Endpoint string    `json:"endpoint"`
-	Instance uuid.UUID `json:"instance"`
+	Key      string `json:"key"`
+	Endpoint string `json:"endpoint"`
 	Meta     metadata[MT]
+	Instance uuid.UUID `json:"instance"`
+	Action   action    `json:"action"`
 }
 
 func Init[DT, MT any](
@@ -142,14 +143,14 @@ func Init[DT, MT any](
 				webserver.ErrorResponse(c, err.Error(), http.StatusNotFound)
 				return
 			}
-			log.WithError(err).Error("while getting data for sync request")
+			sbragi.WithError(err).Error("while getting data for sync request")
 			webserver.ErrorResponse(c, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		var data DT
 		err = json.Unmarshal(dataByte, &data)
 		if err != nil {
-			log.WithError(err).Error("while unmarshalling get request for big data")
+			sbragi.WithError(err).Error("while unmarshalling get request for big data")
 			webserver.ErrorResponse(c, "json umarshal error", http.StatusInternalServerError)
 			return
 		}
@@ -157,7 +158,7 @@ func Init[DT, MT any](
 	})
 
 	from := store.STREAM_START
-	err = db.View(func(txn *badger.Txn) error {
+	_ = db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(m.positionKey)
 		if err != nil {
 			return err
@@ -173,7 +174,7 @@ func Init[DT, MT any](
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	es, err := consumer.New[discoveryMetadata[MT]](s, m.provider, m.ctx)
+	es, err := consumer.New[bcts.Bytes](s, m.provider, m.ctx)
 	if err != nil {
 		return
 	}
@@ -206,8 +207,12 @@ func Init[DT, MT any](
 	return
 }
 
-func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
-	dmd := e.Data
+func (m *mapData[DT, MT]) create(e event.ReadEvent[bcts.Bytes, *bcts.Bytes]) {
+	var dmd discoveryMetadata[MT]
+	err := json.Unmarshal(*e.Data, &dmd)
+	if sbragi.WithError(err).Error("unmarshaling eventmap data") {
+		return
+	}
 	if dmd.Action == query {
 		if dmd.Instance == m.instance {
 			return
@@ -221,17 +226,21 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 		}
 		u := m.server.Url()
 		u.Path = u.Path + strings.ReplaceAll(m.discoveryPath, ":key", dmd.Meta.NewId.String())
-		dmd = discoveryMetadata[MT]{
+		b, err := json.Marshal(discoveryMetadata[MT]{
 			Key:      dmd.Key,
 			Endpoint: u.String(),
 			Instance: m.instance,
 			Meta:     dmd.Meta,
 			Action:   response,
+		})
+		if sbragi.WithError(err).Error("marshaling event") {
+			return
 		}
 
-		es := event.Event[discoveryMetadata[MT]]{
+		db := bcts.Bytes(b)
+		es := event.Event[bcts.Bytes, *bcts.Bytes]{
 			Type: event.Updated,
-			Data: dmd,
+			Data: &db,
 			Metadata: event.Metadata{
 				Version:  m.dataTypeVersion,
 				DataType: m.dataTypeName,
@@ -256,24 +265,28 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 			return err
 		})
 		if err == nil {
-			log.Debug("data already stored")
+			sbragi.Debug("data already stored")
 			return
 		}
 		_, raw, err := externalImage[DT](dmd.Endpoint)
 		if err != nil {
-			log.WithError(err).
+			sbragi.WithError(err).
 				Warning("while getting updated big data")
 				// Should probably use tasks to verify completions instead.
-			dmd = discoveryMetadata[MT]{
+			b, err := json.Marshal(discoveryMetadata[MT]{
 				Key:      dmd.Key,
 				Instance: m.instance,
 				Meta:     dmd.Meta,
 				Action:   query,
+			})
+			if sbragi.WithError(err).Error("marshaling event") {
+				return
 			}
 
-			es := event.Event[discoveryMetadata[MT]]{
+			db := bcts.Bytes(b)
+			es := event.Event[bcts.Bytes, *bcts.Bytes]{
 				Type: event.Updated,
-				Data: dmd,
+				Data: &db,
 				Metadata: event.Metadata{
 					Version:  m.dataTypeVersion,
 					DataType: m.dataTypeName,
@@ -297,13 +310,13 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 			return txn.Set(dmd.Meta.NewId.Bytes(), raw)
 		})
 		if err != nil {
-			log.WithError(err).Warning("Update error")
+			sbragi.WithError(err).Warning("Update error")
 			return
 		}
 	}
 	data, err := json.Marshal(dmd.Meta)
 	if err != nil {
-		log.WithError(err).Warning("Update error")
+		sbragi.WithError(err).Warning("Update error")
 		return
 	}
 	err = m.data.Update(func(txn *badger.Txn) error {
@@ -323,18 +336,23 @@ func (m *mapData[DT, MT]) create(e event.ReadEvent[discoveryMetadata[MT]]) {
 		return txn.Set(m.positionKey, pos)
 	})
 	if err != nil {
-		log.WithError(err).Warning("Update error")
+		sbragi.WithError(err).Warning("Update error")
 		return
 	}
 }
 
-func (m *mapData[DT, MT]) delete(e event.ReadEvent[discoveryMetadata[MT]]) {
-	err := m.data.Update(func(txn *badger.Txn) error {
-		err := txn.Delete(e.Data.Meta.OldId.Bytes())
+func (m *mapData[DT, MT]) delete(e event.ReadEvent[bcts.Bytes, *bcts.Bytes]) {
+	var dmd discoveryMetadata[MT]
+	err := json.Unmarshal(*e.Data, &dmd)
+	if sbragi.WithError(err).Error("unmarshaling eventmap data") {
+		return
+	}
+	err = m.data.Update(func(txn *badger.Txn) error {
+		err := txn.Delete(dmd.Meta.OldId.Bytes())
 		if err != nil {
 			return err
 		}
-		err = txn.Delete([]byte(m.getKey(e.Data.Meta.Data)))
+		err = txn.Delete([]byte(m.getKey(dmd.Meta.Data)))
 		if err != nil {
 			return err
 		}
@@ -344,7 +362,7 @@ func (m *mapData[DT, MT]) delete(e event.ReadEvent[discoveryMetadata[MT]]) {
 		return txn.Set(m.positionKey, pos)
 	})
 	if err != nil {
-		log.WithError(err).Warning("Delete error")
+		sbragi.WithError(err).Warning("Delete error")
 	}
 }
 
@@ -413,7 +431,7 @@ func (m *mapData[DT, MT]) Keys() (keys []string) {
 		return nil
 	})
 	if err != nil {
-		log.WithError(err).Error("while reading bigdata disc store")
+		sbragi.WithError(err).Error("while reading bigdata disc store")
 		return
 	}
 	return
@@ -443,7 +461,7 @@ func (m *mapData[DT, MT]) Range(f func(key string, data DT) error) {
 		return nil
 	})
 	if err != nil {
-		log.WithError(err).Error("while reading bigdata disc store")
+		sbragi.WithError(err).Error("while reading bigdata disc store")
 		return
 	}
 }
@@ -476,11 +494,18 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 	if err != nil {
 		return
 	}
-	e := event.Event[discoveryMetadata[MT]]{
+
+	b, err := json.Marshal(discoveryMetadata[MT]{
+		Meta: md,
+	})
+	if err != nil {
+		return err
+	}
+
+	db := bcts.Bytes(b)
+	e := event.Event[bcts.Bytes, *bcts.Bytes]{
 		Type: event.Deleted,
-		Data: discoveryMetadata[MT]{
-			Meta: md,
-		},
+		Data: &db,
 		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
@@ -498,7 +523,7 @@ func (m *mapData[DT, MT]) Delete(data MT) (err error) {
 }
 
 func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
-	log.Trace("Set and wait start")
+	sbragi.Trace("Set and wait start")
 	newId, err := uuid.NewV7()
 	if err != nil {
 		return
@@ -540,10 +565,15 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 		Meta:     md,
 		Action:   update,
 	}
+	b, err := json.Marshal(dmd)
+	if err != nil {
+		return err
+	}
 
-	e := event.Event[discoveryMetadata[MT]]{
+	db := bcts.Bytes(b)
+	e := event.Event[bcts.Bytes, *bcts.Bytes]{
 		Type: eventType,
-		Data: dmd,
+		Data: &db,
 		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
@@ -555,7 +585,7 @@ func (m *mapData[DT, MT]) Set(data DT, meta MT) (err error) {
 	if err != nil {
 		return
 	}
-	log.Debug("publishing updated data", "endpoint", dmd.Endpoint, "id", md.NewId.String())
+	sbragi.Debug("publishing updated data", "endpoint", dmd.Endpoint, "id", md.NewId.String())
 	err = m.data.Update(func(txn *badger.Txn) error {
 		return txn.Set(md.NewId.Bytes(), d)
 	})
@@ -586,7 +616,7 @@ func externalImage[DT any](url string) (d DT, raw []byte, err error) {
 	defer func() {
 		err := resp.Body.Close()
 		if err != nil {
-			log.WithError(err).Debug("while closing response body")
+			sbragi.WithError(err).Debug("while closing response body")
 		}
 	}()
 	raw, err = io.ReadAll(resp.Body)

@@ -1,25 +1,31 @@
 package sync
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"reflect"
 	"sync"
+
+	"github.com/iidesho/gober/bcts"
 )
 
-// Not sure i want to use comparable here
-type Slice[T any] interface {
-	Add(data T)
-	Set(i int, data T)
-	Get(i int) (data T, ok bool)
+/*
+type Slice[T any, RT bcts.ReadWriter[T]] interface {
+	Add(data RT)
+	Set(i int, data RT)
+	Get(i int) (data RT, ok bool)
 	Contains(val T) int
-	Slice() []T
-	Delete(i int) T
+	Slice() []RT
+	Delete(i int) RT
 }
+*/
 
-func NewSlice[T any]() Slice[T] {
+func NewSlice[T bcts.ReadWriter[any]]() *slice[T] {
 	return &slice[T]{}
 }
 
-type slice[T any] struct {
+type slice[T bcts.ReadWriter[any]] struct {
 	data   []T
 	dloc   []*sync.RWMutex
 	rwLock sync.RWMutex
@@ -89,4 +95,34 @@ func (s *slice[T]) Delete(i int) (d T) {
 	s.data = append(s.data[:i], s.data[i:]...)
 	s.dloc = s.dloc[:len(s.dloc)-1] //All locks should be unlocked at this point
 	return
+}
+
+func (s *slice[T]) WriteBytes(w *bufio.Writer) (err error) {
+	s.rwLock.RLock()
+	defer s.rwLock.RUnlock()
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteSlice(w, s.data)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *slice[T]) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid slice version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	//err = bcts.ReadSlice(r, &s.data)
+	if err != nil {
+		return
+	}
+	return nil
 }

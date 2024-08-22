@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
@@ -14,24 +15,29 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-type EventMap[DT any] interface {
-	Get(key string) (data DT, err error)
-	Exists(key string) (exists bool)
+type EventMap[BT any, T bcts.ReadWriter[BT]] interface {
+	Get(key bcts.TinyString) (data T, err error)
+	Exists(key bcts.TinyString) (exists bool)
 	Len() (l int)
-	Keys() (keys []string)
-	Range(f func(key string, value DT) bool)
-	GetMap() map[string]DT
-	Delete(key string) (err error)
-	Set(key string, data DT) (err error)
-	Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error)
+	Keys() (keys []bcts.TinyString)
+	Range(f func(key bcts.TinyString, value T) bool)
+	GetMap() map[bcts.TinyString]T
+	Delete(key bcts.TinyString) (err error)
+	Set(key bcts.TinyString, data T) (err error)
+	Stream(
+		eventTypes []event.Type,
+		from store.StreamPosition,
+		filter stream.Filter,
+		ctx context.Context,
+	) (out <-chan event.Event[T], err error)
 }
 
-type mapData[DT any] struct {
-	data             sync.Map[DT]
+type mapData[BT any, T bcts.ReadWriter[BT]] struct {
+	data             *sync.Map[BT, T]
 	eventTypeName    string
 	eventTypeVersion string
 	provider         stream.CryptoKeyProvider
-	es               consumer.Consumer[kv[DT]]
+	es               consumer.Consumer[kv[T]]
 }
 
 type kv[DT any] struct {
@@ -39,10 +45,16 @@ type kv[DT any] struct {
 	Value DT     `json:"value"`
 }
 
-func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p stream.CryptoKeyProvider, ctx context.Context, opts ...func(event.Type, *DT)) (ed EventMap[DT], err error) {
-	es, err := consumer.New[kv[DT]](pers, p, ctx)
-	m := mapData[DT]{
-		data:             sync.NewMap[DT](),
+func Init[BT any, T bcts.ReadWriter[BT]](
+	pers stream.Stream,
+	eventType, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	ctx context.Context,
+	opts ...func(event.Type, *T),
+) (ed EventMap[BT, T], err error) {
+	es, err := consumer.New[kv[T]](pers, p, ctx)
+	m := mapData[BT, T]{
+		data:             sync.NewMap[BT, T](),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
@@ -67,10 +79,10 @@ func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p strea
 						opt(e.Type, &e.Data.Value)
 					}
 					if e.Type == event.Deleted {
-						m.data.Delete(e.Data.Key)
+						m.data.Delete(bcts.TinyString(e.Data.Key))
 						return
 					}
-					m.data.Set(e.Data.Key, e.Data.Value)
+					m.data.Set(bcts.TinyString(e.Data.Key), e.Data.Value)
 				}()
 			}
 		}
@@ -80,7 +92,12 @@ func Init[DT any](pers stream.Stream, eventType, dataTypeVersion string, p strea
 	return
 }
 
-func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error) {
+func (m *mapData[T, DT]) Stream(
+	eventTypes []event.Type,
+	from store.StreamPosition,
+	filter stream.Filter,
+	ctx context.Context,
+) (out <-chan event.Event[DT], err error) {
 	s, err := m.es.Stream(eventTypes, from, filter, ctx)
 	if err != nil {
 		return
@@ -106,7 +123,7 @@ func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition,
 
 var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
 
-func (m *mapData[DT]) Get(key string) (data DT, err error) {
+func (m *mapData[T, DT]) Get(key bcts.TinyString) (data DT, err error) {
 	ed, ok := m.data.Get(key)
 	if !ok {
 		err = ERROR_KEY_NOT_FOUND
@@ -115,13 +132,13 @@ func (m *mapData[DT]) Get(key string) (data DT, err error) {
 	return ed, nil
 }
 
-func (m *mapData[DT]) Len() (l int) {
+func (m *mapData[T, DT]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m *mapData[DT]) Keys() (keys []string) {
-	keys = make([]string, 0)
-	m.Range(func(k string, _ DT) bool {
+func (m *mapData[T, DT]) Keys() (keys []bcts.TinyString) {
+	keys = make([]bcts.TinyString, 0)
+	m.Range(func(k bcts.TinyString, _ DT) bool {
 		keys = append(keys, k)
 		return true
 	})
@@ -136,7 +153,7 @@ func (m *mapData[DT]) Keys() (keys []string) {
 // is stored or deleted concurrently (including by f), Range may reflect any
 // mapping for that key from any point during the Range call. Range does not
 // block other methods on the receiver; even f itself may call any method on m.
-func (m *mapData[DT]) Range(f func(key string, value DT) bool) {
+func (m *mapData[T, DT]) Range(f func(key bcts.TinyString, value DT) bool) {
 	for k, v := range m.GetMap() {
 		if !f(k, v) {
 			return
@@ -144,16 +161,19 @@ func (m *mapData[DT]) Range(f func(key string, value DT) bool) {
 	}
 }
 
-func (m *mapData[DT]) GetMap() map[string]DT {
+func (m *mapData[T, DT]) GetMap() map[bcts.TinyString]DT {
 	return m.data.GetMap()
 }
 
-func (m *mapData[DT]) Exists(key string) (exists bool) {
-	_, exists = m.data.Get(key)
+func (m *mapData[T, DT]) Exists(key bcts.TinyString) (exists bool) {
+	_, exists = m.data.Get(bcts.TinyString(key))
 	return
 }
 
-func (m *mapData[DT]) createEvent(key string, data DT) (e event.Event[kv[DT]], err error) {
+func (m *mapData[T, DT]) createEvent(
+	key bcts.TinyString,
+	data DT,
+) (e event.Event[kv[DT]], err error) {
 	eventType := event.Created
 	if m.Exists(key) {
 		eventType = event.Updated
@@ -162,28 +182,28 @@ func (m *mapData[DT]) createEvent(key string, data DT) (e event.Event[kv[DT]], e
 	e = event.Event[kv[DT]]{
 		Type: eventType,
 		Data: kv[DT]{
-			Key:   key,
+			Key:   string(key),
 			Value: data,
 		},
 		Metadata: event.Metadata{
 			Version:  m.eventTypeVersion,
 			DataType: m.eventTypeName,
-			Key:      crypto.SimpleHash(key),
+			Key:      crypto.SimpleHash(string(key)),
 		},
 	}
 	return
 }
 
-func (m *mapData[DT]) Delete(key string) (err error) {
+func (m *mapData[T, DT]) Delete(key bcts.TinyString) (err error) {
 	e := event.Event[kv[DT]]{
 		Type: event.Deleted,
 		Data: kv[DT]{
-			Key: key,
+			Key: string(key),
 		},
 		Metadata: event.Metadata{
 			Version:  m.eventTypeVersion,
 			DataType: m.eventTypeName,
-			Key:      crypto.SimpleHash(key),
+			Key:      crypto.SimpleHash(string(key)),
 		},
 	}
 	we := event.NewWriteEvent(e)
@@ -192,7 +212,7 @@ func (m *mapData[DT]) Delete(key string) (err error) {
 	return
 }
 
-func (m *mapData[DT]) Set(key string, data DT) (err error) {
+func (m *mapData[T, DT]) Set(key bcts.TinyString, data DT) (err error) {
 	log.Trace("Set and wait start", "key", key)
 	e, err := m.createEvent(key, data)
 	if err != nil {

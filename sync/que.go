@@ -1,32 +1,47 @@
 package sync
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"sync"
 
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 )
 
-type Que[T any] interface {
-	Push(data T)
-	Pop() (data T, ok bool)
-	Peek() (data T, ok bool)
+/*
+type Que[T any, RT bcts.ReadWriter[T]] interface {
+	Push(data RT)
+	Pop() (data RT, ok bool)
+	Peek() (data RT, ok bool)
 	Delete(is func(v T) bool)
 	HasData() <-chan struct{}
+	bcts.Writer
+}
+*/
+
+func NewQue[BT any, T bcts.ReadWriter[BT]]() *Que[BT, T] {
+	return &Que[BT, T]{signal: make(chan struct{})}
 }
 
-func NewQue[T any, RT bcts.ReadWriter[T]]() Que[T, RT] {
-	return &que[T, RT]{signal: make(chan struct{})}
+func QueFromReader[BT any, T bcts.ReadWriter[BT]](r io.Reader) (*Que[BT, T], error) {
+	q := Que[BT, T]{signal: make(chan struct{})}
+	err := q.ReadBytes(r)
+	if err != nil {
+		return nil, err
+	}
+	return &q, nil
 }
 
-type que[T any, RT bcts.ReadWriter[T]] struct {
+type Que[T any, RT bcts.ReadWriter[T]] struct {
 	signal chan struct{}
 	data   []RT
 	rwLock sync.RWMutex
 	has    bool
 }
 
-func (s *que[T]) Push(data T) {
+func (s *Que[BT, T]) Push(data T) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	s.data = append(s.data, data)
@@ -36,7 +51,7 @@ func (s *que[T]) Push(data T) {
 	}
 }
 
-func (s *que[T]) Pop() (data T, ok bool) {
+func (s *Que[BT, T]) Pop() (data T, ok bool) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	if len(s.data) == 0 {
@@ -54,7 +69,7 @@ func (s *que[T]) Pop() (data T, ok bool) {
 	return
 }
 
-func (s *que[T]) Delete(is func(v T) bool) {
+func (s *Que[BT, T]) Delete(is func(v T) bool) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	for i, v := range s.data {
@@ -68,7 +83,7 @@ func (s *que[T]) Delete(is func(v T) bool) {
 	}
 }
 
-func (s *que[T]) Peek() (data T, ok bool) {
+func (s *Que[BT, T]) Peek() (data T, ok bool) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	if len(s.data) == 0 {
@@ -77,6 +92,36 @@ func (s *que[T]) Peek() (data T, ok bool) {
 	return s.data[0], true
 }
 
-func (s *que[T]) HasData() <-chan struct{} {
+func (s *Que[BT, T]) HasData() <-chan struct{} {
 	return s.signal
+}
+
+func (s *Que[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+	s.rwLock.RLock()
+	defer s.rwLock.RUnlock()
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteSlice(w, s.data)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *Que[BT, T]) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid que version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadSlice(r, &s.data)
+	if err != nil {
+		return
+	}
+	return nil
 }

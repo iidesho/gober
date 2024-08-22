@@ -1,8 +1,9 @@
 package event
 
 import (
-	log "github.com/iidesho/bragi/sbragi"
 	"github.com/gofrs/uuid"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 )
 
 type builder struct {
@@ -17,7 +18,7 @@ type Builder interface {
 	WithData(data []byte) builder
 	WithMetadata(data Metadata) builder
 	BuildRead() (ev ByteReadEvent, err error)
-	BuildStore() (ev WriteEvent[[]byte], err error)
+	BuildStore() (ev WriteEvent[bcts.Bytes, *bcts.Bytes], err error)
 }
 
 func NewBuilder() Builder {
@@ -46,17 +47,18 @@ func (e builder) BuildRead() (ev ByteReadEvent, err error) {
 		return
 	}
 	e.Metadata.EventType = e.Type
+	d := bcts.Bytes(e.Data)
 	ev = ByteReadEvent{
-		Event: Event[[]byte]{
+		Event: Event[bcts.Bytes, *bcts.Bytes]{
 			Type:     e.Type,
-			Data:     e.Data,
+			Data:     &d,
 			Metadata: e.Metadata,
 		},
 	}
 	return
 }
 
-func (e builder) BuildStore() (ev WriteEvent[[]byte], err error) {
+func (e builder) BuildStore() (ev WriteEvent[bcts.Bytes, *bcts.Bytes], err error) {
 	if e.Type == "" {
 		log.Error("missing event type in builder")
 		err = ErrInvalidType
@@ -69,10 +71,11 @@ func (e builder) BuildStore() (ev WriteEvent[[]byte], err error) {
 		}
 	}
 	e.Metadata.EventType = e.Type
-	ev = WriteEvent[[]byte]{
-		event: Event[[]byte]{
+	d := bcts.Bytes(e.Data)
+	ev = WriteEvent[bcts.Bytes, *bcts.Bytes]{
+		event: Event[bcts.Bytes, *bcts.Bytes]{
 			Type:     e.Type,
-			Data:     e.Data,
+			Data:     &d,
 			Metadata: e.Metadata,
 		},
 	}

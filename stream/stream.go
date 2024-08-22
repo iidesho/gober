@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/mergedcontext"
 	jsoniter "github.com/json-iterator/go"
 
@@ -16,9 +17,9 @@ import (
 
 var json = jsoniter.ConfigDefault
 
-type eventService[T any] struct {
+type eventService[BT any, T bcts.ReadWriter[BT]] struct {
 	store  Stream
-	writes chan<- event.WriteEventReadStatus[T]
+	writes chan<- event.WriteEventReadStatus[BT, T]
 	ctx    context.Context
 }
 
@@ -44,9 +45,12 @@ func ReadDataType(t string) Filter {
 	return func(md event.Metadata) bool { return md.DataType != t }
 }
 
-func Init[T any](st Stream, ctx context.Context) (out FilteredStream[T], err error) {
-	writes := make(chan event.WriteEventReadStatus[T])
-	es := eventService[T]{
+func Init[BT any, T bcts.ReadWriter[BT]](
+	st Stream,
+	ctx context.Context,
+) (out FilteredStream[BT, T], err error) {
+	writes := make(chan event.WriteEventReadStatus[BT, T])
+	es := eventService[BT, T]{
 		store:  st,
 		writes: writes,
 		ctx:    ctx,
@@ -74,23 +78,23 @@ func Init[T any](st Stream, ctx context.Context) (out FilteredStream[T], err err
 	return
 }
 
-func (es eventService[T]) Write() chan<- event.WriteEventReadStatus[T] {
+func (es eventService[BT, T]) Write() chan<- event.WriteEventReadStatus[BT, T] {
 	return es.writes
 }
 
-func (es eventService[T]) Store(e event.Event[T]) (position uint64, err error) {
+func (es eventService[BT, T]) Store(e event.Event[BT, T]) (position uint64, err error) {
 	we := event.NewWriteEvent(e)
 	es.writes <- we
 	s := <-we.Done()
 	return s.Position, s.Error
 }
 
-func (es eventService[T]) Stream(
+func (es eventService[BT, T]) Stream(
 	eventTypes []event.Type,
 	from store.StreamPosition,
 	filter Filter,
 	ctx context.Context,
-) (out <-chan event.ReadEvent[T], err error) {
+) (out <-chan event.ReadEvent[BT, T], err error) {
 	filterEventTypes := len(eventTypes) > 0
 	ets := make(map[event.Type]struct{})
 	for _, eventType := range eventTypes {
@@ -102,7 +106,7 @@ func (es eventService[T]) Stream(
 		cancel()
 		return
 	}
-	eventChan := make(chan event.ReadEvent[T])
+	eventChan := make(chan event.ReadEvent[BT, T])
 	out = eventChan
 	go func() {
 		defer cancel()
@@ -140,8 +144,8 @@ func (es eventService[T]) Stream(
 					continue
 				}
 
-				eventChan <- event.ReadEvent[T]{
-					Event: event.Event[T]{
+				eventChan <- event.ReadEvent[BT, T]{
+					Event: event.Event[BT, T]{
 						Type:     t,
 						Data:     d,
 						Metadata: metadata,
@@ -156,15 +160,15 @@ func (es eventService[T]) Stream(
 	return
 }
 
-func (es eventService[T]) Name() string {
+func (es eventService[BT, T]) Name() string {
 	return es.store.Name()
 }
 
-func (es eventService[T]) End() (pos uint64, err error) {
+func (es eventService[BT, T]) End() (pos uint64, err error) {
 	return es.store.End()
 }
 
-func (es eventService[T]) FilteredEnd(
+func (es eventService[BT, T]) FilteredEnd(
 	eventTypes []event.Type,
 	filter Filter,
 ) (pos uint64, err error) {

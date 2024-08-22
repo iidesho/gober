@@ -1,54 +1,89 @@
 package competing
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"time"
 
+	"github.com/gofrs/uuid"
+	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
+	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/sync"
-	"github.com/gofrs/uuid"
 )
 
-type timeoutFunk[T any] func(v T) time.Duration
+type timeoutFunk[BT any, T bcts.ReadWriter[BT]] func(v T) time.Duration
 
-type service[T any] struct {
-	stream    consumer.Consumer[tm[T]]
-	cryptoKey stream.CryptoKeyProvider
-	dataType  string
-	//timeout        time.Duration
-	selector        uuid.UUID
+type service[BT any, T bcts.ReadWriter[BT]] struct {
+	stream          consumer.Consumer[tm[BT, T], *tm[BT, T]]
 	completed       sync.SLK
-	selectable      chan event.ReadEvent[tm[T]]
-	selectedOutput  chan ReadEventWAcc[T]
-	completedOutput chan event.ReadEvent[T]
-	writeStream     chan event.WriteEventReadStatus[T]
 	cons            consensus.Consensus
-	timeout         timeoutFunk[T]
 	ctx             context.Context
+	cryptoKey       stream.CryptoKeyProvider
+	selectable      chan event.ReadEvent[tm[BT, T], *tm[BT, T]]
+	selectedOutput  chan ReadEventWAcc[BT, T]
+	completedOutput chan event.ReadEvent[BT, T]
+	writeStream     chan event.WriteEventReadStatus[BT, T]
+	timeout         timeoutFunk[BT, T]
+	dataType        string
+	selector        uuid.UUID
 }
 
-type tm[T any] struct {
-	Id   uuid.UUID `json:"id"`
+type tm[BT any, T bcts.ReadWriter[BT]] struct {
 	Data T         `json:"data"`
+	Id   uuid.UUID `json:"id"`
 }
 
-func New[T any](
+func (s *tm[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteStaticBytes(w, s.Id[:])
+	if err != nil {
+		return
+	}
+	err = s.Data.WriteBytes(w)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *tm[BT, T]) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid tm version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadStaticBytes(r, s.Id[:])
+	if err != nil {
+		return
+	}
+	return nil
+}
+
+func New[BT any, T bcts.ReadWriter[BT]](
 	s stream.Stream,
 	consBuilder consensus.ConsBuilderFunc,
 	cryptoKey stream.CryptoKeyProvider,
 	from store.StreamPosition,
 	datatype string,
-	timeout timeoutFunk[T],
+	timeout timeoutFunk[BT, T],
 	ctx context.Context,
-) (out Consumer[T], err error) {
-	fs, err := consumer.New[tm[T]](s, cryptoKey, ctx)
+) (out Consumer[BT, T], err error) {
+	fs, err := consumer.New[tm[BT, T], *tm[BT, T]](s, cryptoKey, ctx)
 	if err != nil {
 		return
 	}
@@ -56,23 +91,23 @@ func New[T any](
 	if err != nil {
 		return
 	}
-	var t T
-	cons, err := consBuilder("competing_"+datatype, timeout(t))
+	var t BT
+	cons, err := consBuilder("competing_"+datatype, timeout(&t))
 	if err != nil {
 		return
 	}
 
-	c := service[T]{
+	c := service[BT, T]{
 		stream:    fs,
 		cryptoKey: cryptoKey,
 		dataType:  datatype,
 		//timeout:        timeoutDuration,
 		selector:        name,
 		completed:       sync.NewSLK(),
-		selectable:      make(chan event.ReadEvent[tm[T]], 100),
-		selectedOutput:  make(chan ReadEventWAcc[T], 0),
-		completedOutput: make(chan event.ReadEvent[T], 1024),
-		writeStream:     make(chan event.WriteEventReadStatus[T], 10),
+		selectable:      make(chan event.ReadEvent[tm[BT, T], *tm[BT, T]], 100),
+		selectedOutput:  make(chan ReadEventWAcc[BT, T], 0),
+		completedOutput: make(chan event.ReadEvent[BT, T], 1024),
+		writeStream:     make(chan event.WriteEventReadStatus[BT, T], 10),
 		cons:            cons,
 		timeout:         timeout,
 		ctx:             ctx,
@@ -87,9 +122,9 @@ func New[T any](
 		return
 	}
 	go c.readWrites()
-	timeoutChan := make(chan event.ReadEvent[tm[T]], 3)
+	timeoutChan := make(chan event.ReadEvent[tm[BT, T], *tm[BT, T]], 3)
 	go c.readStream(eventStream, timeoutChan)
-	timeouts := sync.NewQue[timedat[tm[T]]]()
+	timeouts := sync.NewQue[timedat[tm[BT, T], *tm[BT, T]], *timedat[tm[BT, T], *tm[BT, T]]]()
 	go c.timeoutManager(timeouts, timeoutChan)
 	go c.timeoutHandler(timeouts)
 	go c.selectableHandler(timeoutChan)
@@ -98,23 +133,51 @@ func New[T any](
 	return
 }
 
-type timedat[T any] struct {
-	e event.ReadEvent[T]
+type timedat[BT any, T bcts.ReadWriter[BT]] struct {
 	t time.Time
+	e event.ReadEvent[BT, T]
 }
 
-func (c *service[T]) timeoutManager(
-	timeouts sync.Que[timedat[tm[T]]],
-	events <-chan event.ReadEvent[tm[T]],
+func (s *timedat[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTime(w, s.t)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *timedat[BT, T]) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid timedat version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadTime(r, &s.t)
+	if err != nil {
+		return
+	}
+	return nil
+}
+
+func (c *service[BT, T]) timeoutManager(
+	timeouts *sync.Que[timedat[tm[BT, T], *tm[BT, T]], *timedat[tm[BT, T], *tm[BT, T]]],
+	events <-chan event.ReadEvent[tm[BT, T], *tm[BT, T]],
 ) {
 	for e := range events {
 		if e.Type == event.Deleted {
-			timeouts.Delete(func(v timedat[tm[T]]) bool {
+			timeouts.Delete(func(v *timedat[tm[BT, T], *tm[BT, T]]) bool {
 				return bytes.Equal(v.e.Data.Id.Bytes(), e.Data.Id.Bytes())
 			})
 			continue
 		}
-		timeouts.Push(timedat[tm[T]]{
+		timeouts.Push(&timedat[tm[BT, T], *tm[BT, T]]{
 			e: e,
 			t: time.Now().
 				Add(c.timeout(e.Data.Data)),
@@ -123,7 +186,9 @@ func (c *service[T]) timeoutManager(
 	}
 }
 
-func (c *service[T]) timeoutHandler(timeouts sync.Que[timedat[tm[T]]]) {
+func (c *service[BT, T]) timeoutHandler(
+	timeouts *sync.Que[timedat[tm[BT, T], *tm[BT, T]], *timedat[tm[BT, T], *tm[BT, T]]],
+) {
 	//timeouts := sync.NewMap[context.CancelFunc]()
 	for {
 		select {
@@ -166,27 +231,27 @@ func (c *service[T]) timeoutHandler(timeouts sync.Que[timedat[tm[T]]]) {
 	}
 }
 
-type seldat[T any] struct {
-	e      event.ReadEvent[T]
+type seldat[BT any, T bcts.ReadWriter[BT]] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	e      event.ReadEvent[BT, T]
 }
 
-func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
-	selectables := sync.NewQue[event.ReadEvent[tm[T]]]()
-	var selected *seldat[tm[T]]
+func (c *service[BT, T]) selectableHandler(timeout chan<- event.ReadEvent[tm[BT, T], *tm[BT, T]]) {
+	selectables := sync.NewQue[event.ReadEvent[tm[BT, T], *tm[BT, T]]]()
+	var selected *seldat[tm[BT, T], *tm[BT, T]]
 	//ctx, cancel := context.WithTimeout(c.ctx, c.timeout)
 	for {
 		if selected == nil {
 			select {
 			case e := <-c.selectable:
 				if e.Type == event.Deleted {
-					selectables.Delete(func(v event.ReadEvent[tm[T]]) bool {
+					selectables.Delete(func(v *event.ReadEvent[tm[BT, T], *tm[BT, T]]) bool {
 						return bytes.Equal(e.Data.Id.Bytes(), v.Data.Id.Bytes())
 					})
 				} else {
 					log.Trace("adding selectable event", "id", e.Data.Id.String())
-					selectables.Push(e)
+					selectables.Push(&e)
 				}
 			case <-selectables.HasData():
 				e, ok := selectables.Pop()
@@ -199,7 +264,7 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 					continue
 				}
 				log.Trace("competing")
-				timeout <- e
+				timeout <- *e
 				won := c.cons.Request(id) //Might need to difirentiate on won lost and completed
 				if !won {
 					//time.Sleep(time.Second)
@@ -208,8 +273,8 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 				}
 				log.Trace("won competition")
 				ctx, cancel := context.WithTimeout(c.ctx, c.timeout(e.Data.Data)) //c.timeout)
-				selected = &seldat[tm[T]]{
-					e:      e,
+				selected = &seldat[tm[BT, T], *tm[BT, T]]{
+					e:      *e,
 					ctx:    ctx,
 					cancel: cancel,
 				}
@@ -223,18 +288,18 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 					if bytes.Equal(selected.e.Data.Id.Bytes(), e.Data.Id.Bytes()) {
 						selected = nil
 					}
-					selectables.Delete(func(v event.ReadEvent[tm[T]]) bool {
+					selectables.Delete(func(v *event.ReadEvent[tm[BT, T], *tm[BT, T]]) bool {
 						return bytes.Equal(e.Data.Id.Bytes(), v.Data.Id.Bytes())
 					})
 				} else {
 					log.Trace("adding selectable event", "id", e.Data.Id.String())
-					selectables.Push(e)
+					selectables.Push(&e)
 				}
 			case <-selected.ctx.Done():
 				selected = nil
-			case c.selectedOutput <- ReadEventWAcc[T]{
-				ReadEvent: event.ReadEvent[T]{
-					Event: event.Event[T]{
+			case c.selectedOutput <- ReadEventWAcc[BT, T]{
+				ReadEvent: event.ReadEvent[BT, T]{
+					Event: event.Event[BT, T]{
 						Type:     selected.e.Type,
 						Data:     selected.e.Data.Data,
 						Metadata: selected.e.Metadata,
@@ -243,12 +308,12 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 					Created:  selected.e.Created,
 				},
 				CTX: selected.ctx,
-				Acc: func(cancel context.CancelFunc, e event.ReadEvent[tm[T]]) func(T) {
+				Acc: func(cancel context.CancelFunc, e event.ReadEvent[tm[BT, T], *tm[BT, T]]) func(T) {
 					return func(data T) {
 						cancel()
-						we := event.NewWriteEvent[tm[T]](event.Event[tm[T]]{
+						we := event.NewWriteEvent[tm[BT, T]](event.Event[tm[BT, T], *tm[BT, T]]{
 							Type: event.Deleted,
-							Data: tm[T]{
+							Data: &tm[BT, T]{
 								Id:   e.Data.Id,
 								Data: data,
 							}, //e.Data,
@@ -271,9 +336,9 @@ func (c *service[T]) selectableHandler(timeout chan<- event.ReadEvent[tm[T]]) {
 	}
 }
 
-func (c *service[T]) readStream(
-	events <-chan event.ReadEventWAcc[tm[T]],
-	timeout chan<- event.ReadEvent[tm[T]],
+func (c *service[BT, T]) readStream(
+	events <-chan event.ReadEventWAcc[tm[BT, T], *tm[BT, T]],
+	timeout chan<- event.ReadEvent[tm[BT, T], *tm[BT, T]],
 ) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -283,8 +348,8 @@ func (c *service[T]) readStream(
 	}()
 
 	es := map[string]struct {
+		event     event.ReadEvent[tm[BT, T], *tm[BT, T]]
 		completed bool
-		event     event.ReadEvent[tm[T]]
 	}{}
 	p := uint64(0)
 	end, err := c.End()
@@ -300,8 +365,8 @@ func (c *service[T]) readStream(
 			id := e.Event.Data.Id.String()
 			if !es[id].completed {
 				es[id] = struct {
+					event     event.ReadEvent[tm[BT, T], *tm[BT, T]]
 					completed bool
-					event     event.ReadEvent[tm[T]]
 				}{
 					completed: false,
 					event:     e.ReadEvent,
@@ -318,8 +383,8 @@ func (c *service[T]) readStream(
 	for k, v := range es {
 		if v.completed {
 			c.completed.Add(k, time.Hour*24*365) //c.timeout*30)
-			c.completedOutput <- event.ReadEvent[T]{
-				Event: event.Event[T]{
+			c.completedOutput <- event.ReadEvent[BT, T]{
+				Event: event.Event[BT, T]{
 					Type:     v.event.Type,
 					Data:     v.event.Data.Data,
 					Metadata: v.event.Metadata,
@@ -356,8 +421,8 @@ func (c *service[T]) readStream(
 			log.Trace("writing to timeout chan")
 			timeout <- e.ReadEvent
 			log.Trace("wrote to timeout chan")
-			c.completedOutput <- event.ReadEvent[T]{
-				Event: event.Event[T]{
+			c.completedOutput <- event.ReadEvent[BT, T]{
+				Event: event.Event[BT, T]{
 					Type:     e.Type,
 					Data:     e.Data.Data,
 					Metadata: e.Metadata,
@@ -370,7 +435,7 @@ func (c *service[T]) readStream(
 	}
 }
 
-func (c *service[T]) readWrites() {
+func (c *service[BT, T]) readWrites() {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("recovered", "error", r)
@@ -398,8 +463,8 @@ func (c *service[T]) readWrites() {
 			if we.Event().Metadata.Version == "" {
 				we.Event().Metadata.Version = "v0.0.0"
 			}
-			c.stream.Write() <- event.Map[T, tm[T]](we, func(t T) tm[T] {
-				return tm[T]{
+			c.stream.Write() <- event.Map(we, func(t T) *tm[BT, T] {
+				return &tm[BT, T]{
 					Id:   id,
 					Data: t,
 				}
@@ -409,22 +474,22 @@ func (c *service[T]) readWrites() {
 	}
 }
 
-func (c *service[T]) Write() chan<- event.WriteEventReadStatus[T] {
+func (c *service[BT, T]) Write() chan<- event.WriteEventReadStatus[BT, T] {
 	return c.writeStream
 }
 
-func (c *service[T]) Stream() <-chan ReadEventWAcc[T] {
+func (c *service[BT, T]) Stream() <-chan ReadEventWAcc[BT, T] {
 	return c.selectedOutput
 }
 
-func (c *service[T]) Completed() <-chan event.ReadEvent[T] {
+func (c *service[BT, T]) Completed() <-chan event.ReadEvent[BT, T] {
 	return c.completedOutput
 }
 
-func (c *service[T]) End() (pos uint64, err error) {
+func (c *service[BT, T]) End() (pos uint64, err error) {
 	return c.stream.FilteredEnd(event.AllTypes(), stream.ReadDataType(c.dataType))
 }
 
-func (c *service[T]) Name() string {
+func (c *service[BT, T]) Name() string {
 	return c.stream.Name()
 }

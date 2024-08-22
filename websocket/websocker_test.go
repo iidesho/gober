@@ -3,14 +3,15 @@ package websocket
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/webserver"
-	"github.com/gin-gonic/gin"
 )
 
 type TT struct {
@@ -28,23 +29,32 @@ func TestServe(t *testing.T) {
 		return
 	}
 	gt = t
-	Serve[TT](serv.API(), "/wstest", nil, func(reader <-chan TT, writer chan<- Write[TT], params gin.Params, ctx context.Context) {
-		defer close(writer)
-		wg.Add(1)
-		defer wg.Done()
-		for read := range reader {
-			errChan := make(chan error, 1)
-			writer <- Write[TT]{
-				Data: read,
-				Err:  errChan,
-			}
-			err := <-errChan
-			if err != nil {
-				gt.Error(err)
-				return
-			}
-		}
-	})
+	serv.API().
+		GET("/wstest", func(ctx *gin.Context) {
+			Serve[TT](
+				func(r *http.Request) bool { return true },
+				func(reader <-chan TT, writer chan<- Write[TT], r *http.Request, ctx context.Context) {
+					defer close(writer)
+					wg.Add(1)
+					defer wg.Done()
+					for read := range reader {
+						errChan := make(chan error, 1)
+						writer <- Write[TT]{
+							Data: read,
+							Err:  errChan,
+						}
+						err := <-errChan
+						if err != nil {
+							gt.Error(err)
+							return
+						}
+					}
+				},
+			)(
+				ctx.Writer,
+				ctx.Request,
+			)
+		})
 	go serv.Run()
 }
 

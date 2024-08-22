@@ -3,22 +3,23 @@ package persistenteventmap
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"os"
 
-	"github.com/iidesho/gober/stream/consumer"
-	"github.com/dgraph-io/badger/options"
-
 	"github.com/dgraph-io/badger"
-
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/dgraph-io/badger/options"
+	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
+	"github.com/iidesho/gober/stream/consumer"
+	jsoniter "github.com/json-iterator/go"
 
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 )
+
+var json = jsoniter.ConfigDefault
 
 type EventMap[DT any] interface {
 	Get(key string) (data DT, err error)
@@ -28,24 +29,35 @@ type EventMap[DT any] interface {
 	Range(f func(key string, data DT) error)
 	Delete(data DT) (err error)
 	Set(data DT) (err error)
-	Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error)
+	Stream(
+		eventTypes []event.Type,
+		from store.StreamPosition,
+		filter stream.Filter,
+		ctx context.Context,
+	) (out <-chan event.Event[bcts.Bytes, *bcts.Bytes], err error)
 }
 
 type transactionCheck struct {
 }
 
 type mapData[DT any] struct {
+	es              consumer.Consumer[bcts.Bytes, *bcts.Bytes]
+	ctx             context.Context
 	data            *badger.DB
 	transactionChan chan transactionCheck
+	provider        stream.CryptoKeyProvider
+	getKey          func(dt DT) string
 	dataTypeName    string
 	dataTypeVersion string
-	provider        stream.CryptoKeyProvider
-	es              consumer.Consumer[DT]
-	ctx             context.Context
-	getKey          func(dt DT) string
 }
 
-func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, getKey func(dt DT) string, ctx context.Context) (ed EventMap[DT], err error) {
+func Init[DT any](
+	s stream.Stream,
+	dataTypeName, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	getKey func(dt DT) string,
+	ctx context.Context,
+) (ed EventMap[DT], err error) {
 	path := "./eventmap/" + dataTypeName
 	os.MkdirAll(path, 0750)
 	db, err := badger.Open(badger.DefaultOptions(path).
@@ -57,7 +69,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	}
 	from := store.STREAM_START
 	positionKey := []byte(fmt.Sprintf("%s_%s_position", s.Name(), dataTypeName))
-	err = db.View(func(txn *badger.Txn) error {
+	_ = db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(positionKey)
 		if err != nil {
 			return err
@@ -73,7 +85,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 		from = store.StreamPosition(pos)
 		return nil
 	})
-	es, err := consumer.New[DT](s, p, ctx)
+	es, err := consumer.New[bcts.Bytes](s, p, ctx)
 	if err != nil {
 		return
 	}
@@ -96,9 +108,14 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 			case <-ctx.Done():
 				return
 			case e := <-eventChan:
+				var data DT
+				err := json.Unmarshal(*e.Data, &data)
+				if sbragi.WithError(err).Error("unmarshaling eventmap data") {
+					continue
+				}
 				if e.Type == event.Deleted {
 					err := db.Update(func(txn *badger.Txn) error {
-						err = txn.Delete([]byte(getKey(e.Data)))
+						err = txn.Delete([]byte(getKey(data)))
 						if err != nil {
 							return err
 						}
@@ -108,17 +125,13 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 						return txn.Set(positionKey, pos)
 					})
 					if err != nil {
-						log.WithError(err).Error("Delete error")
+						sbragi.WithError(err).Error("Delete error")
 						continue
 					}
 					e.Acc()
 				}
-				data, err := json.Marshal(e.Data)
-				if err != nil {
-					return
-				}
 				err = db.Update(func(txn *badger.Txn) error {
-					err = txn.Set([]byte(getKey(e.Data)), data)
+					err = txn.Set([]byte(getKey(data)), *e.Data)
 					if err != nil {
 						return err
 					}
@@ -128,7 +141,7 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 					return txn.Set(positionKey, pos)
 				})
 				if err != nil {
-					log.WithError(err).Error("Update error")
+					sbragi.WithError(err).Error("Update error")
 					continue
 				}
 				e.Acc()
@@ -140,12 +153,17 @@ func Init[DT any](s stream.Stream, dataTypeName, dataTypeVersion string, p strea
 	return
 }
 
-func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition, filter stream.Filter, ctx context.Context) (out <-chan event.Event[DT], err error) {
+func (m *mapData[DT]) Stream(
+	eventTypes []event.Type,
+	from store.StreamPosition,
+	filter stream.Filter,
+	ctx context.Context,
+) (out <-chan event.Event[bcts.Bytes, *bcts.Bytes], err error) {
 	s, err := m.es.Stream(eventTypes, from, filter, ctx)
 	if err != nil {
 		return
 	}
-	c := make(chan event.Event[DT])
+	c := make(chan event.Event[bcts.Bytes, *bcts.Bytes])
 	go func() {
 		for e := range s {
 			select {
@@ -160,7 +178,7 @@ func (m *mapData[DT]) Stream(eventTypes []event.Type, from store.StreamPosition,
 	return
 }
 
-var ERROR_KEY_NOT_FOUND = fmt.Errorf("provided key does not exist")
+var ErrKeyNotFound = fmt.Errorf("provided key does not exist")
 
 func (m *mapData[DT]) Get(key string) (data DT, err error) {
 	var ed []byte
@@ -238,16 +256,22 @@ func (m *mapData[DT]) Exists(key string) (exists bool) {
 	return err == nil
 }
 
-func (m *mapData[DT]) createEvent(data DT) (e event.Event[DT], err error) {
+func (m *mapData[DT]) createEvent(data DT) (e event.Event[bcts.Bytes, *bcts.Bytes], err error) {
 	key := m.getKey(data)
 	eventType := event.Created
 	if m.Exists(key) {
 		eventType = event.Updated
 	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		return event.Event[bcts.Bytes, *bcts.Bytes]{}, err
+	}
 
-	e = event.Event[DT]{
+	db := bcts.Bytes(b)
+
+	e = event.Event[bcts.Bytes, *bcts.Bytes]{
 		Type: eventType,
-		Data: data,
+		Data: &db,
 		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
@@ -258,9 +282,15 @@ func (m *mapData[DT]) createEvent(data DT) (e event.Event[DT], err error) {
 }
 
 func (m *mapData[DT]) Delete(data DT) (err error) {
-	e := event.Event[DT]{
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	db := bcts.Bytes(b)
+	e := event.Event[bcts.Bytes, *bcts.Bytes]{
 		Type: event.Deleted,
-		Data: data,
+		Data: &db,
 		Metadata: event.Metadata{
 			Version:  m.dataTypeVersion,
 			DataType: m.dataTypeName,
@@ -275,7 +305,7 @@ func (m *mapData[DT]) Delete(data DT) (err error) {
 }
 
 func (m *mapData[DT]) Set(data DT) (err error) {
-	log.Trace("Set and wait start")
+	sbragi.Trace("Set and wait start")
 	e, err := m.createEvent(data)
 	if err != nil {
 		return
@@ -283,6 +313,6 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
 	<-we.Done() //Missing error
-	log.Trace("Set and wait end")
+	sbragi.Trace("Set and wait end")
 	return
 }

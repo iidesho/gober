@@ -104,40 +104,131 @@ func (m *Metadata) ReadBytes(r io.Reader) (err error) {
 	return nil
 }
 
-type Event[T any] struct {
+type Event[BT any, T bcts.ReadWriter[BT]] struct {
 	Metadata Metadata `json:"metadata"`
 	Data     T        `json:"data"`
 	Type     Type     `json:"type"`
 }
 
-type ReadEvent[T any] struct {
+func (e Event[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0))
+	if err != nil {
+		return
+	}
+	err = e.Metadata.WriteBytes(w)
+	if err != nil {
+		return err
+	}
+	err = e.Data.WriteBytes(w)
+	if err != nil {
+		return err
+	}
+	err = e.Type.WriteBytes(w)
+	if err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+func (e *Event[BT, T]) ReadBytes(r io.Reader) (err error) {
+	var v uint8
+	err = bcts.ReadUInt8(r, &v)
+	if err != nil {
+		return
+	}
+	if v != 0 {
+		return fmt.Errorf("invalid event version, %s=%d, %s=%d", "expected", 0, "got", v)
+	}
+	err = e.Metadata.ReadBytes(r)
+	if err != nil {
+		return
+	}
+	err = e.Data.ReadBytes(r)
+	if err != nil {
+		return
+	}
+	err = e.Type.ReadBytes(r)
+	if err != nil {
+		return
+	}
+	return nil
+}
+
+type ReadEvent[BT any, T bcts.ReadWriter[BT]] struct {
 	Created time.Time `json:"created"`
-	Event[T]
+	Event[BT, T]
 	Position uint64 `json:"position"`
 }
 
-type ReadEventWAcc[T any] struct {
+func (e ReadEvent[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0))
+	if err != nil {
+		return
+	}
+	err = e.Event.WriteBytes(w)
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteTime(w, e.Created)
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteUInt64(w, e.Position)
+	if err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+func (e *ReadEvent[BT, T]) ReadBytes(r io.Reader) (err error) {
+	var v uint8
+	err = bcts.ReadUInt8(r, &v)
+	if err != nil {
+		return
+	}
+	if v != 0 {
+		return fmt.Errorf("invalid event version, %s=%d, %s=%d", "expected", 0, "got", v)
+	}
+	err = e.Event.ReadBytes(r)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadTime(r, &e.Created)
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadUInt64(r, &e.Position)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type ReadEventWAcc[BT any, T bcts.ReadWriter[BT]] struct {
 	CTX context.Context
 	Acc func()
-	ReadEvent[T]
+	ReadEvent[BT, T]
 }
 
-type WriteEvent[T any] struct {
+type WriteEvent[BT any, T bcts.ReadWriter[BT]] struct {
 	status chan store.WriteStatus
-	event  Event[T]
+	event  Event[BT, T]
 }
 
-type WriteEventReadStatus[T any] interface {
-	Event() *Event[T]
+type WriteEventReadStatus[BT any, T bcts.ReadWriter[BT]] interface {
+	Event() *Event[BT, T]
 	Done() <-chan store.WriteStatus
 	Close(store.WriteStatus)
 	Store() *store.WriteEvent
 	StatusChan() chan store.WriteStatus
 }
 
-func Map[OT, NT any](e WriteEventReadStatus[OT], f func(OT) NT) WriteEventReadStatus[NT] {
-	return &WriteEvent[NT]{
-		event: Event[NT]{
+func Map[OT, NT any, OOT bcts.ReadWriter[OT], NNT bcts.ReadWriter[NT]](
+	e WriteEventReadStatus[OT, OOT],
+	f func(OOT) NNT,
+) WriteEventReadStatus[NT, NNT] {
+	return &WriteEvent[NT, NNT]{
+		event: Event[NT, NNT]{
 			Type:     e.Event().Type,
 			Data:     f(e.Event().Data),
 			Metadata: e.Event().Metadata,
@@ -146,22 +237,24 @@ func Map[OT, NT any](e WriteEventReadStatus[OT], f func(OT) NT) WriteEventReadSt
 	}
 }
 
-func NewWriteEvent[T any](e Event[T]) WriteEventReadStatus[T] { // Dont think i like this
-	return &WriteEvent[T]{
+func NewWriteEvent[BT any, T bcts.ReadWriter[BT]](
+	e Event[BT, T],
+) WriteEventReadStatus[BT, T] { //Dont think i like this
+	return &WriteEvent[BT, T]{
 		event:  e,
 		status: make(chan store.WriteStatus, 1),
 	}
 }
 
-func (e *WriteEvent[T]) Event() *Event[T] {
+func (e *WriteEvent[BT, T]) Event() *Event[BT, T] {
 	return &e.event
 }
 
-func (e *WriteEvent[T]) Done() <-chan store.WriteStatus {
+func (e *WriteEvent[BT, T]) Done() <-chan store.WriteStatus {
 	return e.status
 }
 
-func (e *WriteEvent[T]) Close(status store.WriteStatus) {
+func (e *WriteEvent[BT, T]) Close(status store.WriteStatus) {
 	if e.status == nil {
 		return
 	}
@@ -169,11 +262,11 @@ func (e *WriteEvent[T]) Close(status store.WriteStatus) {
 	close(e.status)
 }
 
-func (e *WriteEvent[T]) StatusChan() chan store.WriteStatus {
+func (e *WriteEvent[BT, T]) StatusChan() chan store.WriteStatus {
 	return e.status
 }
 
-func (e *WriteEvent[T]) Store() *store.WriteEvent {
+func (e *WriteEvent[BT, T]) Store() *store.WriteEvent {
 	/*
 		mByte, err := json.Marshal(e.event.Metadata)
 		if err != nil {
@@ -212,8 +305,6 @@ func (e *WriteEvent[T]) Store() *store.WriteEvent {
 	}
 }
 
-type (
-	ByteEvent      Event[[]byte]
-	ByteWriteEvent WriteEvent[[]byte]
-	ByteReadEvent  ReadEvent[[]byte]
-)
+type ByteEvent Event[bcts.Bytes, *bcts.Bytes]
+type ByteWriteEvent WriteEvent[bcts.Bytes, *bcts.Bytes]
+type ByteReadEvent ReadEvent[bcts.Bytes, *bcts.Bytes]

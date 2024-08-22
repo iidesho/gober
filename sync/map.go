@@ -1,46 +1,65 @@
 package sync
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"sync"
 
+	"github.com/iidesho/gober/bcts"
 	"golang.org/x/exp/maps"
 )
 
-type Map[T any] interface {
-	Set(key string, data T)
-	Get(key string) (data T, ok bool)
-	GetOrInit(key string, init func() T) (data T, isNew bool)
-	GetMap() map[string]T
-	Delete(key string)
-	CompareAndSwap(key string, n T, swap func(stored T) bool) (swapped bool)
+/*
+type Map[T bcts.Writer, T bcts.ReadWriter[T]] interface {
+	Set(key bcts.TinyString, data T)
+	Get(key bcts.TinyString) (data T, ok bool)
+	GetOrInit(key bcts.TinyString, init func() T) (data T, isNew bool)
+	GetMap() map[bcts.TinyString]T
+	Delete(key bcts.TinyString)
+	CompareAndSwap(key bcts.TinyString, n T, swap func(stored T) bool) (swapped bool)
+	WriteBytes(w *bufio.Writer) (err error)
 }
+*/
 
-func NewMap[T any]() Map[T] {
-	return &sMap[T]{
+func NewMap[BT any, T bcts.ReadWriter[BT]]() *Map[BT, T] {
+	return &Map[BT, T]{
 		rwLock: sync.RWMutex{},
-		data:   make(map[string]T),
+		data:   make(map[bcts.TinyString]T),
 	}
 }
 
-type sMap[T any] struct {
-	data   map[string]T
+func MapFromReader[BT any, T bcts.ReadWriter[BT]](r io.Reader) (*Map[BT, T], error) {
+	m := Map[BT, T]{
+		rwLock: sync.RWMutex{},
+		data:   make(map[bcts.TinyString]T),
+	}
+	err := m.ReadBytes(r)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+type Map[BT any, T bcts.ReadWriter[BT]] struct {
+	data   map[bcts.TinyString]T
 	rwLock sync.RWMutex
 }
 
-func (s *sMap[T]) Set(key string, data T) {
+func (s *Map[BT, T]) Set(key bcts.TinyString, data T) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	s.data[key] = data
 }
 
-func (s *sMap[T]) Get(key string) (data T, ok bool) {
+func (s *Map[BT, T]) Get(key bcts.TinyString) (data T, ok bool) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	data, ok = s.data[key]
 	return
 }
 
-func (s *sMap[T]) GetOrInit(key string, init func() T) (T, bool) {
+func (s *Map[BT, T]) GetOrInit(key bcts.TinyString, init func() T) (T, bool) {
 	//This somehow breaks the consesus algorighm, so even though we don't want to take a write lock here, we do it so that we don't need to debug that now.
 	/*
 		data, ok := s.Get(key)
@@ -60,13 +79,13 @@ func (s *sMap[T]) GetOrInit(key string, init func() T) (T, bool) {
 	return data, !ok
 }
 
-func (s *sMap[T]) GetMap() (data map[string]T) {
+func (s *Map[BT, T]) GetMap() (data map[bcts.TinyString]T) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	return maps.Clone(s.data)
 }
 
-func (s *sMap[T]) Delete(key string) {
+func (s *Map[BT, T]) Delete(key bcts.TinyString) {
 	_, ok := s.Get(key)
 	if !ok {
 		return
@@ -77,7 +96,11 @@ func (s *sMap[T]) Delete(key string) {
 	return
 }
 
-func (s *sMap[T]) CompareAndSwap(key string, n T, swap func(stored T) bool) (swapped bool) {
+func (s *Map[BT, T]) CompareAndSwap(
+	key bcts.TinyString,
+	n T,
+	swap func(stored T) bool,
+) (swapped bool) {
 	stored, ok := s.Get(key)
 	if ok && !swap(stored) {
 		return
@@ -90,4 +113,34 @@ func (s *sMap[T]) CompareAndSwap(key string, n T, swap func(stored T) bool) (swa
 		return true
 	}
 	return
+}
+
+func (s *Map[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+	s.rwLock.RLock()
+	defer s.rwLock.RUnlock()
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteMap(w, s.data)
+	if err != nil {
+		return
+	}
+	return w.Flush()
+}
+
+func (s *Map[BT, T]) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid slice version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	//err = bcts.ReadMap[bcts.TinyString, *bcts.TinyString, T, T](r, &s.data)
+	if err != nil {
+		return
+	}
+	return nil
 }

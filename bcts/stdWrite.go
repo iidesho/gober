@@ -165,3 +165,17 @@ func WriteMap[K ComparableWriter, T Writer](w io.Writer, m map[K]T) error {
 	}
 	return nil
 }
+
+func WriteSlice[T Writer, TI ~[]T](w *bufio.Writer, s TI) error {
+	err := WriteInt32(w, int32(len(s)))
+	if err != nil {
+		return err
+	}
+	for _, v := range s {
+		err = v.WriteBytes(w)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

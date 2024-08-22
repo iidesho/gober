@@ -8,6 +8,7 @@ import (
 	"time"
 
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/sync"
 	"github.com/iidesho/gober/webserver"
 )
@@ -18,7 +19,7 @@ type Consensus interface {
 }
 
 type consensus struct {
-	reqs sync.Map[sync.Stack[*topic]]
+	reqs *sync.Map[sync.Stack[topic, *topic], *sync.Stack[topic, *topic]]
 
 	topic   string
 	timeout time.Duration
@@ -27,7 +28,7 @@ type consensus struct {
 }
 
 func (cons *consensus) Request(id string) bool {
-	crs, isNew := cons.reqs.GetOrInit(id, sync.NewStack[*topic])
+	crs, isNew := cons.reqs.GetOrInit(bcts.TinyString(id), sync.NewStack[topic, *topic])
 	if !isNew {
 		cr, ok := crs.Peek()
 		if ok && (cr.State == Completed || cr.Timeout.After(time.Now())) {
@@ -50,14 +51,20 @@ func (cons *consensus) Request(id string) bool {
 	b, _ := json.Marshal(cr) //Should not be able to error
 	for _, ip := range cons.disc.Servers() {
 		func() {
-			req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:%d/%s/%s/consent", ip, cons.port, cons.topic, id), bytes.NewBuffer(b))
+			req, err := http.NewRequest(
+				"POST",
+				fmt.Sprintf("http://%s:%d/%s/%s/consent", ip, cons.port, cons.topic, id),
+				bytes.NewBuffer(b),
+			)
 			req.Header.Set(webserver.AUTHORIZATION, cons.token)
 			req.Header.Set(webserver.CONTENT_TYPE, webserver.CONTENT_TYPE_JSON)
 
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			if err != nil {
-				log.WithoutEscalation().WithError(err).Warning("while requesting consent", "topic", cons.topic, "id", id)
+				log.WithoutEscalation().
+					WithError(err).
+					Warning("while requesting consent", "topic", cons.topic, "id", id)
 				return
 			}
 			defer resp.Body.Close()
@@ -102,7 +109,15 @@ func (cons *consensus) Request(id string) bool {
 	}
 	crStored, _ := crs.Peek()
 	if crStored.Requester != cr.Requester || !crStored.Timeout.Equal(cr.Timeout) {
-		log.Debug("request state", "stored", crStored, "req", cr, "timeout", crStored.Timeout.Round(time.Microsecond))
+		log.Debug(
+			"request state",
+			"stored",
+			crStored,
+			"req",
+			cr,
+			"timeout",
+			crStored.Timeout.Round(time.Microsecond),
+		)
 		return false
 	}
 	log.Trace("consent request finished", "consent", cr)
@@ -117,7 +132,7 @@ func (cons *consensus) Request(id string) bool {
 }
 
 func (cons *consensus) Completed(id string) {
-	crs, ok := cons.reqs.Get(id)
+	crs, ok := cons.reqs.Get(bcts.TinyString(id))
 	if !ok {
 		log.Warning("compleded a non existing consensus", "topic", cons.topic, "id", id)
 		return
