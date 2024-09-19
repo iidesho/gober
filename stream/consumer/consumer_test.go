@@ -3,6 +3,7 @@ package consumer_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 
@@ -18,11 +19,11 @@ import (
 )
 
 var (
-	c               consumer.Consumer[dd]
+	c               consumer.Consumer[dd, *dd]
 	ctxGlobal       context.Context
 	ctxGlobalCancel context.CancelFunc
 	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
-	events          = make(map[int]event.ReadEvent[dd])
+	events          = make(map[int]event.ReadEvent[dd, *dd])
 )
 
 var STREAM_NAME = "TestConsumer_" + uuid.Must(uuid.NewV7()).String()
@@ -32,8 +33,44 @@ type md struct {
 }
 
 type dd struct {
-	Id   int    `json:"id"`
 	Name string `json:"name"`
+	Id   int16  `json:"id"`
+}
+
+func (d dd) WriteBytes(w io.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteInt16(w, d.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTinyString(w, d.Name)
+	if err != nil {
+		return
+	}
+	return nil
+}
+
+func (d *dd) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid slice version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadInt16(r, &d.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadTinyString(r, &d.Name)
+	if err != nil {
+		return
+	}
+	return nil
 }
 
 func cryptKeyProvider(_ string) string {
@@ -52,7 +89,6 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	return
 }
 
 func TestStoreOrder(t *testing.T) {
@@ -63,7 +99,7 @@ func TestStoreOrder(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	for i := 1; i <= 5; i++ {
+	for i := int16(1); i <= 5; i++ {
 		data := dd{
 			Id:   i,
 			Name: "test",
@@ -71,9 +107,9 @@ func TestStoreOrder(t *testing.T) {
 		meta := md{
 			Extra: bcts.SmallBytes("extra metadata test"),
 		}
-		e := event.Event[dd]{
+		e := event.Event[dd, *dd]{
 			Type: event.Created,
-			Data: data,
+			Data: &data,
 			Metadata: event.Metadata{
 				Extra: map[bcts.TinyString]bcts.SmallBytes{"extra": meta.Extra},
 			},
@@ -83,7 +119,7 @@ func TestStoreOrder(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			read := <-readEventStream
-			events[read.Data.Id] = read.ReadEvent
+			events[int(read.Data.Id)] = read.ReadEvent
 			read.Acc()
 		}()
 		we := event.NewWriteEvent(e)
@@ -95,12 +131,11 @@ func TestStoreOrder(t *testing.T) {
 		}
 		wg.Wait()
 	}
-	return
 }
 
 func TestStreamOrder(t *testing.T) {
-	for i := 1; i <= 5; i++ {
-		e := events[i]
+	for i := int16(1); i <= 5; i++ {
+		e := events[int(i)]
 		if e.Type != event.Created {
 			t.Error(fmt.Errorf("missmatch event types"))
 			return
@@ -122,7 +157,6 @@ func TestStreamOrder(t *testing.T) {
 			return
 		}
 	}
-	return
 }
 
 func TestTairdown(t *testing.T) {
@@ -138,7 +172,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	c, err := consumer.New[[]byte](pers, cryptKeyProvider, ctx)
+	c, err := consumer.New[bcts.SmallBytes](pers, cryptKeyProvider, ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -148,7 +182,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	events := make([]event.WriteEventReadStatus[[]byte], b.N)
+	events := make([]event.WriteEventReadStatus[bcts.SmallBytes, *bcts.SmallBytes], b.N)
 	go func() {
 		for i := 0; i < b.N; i++ {
 			e := <-readEventStream
@@ -168,9 +202,10 @@ func BenchmarkStoreAndStream(b *testing.B) {
 	writeEventStream := c.Write()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		we := event.NewWriteEvent(event.Event[[]byte]{
+		d := bcts.SmallBytes(make([]byte, 1024))
+		we := event.NewWriteEvent(event.Event[bcts.SmallBytes, *bcts.SmallBytes]{
 			Type: event.Created,
-			Data: make([]byte, 1024),
+			Data: &d,
 			Metadata: event.Metadata{
 				Extra: map[bcts.TinyString]bcts.SmallBytes{
 					"extra": bcts.SmallBytes("extra metadata test"),

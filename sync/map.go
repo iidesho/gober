@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"sync"
@@ -115,7 +114,7 @@ func (s *Map[BT, T]) CompareAndSwap(
 	return
 }
 
-func (s *Map[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+func (s *Map[BT, T]) WriteBytes(w io.Writer) (err error) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
@@ -126,7 +125,7 @@ func (s *Map[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (s *Map[BT, T]) ReadBytes(r io.Reader) (err error) {

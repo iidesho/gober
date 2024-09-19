@@ -18,6 +18,10 @@ func (b *TinyBytes) ReadBytes(r io.Reader) error {
 	return ReadTinyBytes(r, b)
 }
 
+func (b TinyBytes) Bytes() []byte {
+	return b
+}
+
 func (b SmallBytes) WriteBytes(w io.Writer) error {
 	return WriteSmallBytes(w, b)
 }
@@ -26,10 +30,18 @@ func (b *SmallBytes) ReadBytes(r io.Reader) error {
 	return ReadSmallBytes(r, b)
 }
 
+func (b SmallBytes) Bytes() []byte {
+	return b
+}
+
 func (b Bytes) WriteBytes(w io.Writer) error {
 	return WriteBytes(w, b)
 }
 
 func (b *Bytes) ReadBytes(r io.Reader) error {
 	return ReadBytes(r, b)
+}
+
+func (b Bytes) Bytes() []byte {
+	return b
 }

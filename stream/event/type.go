@@ -1,7 +1,6 @@
 package event
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 
@@ -10,7 +9,7 @@ import (
 
 type Type string
 
-func (t Type) WriteBytes(w *bufio.Writer) (err error) {
+func (t Type) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
 	if err != nil {
 		return
@@ -19,7 +18,7 @@ func (t Type) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (t *Type) ReadBytes(r io.Reader) (err error) {

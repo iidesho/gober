@@ -48,6 +48,10 @@ func TestSyncMap_WriteReadBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	w.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
 	smap, err = MapFromReader[bcts.TinyString](buf)
 	if err != nil {
 		t.Fatal(err)

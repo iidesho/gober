@@ -1,14 +1,13 @@
 package bcts
 
 import (
-	"bufio"
 	"io"
 	"time"
 )
 
 type Time time.Time
 
-func (t Time) WriteBytes(w *bufio.Writer) error {
+func (t Time) WriteBytes(w io.Writer) error {
 	return WriteTime(w, t.Time())
 }
 

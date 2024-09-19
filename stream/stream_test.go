@@ -7,12 +7,12 @@ import (
 	"log"
 	"testing"
 
+	"github.com/gofrs/uuid"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 	"github.com/iidesho/gober/stream/event/store/ondisk"
-	"github.com/gofrs/uuid"
 	jsoniter "github.com/json-iterator/go"
 
 	"github.com/iidesho/bragi/sbragi"
@@ -20,7 +20,7 @@ import (
 
 var json = jsoniter.ConfigDefault
 
-var es stream.FilteredStream[[]byte]
+var es stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 
@@ -44,7 +44,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	est, err := stream.Init[[]byte](pers, ctxGlobal)
+	est, err := stream.Init[bcts.Bytes](pers, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
@@ -112,11 +112,11 @@ func TestStreamOrder(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		e := <-stream
 		var data dd
-		err = json.Unmarshal(e.Data, &data)
+		err = json.Unmarshal(e.Data.Bytes(), &data)
 		sbragi.WithError(err).Debug("stream data", "i", i, "event", e, "data", data)
 		if err != nil {
 			log.Fatal("I AM HIT!")
-			t.Error(err, string(e.Data))
+			t.Error(err, string(e.Data.Bytes()))
 			t.Fail()
 			t.Fatal(err)
 			return
@@ -195,7 +195,7 @@ func TestStreamDuplicate(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		e := <-stream
 		var data dd
-		err = json.Unmarshal(e.Data, &data)
+		err = json.Unmarshal(e.Data.Bytes(), &data)
 		if err != nil {
 			t.Error(err)
 			return
@@ -236,12 +236,12 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	est, err := stream.Init[[]byte](pers, ctx)
+	est, err := stream.Init[bcts.Bytes](pers, ctx)
 	if err != nil {
 		b.Error(err)
 		return
 	}
-	events := make([]event.WriteEventReadStatus[[]byte], b.N)
+	events := make([]event.WriteEventReadStatus[bcts.Bytes, *bcts.Bytes], b.N)
 	for i := 0; i < b.N; i++ {
 		data := dd{
 			Id:   i,
@@ -296,7 +296,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			b.Error(fmt.Errorf("missmatch event types"))
 			return
 		}
-		if !bytes.Equal(e.Data, events[i].Event().Data) {
+		if !bytes.Equal(e.Data.Bytes(), events[i].Event().Data.Bytes()) {
 			b.Error(fmt.Errorf("missmatch event data, %v != %v", e.Data, events[i].Event().Data))
 			return
 		}

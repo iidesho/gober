@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"sync"
@@ -61,7 +60,7 @@ func (s *slk) Delete(key string) {
 	delete(s.data, bcts.TinyString(key))
 }
 
-func (s *slk) WriteBytes(w *bufio.Writer) (err error) {
+func (s *slk) WriteBytes(w io.Writer) (err error) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
@@ -72,7 +71,7 @@ func (s *slk) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (s *slk) ReadBytes(r io.Reader) (err error) {

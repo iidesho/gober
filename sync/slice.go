@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"reflect"
@@ -97,7 +96,7 @@ func (s *slice[T]) Delete(i int) (d T) {
 	return
 }
 
-func (s *slice[T]) WriteBytes(w *bufio.Writer) (err error) {
+func (s *slice[T]) WriteBytes(w io.Writer) (err error) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
@@ -108,7 +107,7 @@ func (s *slice[T]) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (s *slice[T]) ReadBytes(r io.Reader) (err error) {

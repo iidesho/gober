@@ -1,7 +1,6 @@
 package consensus
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"strings"
@@ -41,7 +40,7 @@ type topic struct {
 	Conseeding *time.Time `json:"conseeding,omitempty" xml:"conseeding"     html:"conseeding"`
 }
 
-func (t topic) WriteBytes(w *bufio.Writer) (err error) {
+func (t topic) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
 	if err != nil {
 		return
@@ -74,7 +73,7 @@ func (t topic) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (t *topic) ReadBytes(r io.Reader) (err error) {
@@ -135,7 +134,7 @@ type Consent struct {
 	Ip string
 }
 
-func (c Consent) WriteBytes(w *bufio.Writer) (err error) {
+func (c Consent) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
 	if err != nil {
 		return
@@ -148,7 +147,7 @@ func (c Consent) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (c *Consent) ReadBytes(r io.Reader) (err error) {

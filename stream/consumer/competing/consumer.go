@@ -1,7 +1,6 @@
 package competing
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -42,7 +41,7 @@ type tm[BT any, T bcts.ReadWriter[BT]] struct {
 	Id   uuid.UUID `json:"id"`
 }
 
-func (s *tm[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+func (s *tm[BT, T]) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
 	if err != nil {
 		return
@@ -55,7 +54,7 @@ func (s *tm[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (s *tm[BT, T]) ReadBytes(r io.Reader) (err error) {
@@ -138,7 +137,7 @@ type timedat[BT any, T bcts.ReadWriter[BT]] struct {
 	e event.ReadEvent[BT, T]
 }
 
-func (s *timedat[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+func (s *timedat[BT, T]) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
 	if err != nil {
 		return
@@ -147,7 +146,7 @@ func (s *timedat[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (s *timedat[BT, T]) ReadBytes(r io.Reader) (err error) {

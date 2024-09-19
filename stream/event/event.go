@@ -26,7 +26,7 @@ type Metadata struct {
 	Key       string                              `json:"key"`
 }
 
-func (m Metadata) WriteBytes(w *bufio.Writer) (err error) {
+func (m Metadata) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0))
 	if err != nil {
 		return
@@ -59,7 +59,7 @@ func (m Metadata) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	return w.Flush()
+	return nil
 }
 
 func (m *Metadata) ReadBytes(r io.Reader) (err error) {
@@ -110,7 +110,7 @@ type Event[BT any, T bcts.ReadWriter[BT]] struct {
 	Type     Type     `json:"type"`
 }
 
-func (e Event[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+func (e Event[BT, T]) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0))
 	if err != nil {
 		return
@@ -127,7 +127,7 @@ func (e Event[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	return w.Flush()
+	return nil
 }
 
 func (e *Event[BT, T]) ReadBytes(r io.Reader) (err error) {
@@ -160,7 +160,7 @@ type ReadEvent[BT any, T bcts.ReadWriter[BT]] struct {
 	Position uint64 `json:"position"`
 }
 
-func (e ReadEvent[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
+func (e ReadEvent[BT, T]) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0))
 	if err != nil {
 		return
@@ -177,7 +177,7 @@ func (e ReadEvent[BT, T]) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	return w.Flush()
+	return nil
 }
 
 func (e *ReadEvent[BT, T]) ReadBytes(r io.Reader) (err error) {
@@ -278,7 +278,11 @@ func (e *WriteEvent[BT, T]) Store() *store.WriteEvent {
 		}
 	*/
 	mByte := bytes.NewBuffer([]byte{})
-	err := e.event.Metadata.WriteBytes(bufio.NewWriter(mByte))
+	bw := bufio.NewWriter(mByte)
+	err := e.event.Metadata.WriteBytes(bw)
+	if err == nil {
+		err = bw.Flush()
+	}
 	if err != nil {
 		log.WithError(err).Error("while marshaling metadata")
 		e.Close(store.WriteStatus{

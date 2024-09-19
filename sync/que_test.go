@@ -29,6 +29,10 @@ func TestQue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	err = w.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
 	q, err = QueFromReader[bcts.TinyString](buf)
 	if err != nil {
 		t.Fatal(err)

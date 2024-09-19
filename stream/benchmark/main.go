@@ -63,7 +63,7 @@ func main() {
 			return
 		}
 	}
-	c, err := stream.Init[[]byte](pers, ctx)
+	c, err := stream.Init[bcts.SmallBytes](pers, ctx)
 	if err != nil {
 		log.WithError(err).Fatal("while creating consumer")
 		return
@@ -116,9 +116,10 @@ func main() {
 		)
 	}(time.Now())
 	// writeEventStream := c.Write()
-	we := event.NewWriteEvent(event.Event[[]byte]{
+	b := bcts.SmallBytes(make([]byte, eventSize))
+	we := event.NewWriteEvent(event.Event[bcts.SmallBytes, *bcts.SmallBytes]{
 		Type: event.Created,
-		Data: make([]byte, eventSize),
+		Data: &b,
 		Metadata: event.Metadata{
 			Extra: map[bcts.TinyString]bcts.SmallBytes{"extra": []byte("extra metadata test")},
 		},

@@ -1,7 +1,6 @@
 package competing_test
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -40,7 +39,7 @@ type dd struct {
 	Id   int16  `json:"id"`
 }
 
-func (s dd) WriteBytes(w *bufio.Writer) (err error) {
+func (s dd) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0)) //Version
 	if err != nil {
 		return
@@ -53,7 +52,7 @@ func (s dd) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (s *dd) ReadBytes(r io.Reader) (err error) {
