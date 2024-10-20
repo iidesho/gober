@@ -3,6 +3,7 @@ package persistenteventmapttl
 import (
 	"context"
 	"fmt"
+	"iter"
 
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/storage"
@@ -31,6 +32,23 @@ type mapData[DT any] struct {
 	es              consumer.Consumer[bcts.Bytes, *bcts.Bytes]
 	ctx             context.Context
 	getKey          func(dt DT) string
+}
+
+type EventMap[DT any] interface {
+	Get(key string) (data DT, err error)
+	Exists(key string) (exists bool)
+	//Len() (l int)
+	//Keys() (keys []string)
+	//Range(f func(key string, data DT) error)
+	Delete(data DT) (err error)
+	Set(data DT) (err error)
+	Stream(
+		eventTypes []event.Type,
+		from store.StreamPosition,
+		filter stream.Filter,
+		ctx context.Context,
+	) (out <-chan event.Event[bcts.Bytes, *bcts.Bytes], err error)
+	Range() iter.Seq2[string, DT]
 }
 
 func Init[DT any](
@@ -190,4 +208,8 @@ func (m *mapData[DT]) Set(data DT) (err error) {
 	<-we.Done() //Missing error
 	sbragi.Trace("Set and wait end")
 	return
+}
+
+func (m *mapData[DT]) Range() iter.Seq2[string, DT] {
+	return m.data.Range()
 }

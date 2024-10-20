@@ -3,10 +3,12 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/stream/consumer/competing"
 
@@ -16,18 +18,18 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-type Tasks[DT any] interface {
-	Create(string, time.Time, time.Duration, DT) error
+type Tasks[BT, T any] interface {
+	Create(string, time.Time, time.Duration, T) error
 	Tasks() (tasks []TaskMetadata)
 }
 
-type scheduledtasks[DT any] struct {
+type scheduledtasks[BT any, T bcts.ReadWriter[BT]] struct {
 	dataType string
 	version  string
 	timeout  time.Duration
 	provider stream.CryptoKeyProvider
 	ctx      context.Context
-	es       competing.Consumer[tm[DT]]
+	es       competing.Consumer[tm[BT, T], *tm[BT, T]]
 	taskLock sync.Mutex
 	tasks    []TaskMetadata
 }
@@ -41,53 +43,119 @@ type TaskMetadata struct {
 	Interval time.Duration `json:"interval"`
 }
 
-type tm[DT any] struct {
-	Task     DT
+func (t TaskMetadata) WriteBytes(w io.Writer) error {
+	err := bcts.WriteSmallString(w, t.Id)
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteTime(w, t.After)
+	if err != nil {
+		return err
+	}
+	return bcts.WriteInt64(w, t.Interval)
+}
+
+func (t *TaskMetadata) ReadBytes(r io.Reader) error {
+	err := bcts.ReadSmallString(r, &t.Id)
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadTime(r, &t.After)
+	if err != nil {
+		return err
+	}
+	return bcts.ReadInt64(r, &t.Interval)
+}
+
+type tm[BT any, T bcts.ReadWriter[BT]] struct {
+	Task     T
 	Metadata TaskMetadata
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
+func (t tm[BT, T]) WriteBytes(w io.Writer) error {
+	err := t.Metadata.WriteBytes(w)
+	if err != nil {
+		return err
+	}
+	return t.Task.WriteBytes(w)
+}
+
+func (t *tm[BT, T]) ReadBytes(r io.Reader) error {
+	err := t.Metadata.ReadBytes(r)
+	if err != nil {
+		return err
+	}
+	return t.Task.ReadBytes(r)
+}
+
 const timeoutOffsett = time.Second * 5
 
-func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTypeName, dataTypeVersion string, p stream.CryptoKeyProvider, execute func(DT, context.Context) bool, timeout time.Duration, skipable bool, workers int, ctx context.Context) (ed Tasks[DT], err error) {
+func Init[BT any, T bcts.ReadWriter[BT]](
+	s stream.Stream,
+	consBuilder consensus.ConsBuilderFunc,
+	dataTypeName, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	execute func(T, context.Context) bool,
+	timeout time.Duration,
+	skipable bool,
+	workers int,
+	ctx context.Context,
+) (ed Tasks[BT, T], err error) {
 	dataTypeName = dataTypeName + "_task"
-	t := scheduledtasks[DT]{
+	t := scheduledtasks[BT, T]{
 		dataType: dataTypeName,
 		version:  dataTypeVersion,
 		ctx:      ctx,
 	}
-	es, err := competing.New[tm[DT]](s, consBuilder, p, store.STREAM_START, dataTypeName, func(v tm[DT]) (to time.Duration) {
-		defer func() {
-			log.Info("timeout calculated", "duration", to, "name", v.Metadata.Id, "type", dataTypeName)
-		}()
-		if v.Metadata.Id == "" {
-			return timeout
-		}
-		t.taskLock.Lock()
-		i := contains(v.Metadata.Id, t.tasks)
-		if i >= 0 {
-			if v.Metadata.After.After(t.tasks[i].After) {
-				t.tasks[i] = v.Metadata
+	es, err := competing.New[tm[BT, T], *tm[BT, T]](
+		s,
+		consBuilder,
+		p,
+		store.STREAM_START,
+		dataTypeName,
+		func(v *tm[BT, T]) (to time.Duration) {
+			defer func() {
+				log.Info(
+					"timeout calculated",
+					"duration",
+					to,
+					"name",
+					v.Metadata.Id,
+					"type",
+					dataTypeName,
+				)
+			}()
+			if v.Metadata.Id == "" {
+				return timeout
 			}
-		} else {
-			t.tasks = append(t.tasks, v.Metadata)
-		}
-		t.taskLock.Unlock()
-		if v.Metadata.After.After(time.Now().Add(timeout + timeoutOffsett)) {
-			return v.Metadata.After.Sub(time.Now()) - time.Second
-		}
-		return timeout + timeoutOffsett
-	}, ctx) //This 15 min timout might be a huge issue
+			t.taskLock.Lock()
+			i := contains(v.Metadata.Id, t.tasks)
+			if i >= 0 {
+				if v.Metadata.After.After(t.tasks[i].After) {
+					t.tasks[i] = v.Metadata
+				}
+			} else {
+				t.tasks = append(t.tasks, v.Metadata)
+			}
+			t.taskLock.Unlock()
+			if v.Metadata.After.After(time.Now().Add(timeout + timeoutOffsett)) {
+				return v.Metadata.After.Sub(time.Now()) - time.Second
+			}
+			return timeout + timeoutOffsett
+		},
+		ctx,
+	) //This 15 min timout might be a huge issue
 	if err != nil {
 		return
 	}
 	t.es = es
 
 	//Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
-	exec := make(chan competing.ReadEventWAcc[tm[DT]], 0)
+	exec := make(chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]], 0)
 	for i := 0; i < workers; i++ {
-		go func(events <-chan competing.ReadEventWAcc[tm[DT]]) {
+		go func(events <-chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]]) {
 			for e := range events {
 				func() {
 					defer func() {
@@ -107,15 +175,25 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 					//Since the context can have timedout and thus another one could have been selected. This will create duplecate and competing tasks.
 					select {
 					case <-e.CTX.Done():
-						log.Warning("context closed while executing task", "name", e.Data.Metadata.Id)
+						log.Warning(
+							"context closed while executing task",
+							"name",
+							e.Data.Metadata.Id,
+						)
 						return
 					default:
 					}
 					if e.Data.Metadata.Interval != NoInterval {
 						log.Trace("creating next task")
-						err = t.create(e.Data.Metadata.Id, e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
+						err = t.create(
+							e.Data.Metadata.Id,
+							e.Data.Metadata.After.Add(e.Data.Metadata.Interval),
+							e.Data.Metadata.Interval,
+							e.Data.Task,
+						)
 						if err != nil {
-							log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
+							log.WithError(err).
+								Error("while creating next event for finished action in scheduled task with interval")
 							return
 						}
 						log.Trace("created next task")
@@ -136,16 +214,41 @@ func Init[DT any](s stream.Stream, consBuilder consensus.ConsBuilderFunc, dataTy
 	return
 }
 
-func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execChan chan competing.ReadEventWAcc[tm[DT]]) {
+func (s *scheduledtasks[BT, T]) handler(
+	timeout time.Duration,
+	skipable bool,
+	execChan chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]],
+) {
 	for e := range s.es.Stream() {
 		//Could be valuable to keep the task collection here
-		log.Info("won event", "name", s.es.Name(), "id", e.Data.Metadata.Id, "skippable", skipable, "interval", e.Data.Metadata.Interval, "after", e.Data.Metadata.After, "before_now", time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)))
-		if skipable && e.Data.Metadata.Interval != NoInterval && time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)) {
+		log.Info(
+			"won event",
+			"name",
+			s.es.Name(),
+			"id",
+			e.Data.Metadata.Id,
+			"skippable",
+			skipable,
+			"interval",
+			e.Data.Metadata.Interval,
+			"after",
+			e.Data.Metadata.After,
+			"before_now",
+			time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)),
+		)
+		if skipable && e.Data.Metadata.Interval != NoInterval &&
+			time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)) {
 			log.Trace("skipping event, execution to late", "id", e.Data.Metadata.Id)
 			//My issue is right here, it is not getting acepted as written
-			err := s.create(e.Data.Metadata.Id, e.Data.Metadata.After.Add(e.Data.Metadata.Interval), e.Data.Metadata.Interval, e.Data.Task)
+			err := s.create(
+				e.Data.Metadata.Id,
+				e.Data.Metadata.After.Add(e.Data.Metadata.Interval),
+				e.Data.Metadata.Interval,
+				e.Data.Task,
+			)
 			if err != nil {
-				log.WithError(err).Error("while creating next event for finished action in scheduled task with interval")
+				log.WithError(err).
+					Error("while creating next event for finished action in scheduled task with interval")
 				return
 			}
 			log.Trace("accing skipped event, execution to late", "id", e.Data.Metadata.Id)
@@ -156,11 +259,29 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 		from, to := time.Now(), e.Data.Metadata.After
 		waitTime := to.Sub(from)
 		if waitTime > timeout {
-			log.Trace("no need to start waiting, timeout is before execution", "from", from, "to", to, "wait_time", waitTime, "timeout", timeout)
+			log.Trace(
+				"no need to start waiting, timeout is before execution",
+				"from",
+				from,
+				"to",
+				to,
+				"wait_time",
+				waitTime,
+				"timeout",
+				timeout,
+			)
 			continue
 		}
-		go func(e competing.ReadEventWAcc[tm[DT]]) {
-			log.Info("waiting until it is time to do work", "from", from, "to", to, "wait_time", waitTime)
+		go func(e competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]]) {
+			log.Info(
+				"waiting until it is time to do work",
+				"from",
+				from,
+				"to",
+				to,
+				"wait_time",
+				waitTime,
+			)
 			select {
 			case <-s.ctx.Done():
 				log.Trace("service context timed out")
@@ -173,7 +294,15 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 			log.Info("time to do work, writing to exec chan")
 			select {
 			case execChan <- e:
-				log.Info("wrote to exec chan", "name", s.es.Name(), "id", e.Data.Metadata.Id, "interval", e.Data.Metadata.Interval)
+				log.Info(
+					"wrote to exec chan",
+					"name",
+					s.es.Name(),
+					"id",
+					e.Data.Metadata.Id,
+					"interval",
+					e.Data.Metadata.Interval,
+				)
 			case <-s.ctx.Done():
 				log.Trace("service context timed out")
 				return
@@ -185,8 +314,11 @@ func (s *scheduledtasks[DT]) handler(timeout time.Duration, skipable bool, execC
 	}
 }
 
-func (t *scheduledtasks[DT]) event(eventType event.Type, data tm[DT]) (e event.Event[tm[DT]]) {
-	e = event.Event[tm[DT]]{
+func (t *scheduledtasks[BT, T]) event(
+	eventType event.Type,
+	data *tm[BT, T],
+) (e event.Event[tm[BT, T], *tm[BT, T]]) {
+	e = event.Event[tm[BT, T], *tm[BT, T]]{
 		Type: eventType,
 		Data: data,
 		Metadata: event.Metadata{
@@ -199,12 +331,17 @@ func (t *scheduledtasks[DT]) event(eventType event.Type, data tm[DT]) (e event.E
 }
 
 // To finish adding updatable tasks, should add task"name" and use that to store the task. Thus also checking if the that that is sent to delete is the one stored. Incase the next task comes before the delete-action for some reason.
-func (t *scheduledtasks[DT]) Create(name string, a time.Time, i time.Duration, dt DT) (err error) {
+func (t *scheduledtasks[BT, T]) Create(
+	name string,
+	a time.Time,
+	i time.Duration,
+	dt T,
+) (err error) {
 	return t.create(name, a, i, dt)
 }
 
-func (t *scheduledtasks[DT]) create(id string, a time.Time, i time.Duration, dt DT) (err error) {
-	we := event.NewWriteEvent(t.event(event.Created, tm[DT]{
+func (t *scheduledtasks[BT, T]) create(id string, a time.Time, i time.Duration, dt T) (err error) {
+	we := event.NewWriteEvent(t.event(event.Created, &tm[BT, T]{
 		Task: dt,
 		Metadata: TaskMetadata{
 			After:    a,
@@ -220,7 +357,7 @@ func (t *scheduledtasks[DT]) create(id string, a time.Time, i time.Duration, dt 
 	return ws.Error
 }
 
-func (t *scheduledtasks[DT]) Tasks() (tasks []TaskMetadata) {
+func (t *scheduledtasks[BT, T]) Tasks() (tasks []TaskMetadata) {
 	t.taskLock.Lock()
 	defer t.taskLock.Unlock()
 	tasks = make([]TaskMetadata, len(t.tasks))

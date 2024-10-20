@@ -3,21 +3,22 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofrs/uuid"
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/discovery/local"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
 )
 
 var (
-	ts              Tasks[dd]
-	ts2             Tasks[dd]
-	ts3             Tasks[dd]
+	ts              Tasks[dd, *dd]
+	ts2             Tasks[dd, *dd]
+	ts3             Tasks[dd, *dd]
 	ctxGlobal       context.Context
 	ctxGlobalCancel context.CancelFunc
 	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -29,8 +30,28 @@ var (
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
 type dd struct {
-	Id   int    `json:"id"`
 	Name string `json:"name"`
+	Id   int32  `json:"id"`
+}
+
+func (s dd) WriteBytes(w io.Writer) (err error) {
+	err = bcts.WriteInt32(w, s.Id)
+	if err != nil {
+		return
+	}
+	return bcts.WriteTinyString(w, s.Name)
+}
+
+func (s *dd) ReadBytes(r io.Reader) (err error) {
+	err = bcts.ReadInt32(r, &s.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadTinyString(r, &s.Name)
+	if err != nil {
+		return
+	}
+	return nil
 }
 
 func cryptKeyProvider(_ string) string {
@@ -41,8 +62,8 @@ var ct *testing.T
 
 var intervalChan = make(chan struct{})
 
-func executeFunc(d dd, ctx context.Context) bool {
-	log.Info("Executed", "data", d, "count", count)
+func executeFunc(d *dd, ctx context.Context) bool {
+	ct.Log("Executed", "data", d, "count", count)
 	if count > 16 {
 		ctxGlobalCancel()
 		ct.Error("catchup ran too many times")
@@ -77,8 +98,6 @@ func executeFunc(d dd, ctx context.Context) bool {
 }
 
 func TestInit(t *testing.T) {
-	// dl, _ := log.NewDebugLogger()
-	// dl.SetDefault()
 	ct = t
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
 	store, err := inmemory.Init(STREAM_NAME, ctxGlobal)
@@ -92,7 +111,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edt, err := Init[dd](
+	edt, err := Init[dd, *dd](
 		store,
 		p.AddTopic,
 		"testdata_schedule1",
@@ -108,7 +127,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	ts2, err = Init[dd](
+	ts2, err = Init[dd, *dd](
 		store,
 		p.AddTopic,
 		"testdata_schedule2",
@@ -124,7 +143,7 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	ts3, err = Init[dd](
+	ts3, err = Init[dd, *dd](
 		store,
 		p.AddTopic,
 		"testdata_schedule3",
@@ -143,29 +162,29 @@ func TestInit(t *testing.T) {
 	ts = edt
 	go p.Run()
 	time.Sleep(time.Microsecond)
-	log.Info("init done")
+	t.Log("init done")
 	return
 }
 
 func TestCreate(t *testing.T) {
-	log.Info("creating single event")
+	t.Log("creating single event")
 	ct = t
 	data := dd{
 		Id:   1,
 		Name: "test",
 	}
 	wg.Add(1)
-	err := ts.Create("test_task_1", time.Now(), NoInterval, data)
+	err := ts.Create("test_task_1", time.Now(), NoInterval, &data)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	log.Info("created single event")
+	t.Log("created single event")
 	return
 }
 
 func TestFinish(t *testing.T) {
-	log.Info("finishing single event")
+	t.Log("finishing single event")
 	ct = t
 	c := make(chan struct{})
 	go func() {
@@ -177,28 +196,28 @@ func TestFinish(t *testing.T) {
 		t.Error("timeout on task finish")
 	case <-c:
 	}
-	log.Info("finishied single event")
+	t.Log("finishied single event")
 }
 
 func TestCreateIntervalWithCatchup(t *testing.T) {
-	log.Info("creating first task in reacurring task chain")
+	t.Log("creating first task in reacurring task chain")
 	ct = t
 	data := dd{
 		Id:   1,
 		Name: "test_interval",
 	}
 	wg.Add(5)
-	err := ts.Create("test_task_recurring", time.Now().Add(-time.Second*100), 10*time.Second, data)
+	err := ts.Create("test_task_recurring", time.Now().Add(-time.Second*100), 10*time.Second, &data)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	log.Info("created first task in reacurring task chain")
+	t.Log("created first task in reacurring task chain")
 	return
 }
 
 func TestFinishInterval(t *testing.T) {
-	log.Info("staring to wait for reacurring tast to be executed 15 times")
+	t.Log("staring to wait for reacurring tast to be executed 15 times")
 	ct = t
 	select {
 	case <-time.After(60 * time.Second):
@@ -206,7 +225,7 @@ func TestFinishInterval(t *testing.T) {
 	case <-intervalChan:
 		wg.Wait()
 	}
-	log.Info("done waiting for reacurring tast to be executed 15 times")
+	t.Log("done waiting for reacurring tast to be executed 15 times")
 }
 
 func TestTairdown(t *testing.T) {
@@ -218,7 +237,6 @@ var benchRun = 0
 
 func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	benchRun++
-	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 	store, err := inmemory.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
@@ -232,13 +250,13 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	edt, err := Init[dd](
+	edt, err := Init[dd, *dd](
 		store,
 		p.AddTopic,
 		"testdata",
 		"1.0.0",
 		cryptKeyProvider,
-		func(d dd, _ context.Context) bool { /*log.Info("benchmark task ran", "data", d);*/ return true },
+		func(d *dd, _ context.Context) bool { /*t.Log("benchmark task ran", "data", d);*/ return true },
 		time.Second,
 		false,
 		10,
@@ -255,7 +273,7 @@ func BenchmarkTasks_Create_Select_Finish(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err = edt.Create(fmt.Sprintf("bench_task_%d", i), time.Now(), NoInterval, data)
+		err = edt.Create(fmt.Sprintf("bench_task_%d", i), time.Now(), NoInterval, &data)
 		if err != nil {
 			b.Error(err)
 			return

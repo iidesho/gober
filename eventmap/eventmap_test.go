@@ -1,7 +1,6 @@
 package eventmap
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -23,20 +22,16 @@ var (
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.New().String()
 
 type dd struct {
-	Id   int64  `json:"id"`
 	Name string `json:"name"`
+	Id   int64  `json:"id"`
 }
 
-func (s *dd) WriteBytes(w *bufio.Writer) (err error) {
+func (s dd) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteInt64(w, s.Id)
 	if err != nil {
 		return
 	}
-	err = bcts.WriteTinyString(w, s.Name)
-	if err != nil {
-		return
-	}
-	return w.Flush()
+	return bcts.WriteTinyString(w, s.Name)
 }
 
 func (s *dd) ReadBytes(r io.Reader) (err error) {
@@ -68,7 +63,6 @@ func TestInit(t *testing.T) {
 		return
 	}
 	ed = edt
-	return
 }
 
 func TestStore(t *testing.T) {
@@ -81,7 +75,6 @@ func TestStore(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	return
 }
 
 func TestGet(t *testing.T) {
