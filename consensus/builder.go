@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/gofrs/uuid"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
@@ -39,17 +39,16 @@ func Init(port uint16, token string, discoverer discovery.Discoverer) (Consensus
 		return nil, err
 	}
 	serv.API().Use(
-		func(c *gin.Context) {
+		func(c *fiber.Ctx) error {
 			auth := webserver.GetAuthHeader(c)
 			if strings.TrimSpace(auth) == "" {
-				c.JSON(http.StatusUnauthorized, gin.H{"status": "Unauthorized"})
-				return
+				return c.Status(http.StatusUnauthorized).
+					JSON(map[string]string{"status": "Unauthorized"})
 			}
 			if auth != token {
-				c.JSON(http.StatusForbidden, gin.H{"status": "FORBIDDEN"})
-				return
+				return c.Status(http.StatusForbidden).JSON(map[string]string{"status": "FORBIDDEN"})
 			}
-			c.Next()
+			return c.Next()
 		},
 	)
 	c := builder{
@@ -65,10 +64,9 @@ func Init(port uint16, token string, discoverer discovery.Discoverer) (Consensus
 	return c, nil
 }
 
-func Data(c *gin.Context, code int, d any) {
-	log.Debug("adding repsons data in correct format", "format", c.Accepted)
-	c.JSON(code, d)
-	return
+func Data(c *fiber.Ctx, code int, d any) error {
+	log.Debug("adding repsons data in correct format", "format", c.Accepts())
+	return c.Status(code).JSON(d)
 }
 
 // Solve this with a websocket instead
@@ -80,21 +78,24 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 		timeout: consTimeout,
 		topic:   t,
 	}
-	producer.serv.API().GET(fmt.Sprintf("/%s/status", t), func(c *gin.Context) {
-		Data(c, http.StatusOK, cons.disc.Servers())
+	producer.serv.API().Get(fmt.Sprintf("/%s/status", t), func(c *fiber.Ctx) error {
+		return Data(c, http.StatusOK, cons.disc.Servers())
 	})
 	//Get satus of a consent i know about
-	producer.serv.API().GET(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
-		v, ok := cons.reqs.Get(bcts.TinyString(c.Param("id")[0:]))
+	producer.serv.API().Get(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
+		v, ok := cons.reqs.Get(bcts.TinyString(c.Params("id")[0:]))
 		if !ok {
-			Data(c, http.StatusBadRequest, gin.H{"status": "missing consent request"})
-			return
+			return Data(
+				c,
+				http.StatusBadRequest,
+				map[string]string{"status": "missing consent request"},
+			)
 		}
-		Data(c, http.StatusOK, v)
+		return Data(c, http.StatusOK, v)
 	})
 	//Request consent from me
-	producer.serv.API().POST(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
-		id := c.Param("id")[0:]
+	producer.serv.API().Post(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
+		id := c.Params("id")[0:]
 		reqs, isNew := cons.reqs.GetOrInit(bcts.TinyString(id), sync.NewStack[topic, *topic])
 		if !isNew {
 			v, ok := reqs.Peek()
@@ -103,21 +104,22 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 				if producer.id == v.Requester {
 					status = http.StatusOK
 				}
-				Data(c, status, consentResponse{
+				return Data(c, status, consentResponse{
 					Topic:     cons.topic,
 					Id:        id,
 					Requester: v.Requester,
 					Consenter: producer.id,
 				})
-				return
 			}
 		}
-		var v consentRequest
-		err := c.ShouldBindJSON(&v)
+		v, err := webserver.UnmarshalBody[consentRequest](c)
 		if err != nil {
 			log.WithError(err).Warning("did not bind json")
-			Data(c, http.StatusBadRequest, gin.H{"status": "could not unmashal data", "error": err})
-			return
+			return Data(
+				c,
+				http.StatusBadRequest,
+				map[string]string{"status": "could not unmashal data", "error": err.Error()},
+			)
 		}
 		v.Consents = []Consent{
 			{
@@ -126,7 +128,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 			},
 		}
 		reqs.Push(&v.topic)
-		Data(c, http.StatusCreated, consentResponse{
+		return Data(c, http.StatusCreated, consentResponse{
 			Topic:     v.Topic,
 			Id:        v.Id,
 			Requester: v.Requester,
@@ -134,61 +136,78 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 		})
 	})
 	//Has gotten updated conseed info and informs conceed winner(me)
-	producer.serv.API().PATCH(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
-		id := c.Param("id")[0:]
+	producer.serv.API().Patch(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
+		id := c.Params("id")[0:]
 		reqs, ok := cons.reqs.Get(bcts.TinyString(id))
 		if !ok {
-			Data(c, http.StatusNotFound, gin.H{"status": "missing consent request id"})
-			return
+			return Data(
+				c,
+				http.StatusNotFound,
+				map[string]string{"status": "missing consent request id"},
+			)
 		}
 		v, ok := reqs.Peek()
 		if !ok {
-			Data(c, http.StatusNotFound, gin.H{"status": "missing consent request"})
-			return
+			return Data(
+				c,
+				http.StatusNotFound,
+				map[string]string{"status": "missing consent request"},
+			)
 		}
-		var data Consent
-		err := c.ShouldBindJSON(&data)
+		data, err := webserver.UnmarshalBody[Consent](c)
 		if err != nil {
-			Data(c, http.StatusBadRequest, gin.H{"status": "could not unmashal data", "error": err})
-			return
+			return Data(
+				c,
+				http.StatusBadRequest,
+				map[string]string{"status": "could not unmashal data", "error": err.Error()},
+			)
 		}
 		if containsConsent(data.Id, v.Consents) < 0 {
 			v.Consents = append(v.Consents, data) //This feels wrong //Is not thread safe
 		}
-		Data(c, http.StatusOK, v)
-		return
+		return Data(c, http.StatusOK, v)
 	})
 	//Conseed to me or inform me of a conseed
-	producer.serv.API().DELETE(fmt.Sprintf("/%s/:id/consent", t), func(c *gin.Context) {
-		id := c.Param("id")[0:]
+	producer.serv.API().Delete(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
+		id := c.Params("id")[0:]
 		reqs, ok := cons.reqs.Get(bcts.TinyString(id))
 		if !ok {
-			Data(c, http.StatusNotFound, gin.H{"status": "missing consent request id"})
-			return
+			return Data(
+				c,
+				http.StatusNotFound,
+				map[string]string{"status": "missing consent request id"},
+			)
 		}
 		v, ok := reqs.Peek()
 		if !ok {
-			Data(c, http.StatusNotFound, gin.H{"status": "missing consent request"})
-			return
+			return Data(
+				c,
+				http.StatusNotFound,
+				map[string]string{"status": "missing consent request"},
+			)
 		}
-		var data consentRequest
-		err := c.ShouldBindJSON(&data)
+		data, err := webserver.UnmarshalBody[consentRequest](c)
 		if err != nil {
-			Data(c, http.StatusBadRequest, gin.H{"status": "could not unmashal data", "error": err})
-			return
+			return Data(
+				c,
+				http.StatusBadRequest,
+				map[string]string{"status": "could not unmashal data", "error": err.Error()},
+			)
 		}
 		if producer.id == v.Requester { //Conseeding to me
 			if data.Conseeding == nil {
-				Data(
+				return Data(
 					c,
 					http.StatusBadRequest,
-					gin.H{"status": "not conseeding when reporting conseed"},
+					map[string]string{"status": "not conseeding when reporting conseed"},
 				)
-				return
 			}
 			if v.Conseeding != nil && v.Conseeding.Before(*data.Conseeding) {
-				Data(c, http.StatusConflict, gin.H{"status": "conseeded too late"})
-				return
+				return Data(
+					c,
+					http.StatusConflict,
+					map[string]string{"status": "conseeded too late"},
+				)
 			}
 			v.Conseeding = nil //This seems wrong
 			//Should probably remove contender
@@ -197,6 +216,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 			reqs.Pop()
 			//cons.reqs.Delete(id)
 		}
+		return nil
 	})
 	return &cons, nil
 }

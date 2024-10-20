@@ -1,21 +1,27 @@
 package webserver
 
 import (
-	"encoding/json"
+	stdJson "encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
 	"os"
-	"strings"
+	"runtime/debug"
+	"time"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	"github.com/gofiber/fiber/v2/middleware/basicauth"
+	"github.com/gofiber/fiber/v2/middleware/compress"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/earlydata"
 	"github.com/iidesho/bragi"
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/webserver/health"
 	"github.com/joho/godotenv"
+	jsoniter "github.com/json-iterator/go"
 )
 
 const (
@@ -24,118 +30,159 @@ const (
 	AUTHORIZATION     = "Authorization"
 )
 
+var json = jsoniter.Config{
+	IndentionStep:                 0,
+	MarshalFloatWith6Digits:       true,
+	EscapeHTML:                    true,
+	SortMapKeys:                   false,
+	UseNumber:                     true,
+	DisallowUnknownFields:         true,
+	OnlyTaggedField:               true,
+	ValidateJsonRawMessage:        true,
+	ObjectFieldMustBeSimpleString: false,
+	CaseSensitive:                 false,
+}.Froze()
+
 func init() {
 	err := godotenv.Load("local_override.properties")
 	if err != nil {
-		log.WithError(err).
+		sbragi.WithError(err).
 			Warning("Error loading local_override.properties file", "file", "local_override.properties")
 		err = godotenv.Load(".env")
 		if err != nil {
-			log.WithError(err).Warning("Error loading .env file", "file", ".env")
+			sbragi.WithError(err).Warning("Error loading .env file", "file", ".env")
 		}
 	}
 	logDir := os.Getenv("log.dir")
 	if logDir != "" {
 		bragi.SetPrefix(health.Name)
-		handler, err := log.NewHandlerInFolder(logDir)
+		handler, err := sbragi.NewHandlerInFolder(logDir)
 		if err != nil {
-			log.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
+			sbragi.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
 		}
 		handler.MakeDefault()
-		logger, err := log.NewLogger(&handler)
+		sbragiger, err := sbragi.NewLogger(&handler)
 		if err != nil {
-			log.WithError(err).Fatal("Unable create new logger", "handler", handler)
+			sbragi.WithError(err).Fatal("Unable create new logger", "handler", handler)
 		}
-		logger.SetDefault()
+		sbragiger.SetDefault()
 		//defer handler.Cancel()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
 	}
 	if os.Getenv("debug.port") != "" {
 		go func() {
-			log.WithError(http.ListenAndServe(":"+os.Getenv("debug.port"), nil)).
+			sbragi.WithError(http.ListenAndServe(":"+os.Getenv("debug.port"), nil)).
 				Info("while running debug server", "port", os.Getenv("debug.port"))
 		}()
 	}
 }
 
 type Server interface {
-	Base() *gin.RouterGroup
-	API() *gin.RouterGroup
+	Base() fiber.Router
+	API() fiber.Router
 	Run()
 	Port() uint16
 	Url() (u *url.URL)
 }
 
 type server struct {
-	r    *gin.Engine
-	base *gin.RouterGroup
-	api  *gin.RouterGroup
+	r    *fiber.App
+	base fiber.Router
+	api  fiber.Router
 	port uint16
 }
 
 func Init(port uint16, from_base bool) (Server, error) {
 	h := health.Init()
 	s := server{
-		r:    gin.New(),
+		r: fiber.New(fiber.Config{
+			//Prefork:           true,
+			AppName:           health.Name,
+			StreamRequestBody: true,
+			EnablePrintRoutes: true,
+			JSONDecoder:       json.Unmarshal,
+			JSONEncoder:       json.Marshal,
+		}),
 		port: port,
 	}
-	if health.Name == "" || from_base {
-		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-			SkipPaths: []string{"/health"},
-		}))
-	} else {
-		s.r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-			SkipPaths: []string{"/" + health.Name + "/health"},
-		}))
+	s.r.Use(earlydata.New())
+
+	healthPath := "/health"
+	if !from_base && health.Name != "" {
+		healthPath = "/" + health.Name + "/health"
 	}
-	s.r.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
-		log.WithError(fmt.Errorf("%v", err)).Error("gin panic recover")
-		c.AbortWithStatus(http.StatusInternalServerError)
-	}))
-	//config := cors.DefaultConfig()
-	//config.AllowOrigins = []string{"*"}
-	s.r.Use(cors.Default()) //cors.New(config))
+	s.r.Use(func(c *fiber.Ctx) error {
+		if c.Route().Path == healthPath {
+			return c.Next()
+		}
+		start := time.Now()
+		err := c.Next()
+		sbragi.WithError(err).
+			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start))
+		return err
+	})
+	s.r.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))
+	s.r.Use(func(c *fiber.Ctx) (err error) {
+		defer func() {
+			r := recover()
+			if r != nil {
+				err = errors.Join(
+					err,
+					fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
+					c.SendStatus(http.StatusInternalServerError),
+				)
+			}
+		}()
+		return c.Next()
+	})
+	s.r.Use(cors.New())
 	s.base = s.r.Group("")
 	if health.Name == "" || from_base {
 		s.api = s.base.Group("/")
 	} else {
 		s.api = s.base.Group("/" + health.Name)
 	}
-	s.api.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, h.GetHealthReport())
+	s.api.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(h.GetHealthReport())
 	})
 	user := os.Getenv("debug.user")
 	pass := os.Getenv("debug.pass")
 	if user != "" && pass != "" && health.Name != "" {
 		debug := s.api.Group("/debug")
-		debug.Use(gin.BasicAuth(gin.Accounts{user: pass}))
-		debug.GET("/pprof/*type", func(c *gin.Context) {
-			fmt.Println(c.Param("type"))
-			switch c.Param("type") {
+		debug.Use(basicauth.New(basicauth.Config{
+			Users: map[string]string{user: pass},
+		}))
+		debug.Get("/pprof/*type", func(c *fiber.Ctx) error {
+			fmt.Println(c.Params("type"))
+			switch c.Params("type") {
 			case "/profile":
-				pprof.Profile(c.Writer, c.Request)
+				return adaptor.HTTPHandlerFunc(pprof.Profile)(c)
+				//pprof.Profile(c.Writer, c.Request)
 			case "/trace":
-				pprof.Trace(c.Writer, c.Request)
+				return adaptor.HTTPHandlerFunc(pprof.Trace)(c)
+				//pprof.Trace(c.Writer, c.Request)
 			case "/symbol":
-				pprof.Symbol(c.Writer, c.Request)
+				return adaptor.HTTPHandlerFunc(pprof.Symbol)(c)
+				//pprof.Symbol(c.Writer, c.Request)
 			default:
-				pprof.Index(c.Writer, c.Request)
+				return adaptor.HTTPHandlerFunc(pprof.Index)(c)
+				//pprof.Index(c.Writer, c.Request)
 			}
 		})
 	}
 	return &s, nil
 }
 
-func (s *server) Base() *gin.RouterGroup {
+func (s *server) Base() fiber.Router {
 	return s.base
 }
-func (s *server) API() *gin.RouterGroup {
+func (s *server) API() fiber.Router {
 	return s.api
 }
 
 func (s *server) Run() {
-	err := s.r.Run(fmt.Sprintf(":%d", s.Port()))
+	err := s.r.Listen(fmt.Sprintf(":%d", s.Port()))
 	if err != nil {
-		log.WithError(err).Fatal("while starting or running webserver")
+		sbragi.WithError(err).Fatal("while starting or running webserver")
 	}
 }
 
@@ -147,46 +194,33 @@ func (s *server) Url() (u *url.URL) {
 	u = &url.URL{}
 	u.Scheme = "http"
 	u.Host = fmt.Sprintf("%s:%d", health.GetOutboundIP(), s.Port())
-	u.Path = strings.TrimSuffix(s.base.BasePath(), "/")
+	u.Path = "" //strings.TrimSuffix(s.base.BasePath(), "/")
 	return
 }
 
-func UnmarshalBody[bodyT any](c *gin.Context) (v bodyT, err error) {
-	if c.GetHeader(CONTENT_TYPE) != CONTENT_TYPE_JSON {
-		err = ErrIncorrectContentType
-		return
-	}
-	var unmarshalErr *json.UnmarshalTypeError
-	decoder := json.NewDecoder(c.Request.Body)
-	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&v)
-	if err != nil {
-		if errors.As(err, &unmarshalErr) {
-			err = fmt.Errorf(
-				"wrong type provided for \"%s\" should be of type (%s) but got value {%s} after reading %d",
-				unmarshalErr.Field,
-				unmarshalErr.Type,
-				unmarshalErr.Value,
-				unmarshalErr.Offset,
-			)
-		}
-		return
+func UnmarshalBody[bodyT any](c *fiber.Ctx) (v bodyT, err error) {
+	err = c.BodyParser(&v)
+	var unmarshalErr *stdJson.UnmarshalTypeError
+	if errors.As(err, &unmarshalErr) {
+		err = fmt.Errorf(
+			"wrong type provided for \"%s\" should be of type (%s) but got value {%s} after reading %d",
+			unmarshalErr.Field,
+			unmarshalErr.Type,
+			unmarshalErr.Value,
+			unmarshalErr.Offset,
+		)
 	}
 	return
 }
 
-func ErrorResponse(c *gin.Context, message string, httpStatusCode int) {
+func ErrorResponse(c *fiber.Ctx, message string, httpStatusCode int) error {
 	resp := make(map[string]string)
 	resp["error"] = message
-	c.JSON(httpStatusCode, resp)
+	return c.Status(httpStatusCode).JSON(resp)
 }
 
-func GetAuthHeader(c *gin.Context) (header string) {
-	headers := c.Request.Header[AUTHORIZATION]
-	if len(headers) > 0 {
-		header = headers[0]
-	}
-	return
+func GetAuthHeader(c *fiber.Ctx) (header string) {
+	return c.Get(AUTHORIZATION)
 }
 
 var ErrIncorrectContentType = fmt.Errorf(

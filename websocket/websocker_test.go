@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/webserver"
 )
@@ -29,32 +29,56 @@ func TestServe(t *testing.T) {
 		return
 	}
 	gt = t
-	serv.API().
-		GET("/wstest", func(ctx *gin.Context) {
-			Serve[TT](
-				func(r *http.Request) bool { return true },
-				func(reader <-chan TT, writer chan<- Write[TT], r *http.Request, ctx context.Context) {
-					defer close(writer)
-					wg.Add(1)
-					defer wg.Done()
-					for read := range reader {
-						errChan := make(chan error, 1)
-						writer <- Write[TT]{
-							Data: read,
-							Err:  errChan,
+	ServeFiber(
+		serv.API(),
+		"/wstest",
+		func(c *fiber.Ctx) error { return nil },
+		func(reader <-chan TT, writer chan<- Write[TT], r *http.Request, ctx context.Context) {
+			defer close(writer)
+			wg.Add(1)
+			defer wg.Done()
+			for read := range reader {
+				errChan := make(chan error, 1)
+				writer <- Write[TT]{
+					Data: read,
+					Err:  errChan,
+				}
+				err := <-errChan
+				if err != nil {
+					gt.Error(err)
+					return
+				}
+			}
+		},
+	)
+	/*
+		serv.API().
+			Get("/wstest", func(ctx *fiber.Ctx) error {
+				Serve[TT](
+					func(r *http.Request) bool { return true },
+					func(reader <-chan TT, writer chan<- Write[TT], r *http.Request, ctx context.Context) {
+						defer close(writer)
+						wg.Add(1)
+						defer wg.Done()
+						for read := range reader {
+							errChan := make(chan error, 1)
+							writer <- Write[TT]{
+								Data: read,
+								Err:  errChan,
+							}
+							err := <-errChan
+							if err != nil {
+								gt.Error(err)
+								return
+							}
 						}
-						err := <-errChan
-						if err != nil {
-							gt.Error(err)
-							return
-						}
-					}
-				},
-			)(
-				ctx.Writer,
-				ctx.Request,
-			)
-		})
+					},
+				)(
+					ctx.Writer,
+					ctx.Request,
+				)
+			})
+	*/
 	go serv.Run()
 }
 

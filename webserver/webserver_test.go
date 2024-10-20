@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 )
 
 func TestPanicRecover(t *testing.T) {
@@ -12,7 +12,7 @@ func TestPanicRecover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serv.API().GET("panic", func(c *gin.Context) {
+	serv.API().Get("panic", func(c *fiber.Ctx) error {
 		panic("TEST")
 	})
 	go serv.Run()

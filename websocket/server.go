@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gobwas/ws"
+	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2"
 	log "github.com/iidesho/bragi/sbragi"
 	jsoniter "github.com/json-iterator/go"
 )
@@ -21,12 +22,166 @@ var json = jsoniter.ConfigDefault
 
 var BufferSize = 100
 
-func ServeGin[T any](
-	r *gin.RouterGroup,
+func ServeFiber[T any](
+	r fiber.Router,
 	path string,
-	acceptFunc func(c *gin.Context) bool,
+	acceptFunc func(c *fiber.Ctx) error,
 	wsfunc WSHandler[T],
 ) {
+	r.Get(path, func(c *fiber.Ctx) error {
+		if acceptFunc != nil {
+			if err := acceptFunc(c); err != nil {
+				return errors.Join(err, errors.New(
+					"unacceptable",
+				)) // Could be smart to have some check of weather or not the statuscode code has been set.
+			}
+		}
+		ctx, cancel := context.WithCancel(c.Context())
+		return websocket.New(func(c *websocket.Conn) {
+			defer cancel()
+			clientClosed := false
+			reader := make(chan T, BufferSize)
+			writer := make(chan Write[T], BufferSize)
+			tick := time.Second * 50
+			sucker := webSucker[T]{
+				pingTimout: tick,
+				pingTicker: time.NewTicker(tick),
+				writeLock:  sync.Mutex{},
+				conn:       c.NetConn(),
+			}
+			/*
+				connWriter := make(chan []byte, 1)
+				go func() {
+					defer func() {
+						if !clientClosed {
+							err = ws.WriteFrame(conn, ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")))
+							log.WithError(err).Info("writing client websocket close frame")
+						}
+						log.WithError(conn.Close()).Info("closing client net conn")
+					}()
+					tickD := time.Second * 50
+					tkr := time.NewTicker(tickD)
+					defer tkr.Stop()
+					for {
+						select {
+						case write, ok := <-connWriter:
+							if !ok {
+								return
+							}
+							n, err := conn.Write(write)
+							total := n
+							for err == nil && total < len(write) {
+								n, err = conn.Write(write[total:])
+								total += n
+							}
+							if err != nil {
+								log.WithError(err).Error("while writing to websocket", "path", path, "type", reflect.TypeOf(write).String(), "data", write) // This could end up logging person sensitive data.
+								return
+							}
+							tkr.Reset(tickD)
+						case <-tkr.C:
+							connWriter <- ws.CompiledPing
+							log.WithError(err).Info("wrote ping from server")
+						}
+					}
+				}()
+			*/
+			go func() {
+				defer close(reader)
+				var read T
+				var err error
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						// read, err = ReadWebsocket[T](conn, connWriter)
+						read, err = sucker.Read()
+						if err != nil {
+							if errors.Is(err, ErrNoErrorHandled) {
+								continue
+							}
+							if errors.Is(err, ErrNotImplemented) {
+								log.WithError(err).Warning("continuing after packet is discarded")
+								continue
+							}
+							if errors.Is(err, net.ErrClosed) {
+								clientClosed = true
+								cancel()
+								return
+							}
+							if errors.Is(err, io.EOF) {
+								clientClosed = true
+								cancel()
+								log.Info(
+									"websocket is closed, server closing...",
+								) // This works, but gave a wrong impression, changed slightly
+								return
+							}
+							log.WithError(err).
+								Error("while server reading from websocket", "request", r, "type", reflect.TypeOf(read).String())
+
+								// This could end up logging person sensitive data.
+							return
+						}
+						reader <- read
+					}
+				}
+			}()
+			go wsfunc(reader, writer, nil, ctx)
+			var err error
+			defer func() {
+				if !clientClosed {
+					err = ws.WriteFrame(
+						sucker.conn,
+						ws.NewCloseFrame(
+							ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed"),
+						),
+					)
+					log.WithError(err).Info("writing client websocket close frame")
+				}
+				log.WithError(sucker.conn.Close()).Info("closing client net conn")
+			}()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case write, ok := <-writer:
+					if !ok {
+						return
+					}
+					// err := WriteWebsocket[T](connWriter, write)
+					err := sucker.Write(write)
+					if err != nil {
+						if errors.Is(err, net.ErrClosed) {
+							clientClosed = true
+							cancel()
+							return
+						}
+						log.WithError(err).
+							Error("while writing to websocket", "request", r, "type", reflect.TypeOf(write).String())
+
+							// This could end up logging person sensitive data.
+						return
+					}
+				case <-sucker.pingTicker.C:
+					err = sucker.Ping()
+					if err != nil {
+						if errors.Is(err, ErrNoErrorHandled) {
+							// log.Debug("no ping already waiting for pong from client")
+							continue
+						}
+						if errors.Is(err, net.ErrClosed) {
+							clientClosed = true
+							cancel()
+							return
+						}
+					}
+					log.WithError(err).Debug("wrote ping from server")
+				}
+			}
+		})(c)
+	})
 }
 
 func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) http.HandlerFunc {

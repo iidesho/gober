@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/webserver"
 	"github.com/iidesho/gober/websocket"
@@ -24,30 +23,27 @@ func main() {
 		return
 	}
 
-	serv.API().GET("/ping", func(ctx *gin.Context) {
-		websocket.Serve[example.PongData](
-			nil,
-			func(reader <-chan example.PongData, writer chan<- websocket.Write[example.PongData], r *http.Request, ctx context.Context) {
-				defer close(writer)
-				for read := range reader {
-					time.Sleep(read.Sleep)
-					errChan := make(chan error, 1)
-					writer <- websocket.Write[example.PongData]{
-						Data: read,
-						Err:  errChan,
-					}
-					err := <-errChan
-					if err != nil {
-						log.WithError(err).Error("while writing pong response")
-						return
-					}
+	websocket.ServeFiber(
+		serv.API(),
+		"/ping",
+		nil,
+		func(reader <-chan example.PongData, writer chan<- websocket.Write[example.PongData], r *http.Request, ctx context.Context) {
+			defer close(writer)
+			for read := range reader {
+				time.Sleep(read.Sleep)
+				errChan := make(chan error, 1)
+				writer <- websocket.Write[example.PongData]{
+					Data: read,
+					Err:  errChan,
 				}
-			},
-		)(
-			ctx.Writer,
-			ctx.Request,
-		)
-	})
+				err := <-errChan
+				if err != nil {
+					log.WithError(err).Error("while writing pong response")
+					return
+				}
+			}
+		},
+	)
 
 	serv.Run()
 }

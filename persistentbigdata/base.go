@@ -12,7 +12,7 @@ import (
 
 	"github.com/dgraph-io/badger"
 	"github.com/dgraph-io/badger/options"
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
 	jsoniter "github.com/json-iterator/go"
@@ -115,11 +115,10 @@ func Init[DT, MT any](
 		ctx:               ctx,
 	}
 
-	serv.Base().GET(m.discoveryPath, func(c *gin.Context) {
-		keyStr := c.Param("key")
+	serv.Base().Get(m.discoveryPath, func(c *fiber.Ctx) error {
+		keyStr := c.Params("key")
 		if keyStr == "" {
-			webserver.ErrorResponse(c, "key not provided", http.StatusNotFound)
-			return
+			return webserver.ErrorResponse(c, "key not provided", http.StatusNotFound)
 		}
 		key, err := uuid.FromString(keyStr)
 		if err != nil {
@@ -140,21 +139,22 @@ func Init[DT, MT any](
 		})
 		if err != nil {
 			if errors.Is(err, badger.ErrKeyNotFound) {
-				webserver.ErrorResponse(c, err.Error(), http.StatusNotFound)
-				return
+				return webserver.ErrorResponse(c, err.Error(), http.StatusNotFound)
 			}
 			sbragi.WithError(err).Error("while getting data for sync request")
-			webserver.ErrorResponse(c, "internal server error", http.StatusInternalServerError)
-			return
+			return webserver.ErrorResponse(
+				c,
+				"internal server error",
+				http.StatusInternalServerError,
+			)
 		}
 		var data DT
 		err = json.Unmarshal(dataByte, &data)
 		if err != nil {
 			sbragi.WithError(err).Error("while unmarshalling get request for big data")
-			webserver.ErrorResponse(c, "json umarshal error", http.StatusInternalServerError)
-			return
+			return webserver.ErrorResponse(c, "json umarshal error", http.StatusInternalServerError)
 		}
-		c.JSON(http.StatusOK, data)
+		return c.Status(http.StatusOK).JSON(data)
 	})
 
 	from := store.STREAM_START
