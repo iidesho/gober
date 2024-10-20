@@ -141,8 +141,11 @@ func Init(port uint16, from_base bool) (Server, error) {
 	} else {
 		s.api = s.base.Group("/" + health.Name)
 	}
+	//sbragi.Fatal("formats", "json", string(hrj), "time", string(bv), "hrni", hrni, "hrne", hrne)
 	s.api.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(h.GetHealthReport())
+		return h.WriteHealthReport(c)
+		//return c.JSON(hr)
+		//return c.JSON(h.GetHealthReport())
 	})
 	user := os.Getenv("debug.user")
 	pass := os.Getenv("debug.pass")

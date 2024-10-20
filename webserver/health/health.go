@@ -1,7 +1,10 @@
 package health
 
 import (
+	"encoding/json"
+	"io"
 	"net"
+	"strings"
 	"time"
 
 	log "github.com/iidesho/bragi/sbragi"
@@ -14,13 +17,23 @@ var Name string
 type health struct {
 	Since time.Time `json:"since"`
 	IP    net.IP    `json:"ip"`
+	hrj   []byte
+	hrns  uint16
+	hrne  uint16
 }
 
 func Init() health {
-	return health{
+	h := health{
 		IP:    GetOutboundIP(),
 		Since: time.Now(),
 	}
+	hr := h.GetHealthReport()
+	h.hrj, _ = json.Marshal(hr)
+
+	bv, _ := hr.Now.MarshalJSON()
+	h.hrns = uint16(strings.Index(string(h.hrj), string(bv)) + 1)
+	h.hrne = h.hrns + uint16(len(bv)-2)
+	return h
 }
 
 type Report struct {
@@ -50,6 +63,22 @@ func GetOutboundIP() net.IP {
 	ip = localAddr.IP
 
 	return ip
+}
+
+func (h health) WriteHealthReport(w io.Writer) error {
+	_, err := w.Write(h.hrj[:h.hrns])
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(time.Now().Format(time.RFC3339)))
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(h.hrj[h.hrne:])
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h health) GetHealthReport() Report {
