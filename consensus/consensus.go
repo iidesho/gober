@@ -19,12 +19,10 @@ type Consensus interface {
 }
 
 type consensus struct {
-	reqs *sync.Map[sync.Stack[topic, *topic], *sync.Stack[topic, *topic]]
-
+	server
+	reqs    *sync.Map[sync.Stack[topic, *topic], *sync.Stack[topic, *topic]]
 	topic   string
 	timeout time.Duration
-
-	server
 }
 
 func (cons *consensus) Request(id string) bool {

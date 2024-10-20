@@ -25,13 +25,13 @@ type transactionCheck struct {
 
 type mapData[DT any] struct {
 	data            storage.PosStorage[DT]
-	transactionChan chan transactionCheck
-	dataTypeName    string
-	dataTypeVersion string
-	provider        stream.CryptoKeyProvider
 	es              consumer.Consumer[bcts.Bytes, *bcts.Bytes]
 	ctx             context.Context
+	transactionChan chan transactionCheck
+	provider        stream.CryptoKeyProvider
 	getKey          func(dt DT) string
+	dataTypeName    string
+	dataTypeVersion string
 }
 
 type EventMap[DT any] interface {

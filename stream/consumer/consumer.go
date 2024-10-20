@@ -19,13 +19,13 @@ var json = jsoniter.ConfigDefault
 
 type consumer[BT any, T bcts.ReadWriter[BT]] struct {
 	stream             stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
+	ctx                context.Context
 	cryptoKey          stream.CryptoKeyProvider
 	newTransactionChan chan transactionCheck
-	currentPosition    uint64
 	completables       map[string]transactionCheck
 	accChan            chan uint64
 	writeStream        chan event.WriteEventReadStatus[BT, T]
-	ctx                context.Context
+	currentPosition    uint64
 }
 
 type transactionCheck struct {

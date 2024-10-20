@@ -88,8 +88,8 @@ func NewWPos[T any](dir, posKey string) PosStorage[T] {
 }
 
 type Opt struct {
-	ttl int
 	pos *uint64
+	ttl int
 }
 
 type OptFunc func(*Opt)

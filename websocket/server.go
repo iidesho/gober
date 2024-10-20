@@ -186,11 +186,11 @@ func Serve[T any](acceptFunc func(r *http.Request) bool, wsfunc WSHandler[T]) ht
 }
 
 type webSucker[T any] struct {
-	pingTimout time.Duration
+	conn       net.Conn
 	pingTicker *time.Ticker
+	pingTimout time.Duration
 	pingLock   sync.Mutex
 	writeLock  sync.Mutex
-	conn       net.Conn
 }
 
 func (sucker *webSucker[T]) Ping() (err error) {

@@ -12,8 +12,8 @@ var BuildTime string
 var Name string
 
 type health struct {
-	IP    net.IP    `json:"ip"`
 	Since time.Time `json:"since"`
+	IP    net.IP    `json:"ip"`
 }
 
 func Init() health {
@@ -24,13 +24,13 @@ func Init() health {
 }
 
 type Report struct {
+	Since     time.Time `json:"running_since"`
+	Now       time.Time `json:"now"`
 	Status    string    `json:"status"`
 	Name      string    `json:"name"`
 	Version   string    `json:"version"`
 	BuildTime string    `json:"build_time"`
 	IP        net.IP    `json:"ip"`
-	Since     time.Time `json:"running_since"`
-	Now       time.Time `json:"now"`
 }
 
 var ip net.IP

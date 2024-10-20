@@ -16,10 +16,10 @@ var json = jsoniter.ConfigDefault
 type ReqFunc func(id string) bool
 
 type server struct {
-	port  uint16
+	disc  discovery.Discoverer
 	token string
 	id    string
-	disc  discovery.Discoverer
+	port  uint16
 }
 
 type State string
@@ -33,11 +33,11 @@ const (
 )
 
 type topic struct {
-	Requester  string     `json:"requester"            xml:"requester,attr" html:"requester"`
-	Consents   []Consent  `json:"consents"             xml:"consents"       html:"consents"`
-	State      State      `json:"state"                xml:"state,attr"     html:"state"`
 	Timeout    time.Time  `json:"timeout"              xml:"timeout,attr"   html:"timeout"`
 	Conseeding *time.Time `json:"conseeding,omitempty" xml:"conseeding"     html:"conseeding"`
+	Requester  string     `json:"requester"            xml:"requester,attr" html:"requester"`
+	State      State      `json:"state"                xml:"state,attr"     html:"state"`
+	Consents   []Consent  `json:"consents"             xml:"consents"       html:"consents"`
 }
 
 func (t topic) WriteBytes(w io.Writer) (err error) {
@@ -116,10 +116,9 @@ func (t *topic) ReadBytes(r io.Reader) (err error) {
 }
 
 type consentRequest struct {
+	topic
 	Topic string `json:"topic" xml:"topic,attr" html:"topic"`
 	Id    string `json:"id"    xml:"id,attr"    html:"id"`
-
-	topic
 }
 
 type consentResponse struct {

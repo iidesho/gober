@@ -21,8 +21,8 @@ var (
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
 type dd struct {
-	Id   int    `json:"id"`
 	Name string `json:"name"`
+	Id   int    `json:"id"`
 }
 
 func TestPre(t *testing.T) {

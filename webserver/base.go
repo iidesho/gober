@@ -10,11 +10,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
 	"github.com/iidesho/bragi"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/webserver/health"
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -27,7 +27,8 @@ const (
 func init() {
 	err := godotenv.Load("local_override.properties")
 	if err != nil {
-		log.WithError(err).Warning("Error loading local_override.properties file", "file", "local_override.properties")
+		log.WithError(err).
+			Warning("Error loading local_override.properties file", "file", "local_override.properties")
 		err = godotenv.Load(".env")
 		if err != nil {
 			log.WithError(err).Warning("Error loading .env file", "file", ".env")
@@ -66,9 +67,9 @@ type Server interface {
 
 type server struct {
 	r    *gin.Engine
-	port uint16
 	base *gin.RouterGroup
 	api  *gin.RouterGroup
+	port uint16
 }
 
 func Init(port uint16, from_base bool) (Server, error) {
@@ -161,8 +162,13 @@ func UnmarshalBody[bodyT any](c *gin.Context) (v bodyT, err error) {
 	err = decoder.Decode(&v)
 	if err != nil {
 		if errors.As(err, &unmarshalErr) {
-			err = fmt.Errorf("wrong type provided for \"%s\" should be of type (%s) but got value {%s} after reading %d",
-				unmarshalErr.Field, unmarshalErr.Type, unmarshalErr.Value, unmarshalErr.Offset)
+			err = fmt.Errorf(
+				"wrong type provided for \"%s\" should be of type (%s) but got value {%s} after reading %d",
+				unmarshalErr.Field,
+				unmarshalErr.Type,
+				unmarshalErr.Value,
+				unmarshalErr.Offset,
+			)
 		}
 		return
 	}
@@ -183,4 +189,8 @@ func GetAuthHeader(c *gin.Context) (header string) {
 	return
 }
 
-var ErrIncorrectContentType = fmt.Errorf("http header did not contain key %s with value %s", CONTENT_TYPE, CONTENT_TYPE_JSON)
+var ErrIncorrectContentType = fmt.Errorf(
+	"http header did not contain key %s with value %s",
+	CONTENT_TYPE,
+	CONTENT_TYPE_JSON,
+)

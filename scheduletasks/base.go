@@ -24,22 +24,22 @@ type Tasks[BT, T any] interface {
 }
 
 type scheduledtasks[BT any, T bcts.ReadWriter[BT]] struct {
-	dataType string
-	version  string
-	timeout  time.Duration
-	provider stream.CryptoKeyProvider
 	ctx      context.Context
 	es       competing.Consumer[tm[BT, T], *tm[BT, T]]
-	taskLock sync.Mutex
+	provider stream.CryptoKeyProvider
+	dataType string
+	version  string
 	tasks    []TaskMetadata
+	timeout  time.Duration
+	taskLock sync.Mutex
 }
 
 const NoInterval time.Duration = 0
 
 // TaskMetadata temp changed task to be the id that is used for strong and id seems to now only be used for events.
 type TaskMetadata struct {
-	Id       string        `json:"id"`
 	After    time.Time     `json:"after"`
+	Id       string        `json:"id"`
 	Interval time.Duration `json:"interval"`
 }
 
@@ -69,9 +69,9 @@ func (t *TaskMetadata) ReadBytes(r io.Reader) error {
 
 type tm[BT any, T bcts.ReadWriter[BT]] struct {
 	Task     T
-	Metadata TaskMetadata
 	ctx      context.Context
 	cancel   context.CancelFunc
+	Metadata TaskMetadata
 }
 
 func (t tm[BT, T]) WriteBytes(w io.Writer) error {
