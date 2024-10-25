@@ -101,6 +101,33 @@ func Init(port uint16, from_base bool) (Server, error) {
 			EnablePrintRoutes: true,
 			JSONDecoder:       json.Unmarshal,
 			JSONEncoder:       json.Marshal,
+			// Override default error handler
+			ErrorHandler: func(c *fiber.Ctx, err error) error {
+				// Status code defaults to 500
+				status := http.StatusInternalServerError //default error status
+
+				// Retrieve the custom status code if it's a *fiber.Error
+				var e *fiber.Error
+				if errors.As(err, &e) {
+					status = e.Code
+				}
+				msg := map[string]interface{}{
+					"status":      status,
+					"status_text": http.StatusText(status),
+					"error_msg":   err.Error(),
+				}
+
+				c.Set("Content-Type", "application/json")
+				c.Status(status).JSON(msg)
+				if err != nil {
+					// In case the SendFile fails
+					return c.Status(fiber.StatusInternalServerError).
+						SendString("Internal Server Error")
+				}
+
+				// Return from handler
+				return nil
+			},
 		}),
 		port: port,
 	}
