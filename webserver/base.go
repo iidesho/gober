@@ -118,7 +118,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 				}
 
 				c.Set("Content-Type", "application/json")
-				c.Status(status).JSON(msg)
+				err = c.Status(status).JSON(msg)
 				if err != nil {
 					// In case the SendFile fails
 					return c.Status(fiber.StatusInternalServerError).
