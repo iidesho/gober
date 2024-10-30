@@ -144,7 +144,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 		start := time.Now()
 		err := c.Next()
 		sbragi.WithError(err).
-			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start))
+			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
 		return err
 	})
 	s.r.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))
