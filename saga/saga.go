@@ -4,9 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	event "github.com/cantara/gober"
-	"github.com/cantara/gober/tasks"
+	"io"
 	"reflect"
+	"time"
+
+	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/discovery/local"
+	tasks "github.com/iidesho/gober/scheduletasks"
+	"github.com/iidesho/gober/stream"
+	jsoniter "github.com/json-iterator/go"
 )
 
 type Saga interface {
@@ -37,22 +43,33 @@ type Action struct {
 
 type Arc struct {
 	Actions []Action
-	actions tasks.Tasks[Action, any]
+	actions tasks.Tasks[Action, *Action]
 }
 
 type Story struct {
 	Name string
 	Arcs []Arc
 }
+
+/*
 type taskChanData struct {
 	task tasks.TaskData[Action]
 	err  error
 }
+*/
 
 var executors []struct {
 	e interface{}
 	v reflect.Value
 	t reflect.Type
+}
+
+func (a *Action) ReadBytes(r io.Reader) error {
+	return jsoniter.NewDecoder(r).Decode(a)
+}
+
+func (a Action) WriteBytes(w io.Writer) error {
+	return jsoniter.NewEncoder(w).Encode(a)
 }
 
 func (a *Action) UnmarshalJSON(data []byte) error {
@@ -89,8 +106,8 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func Init(pers event.Persistence, dataTypeVersion, name string, story Story,
-	p event.CryptoKeyProvider, ctx context.Context) (out *saga, err error) {
+func Init(pers stream.Stream, dataTypeVersion, name string, story Story,
+	p stream.CryptoKeyProvider, ctx context.Context) (out *saga, err error) {
 	if len(story.Arcs) <= 1 {
 		err = NotEnoughArcsError
 		return
@@ -100,9 +117,25 @@ func Init(pers event.Persistence, dataTypeVersion, name string, story Story,
 		return
 	}
 	ctxTask, cancel := context.WithCancel(ctx)
+	token := "someTestToken"
+	cons, err := consensus.Init(3134, token, local.New())
+	if err != nil {
+		return nil, err
+	}
 	for li, l := range story.Arcs {
-		var actions tasks.Tasks[Action, any]
-		actions, err = tasks.Init[Action, any](pers, dataTypeVersion, name, p, ctxTask)
+		var actions tasks.Tasks[Action, *Action]
+		actions, err = tasks.Init[Action, *Action](
+			pers,
+			cons.AddTopic,
+			name,
+			dataTypeVersion,
+			p,
+			func(_ *Action, ctx context.Context) bool { return true },
+			time.Second*15,
+			false,
+			5,
+			ctxTask,
+		)
 		if err != nil {
 			cancel()
 			return
@@ -168,7 +201,7 @@ func (s *saga) ExecuteFirst(e executor) (err error) {
 	b := s.story.Arcs[0]
 	a := b.Actions[0]
 	a.Body = e
-	err = b.actions.Create(a, nil)
+	err = b.actions.Create("first_saga_task", time.Now(), tasks.NoInterval, &a)
 	if err != nil {
 		return
 	}

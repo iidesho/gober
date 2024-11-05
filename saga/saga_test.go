@@ -3,17 +3,18 @@ package saga
 import (
 	"context"
 	"fmt"
-	log "github.com/cantara/bragi"
-	"github.com/cantara/gober/store/eventstore"
-	"github.com/cantara/gober/store/inmemory"
-	"github.com/gofrs/uuid"
 	"testing"
+
+	"github.com/gofrs/uuid"
+	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream/event/store/inmemory"
 )
 
 var s Saga
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 
 var STREAM_NAME = "TestSaga_" + uuid.Must(uuid.NewV7()).String()
 
@@ -79,8 +80,7 @@ var stry = Story{
 }
 
 func TestInit(t *testing.T) {
-	log.SetLevel(log.INFO)
-	store, err := inmemory.Init()
+	store, err := inmemory.Init("t", context.Background())
 	if err != nil {
 		t.Error(err)
 		return
@@ -110,15 +110,21 @@ func TestTairdown(t *testing.T) {
 }
 
 func BenchmarkSaga(b *testing.B) {
-	log.SetLevel(log.ERROR)
-	store, err := eventstore.Init()
+	store, err := inmemory.Init("b", context.Background())
 	if err != nil {
 		b.Error(err)
 		return
 	}
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
-	edt, err := Init(store, "1.0.0", fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), stry, cryptKeyProvider, ctx)
+	edt, err := Init(
+		store,
+		"1.0.0",
+		fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N),
+		stry,
+		cryptKeyProvider,
+		ctx,
+	)
 	if err != nil {
 		b.Error(err)
 		return
