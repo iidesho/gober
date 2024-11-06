@@ -163,7 +163,6 @@ func TestInit(t *testing.T) {
 	go p.Run()
 	time.Sleep(time.Microsecond)
 	t.Log("init done")
-	return
 }
 
 func TestCreate(t *testing.T) {
@@ -180,7 +179,6 @@ func TestCreate(t *testing.T) {
 		return
 	}
 	t.Log("created single event")
-	return
 }
 
 func TestFinish(t *testing.T) {
@@ -213,7 +211,6 @@ func TestCreateIntervalWithCatchup(t *testing.T) {
 		return
 	}
 	t.Log("created first task in reacurring task chain")
-	return
 }
 
 func TestFinishInterval(t *testing.T) {

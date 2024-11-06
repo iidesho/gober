@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/stream/consumer/competing"
@@ -17,6 +17,8 @@ import (
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 )
+
+var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 
 type Tasks[BT, T any] interface {
 	Create(string, time.Time, time.Duration, T) error
@@ -109,7 +111,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		version:  dataTypeVersion,
 		ctx:      ctx,
 	}
-	es, err := competing.New[tm[BT, T], *tm[BT, T]](
+	es, err := competing.New(
 		s,
 		consBuilder,
 		p,
@@ -141,7 +143,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 			}
 			t.taskLock.Unlock()
 			if v.Metadata.After.After(time.Now().Add(timeout + timeoutOffsett)) {
-				return v.Metadata.After.Sub(time.Now()) - time.Second
+				return time.Until(v.Metadata.After) - time.Second
 			}
 			return timeout + timeoutOffsett
 		},
@@ -153,7 +155,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	t.es = es
 
 	//Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
-	exec := make(chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]], 0)
+	exec := make(chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]])
 	for i := 0; i < workers; i++ {
 		go func(events <-chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]]) {
 			for e := range events {
@@ -165,7 +167,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							return
 						}
 					}()
-					log.Trace("selected task", "event", e)
+					log.Info("selected task", "event", e)
 					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
 					if !execute(e.Data.Task, e.CTX) {
 						log.Warning("there was an error while executing task. not finishing")
