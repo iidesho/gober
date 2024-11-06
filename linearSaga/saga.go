@@ -102,17 +102,20 @@ func (s *states) ReadBytes(r io.Reader) error {
 	return nil
 }
 
-type Handler interface {
-	Status() (State, error)
-	Execute() error
-	Reduce() error
+type Handler[BT any, T bcts.ReadWriter[BT]] interface {
+	Status(T) (State, error)
+	Execute(T) error
+	Reduce(T) error
 }
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
 	task    tasks.Tasks[sagaValue[BT, T], *sagaValue[BT, T]]
-	Status  func(T) (State, error)
-	Execute func(T) error
-	Reduce  func(T) error
+	Handler Handler[BT, T]
+	/*
+		Status  func(T) (State, error)
+		Execute func(T) error
+		Reduce  func(T) error
+	*/
 	Id      string `json:"id"`
 	Type    string `json:"type"`
 	Timeout time.Duration
@@ -249,7 +252,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 				if (*statuses)[actI] == StateSuccess {
 					return true
 				}
-				s, err := action.Status(v.V)
+				s, err := action.Handler.Status(v.V)
 				if log.WithError(err).
 					Debug("getting action status", "saga", name, "action", action.Id) {
 					return false
@@ -262,17 +265,21 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 				if s != StatePending {
 					return false
 				}
-				err = action.Execute(v.V)
+				err = action.Handler.Execute(v.V)
 				if log.WithError(err).
 					Debug("executing action", "saga", name, "action", action.Id) {
 					return false
 				}
-				s, err = action.Status(v.V)
+				s, err = action.Handler.Status(v.V)
 				if log.WithError(err).
 					Debug("getting action status after execute", "saga", name, "action", action.Id) {
 					return false
 				}
 				(*statuses)[actI] = s
+				if s != StateSuccess {
+					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
+					return false
+				}
 				if len(story.Actions) <= actI+1 {
 					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
 					return true
@@ -408,6 +415,7 @@ func (s *saga[BT, T]) Status(id uuid.UUID) (State, error) {
 	if (*st)[0] == StateInvalid {
 		return StateInvalid, errors.New("first saga status was invalid")
 	}
+	log.Info("has valid status", "statuses", st, "id", id.String())
 	for i, s := range *st {
 		if s == StateSuccess {
 			continue
@@ -456,9 +464,9 @@ func (s *saga[BT, T]) ExecuteFirst(v T) (id uuid.UUID, err error) {
 		err = b.actions.Create("first_saga_task", time.Now(), tasks.NoInterval, &a)
 	*/
 	if err != nil {
-		return
+		return uuid.Nil, err
 	}
-	return
+	return id, nil
 	/*
 		for _, a := range story.Actions {
 			ra := reflect.ValueOf(a)

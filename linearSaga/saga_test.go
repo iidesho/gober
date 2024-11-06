@@ -34,46 +34,53 @@ func cryptKeyProvider(_ string) string {
 
 type act1 struct {
 	Inner string `json:"inner"`
+	State saga.State
 }
 
-func (a act1) Execute(*bcts.Nil) error {
+func (a *act1) Execute(*bcts.Nil) error {
 	defer wg.Done()
 	log.Info(a.Inner)
+	a.State = saga.StateSuccess
 	return nil
 }
 func (a act1) Reduce(*bcts.Nil) error {
 	return nil
 }
 func (a act1) Status(*bcts.Nil) (saga.State, error) {
-	return saga.StatePending, nil
+	return a.State, nil
 }
 
 type act2 struct {
-	Pre  string `json:"pre"`
-	Post string `json:"post"`
+	Pre   string `json:"pre"`
+	Post  string `json:"post"`
+	State saga.State
 }
 
-func (a act2) Execute(*bcts.Nil) error {
+func (a *act2) Execute(*bcts.Nil) error {
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
+	a.State = saga.StateSuccess
 	return nil
 }
 func (a act2) Reduce(*bcts.Nil) error {
 	return nil
 }
 func (a act2) Status(*bcts.Nil) (saga.State, error) {
-	return saga.StatePending, nil
+	return a.State, nil
 }
 
 var a1 = act1{
 	Inner: "test",
+	State: saga.StatePending,
 }
 var a2 = act2{
-	Pre:  "bef",
-	Post: "aft",
+	Pre:   "bef",
+	Post:  "aft",
+	State: saga.StatePending,
 }
 var a3 = act1{
 	Inner: "test2",
+	State: saga.StatePending,
 }
 
 var stry = saga.Story[bcts.Nil, *bcts.Nil]{
@@ -81,21 +88,30 @@ var stry = saga.Story[bcts.Nil, *bcts.Nil]{
 	Actions: []saga.Action[bcts.Nil, *bcts.Nil]{
 		{
 			Id:      "action_1",
-			Status:  a1.Status,
-			Execute: a1.Execute,
-			Reduce:  a1.Reduce,
+			Handler: &a1,
+			/*
+				Status:  a1.Status,
+				Execute: a1.Execute,
+				Reduce:  a1.Reduce,
+			*/
 		},
 		{
 			Id:      "action_2",
-			Status:  a2.Status,
-			Execute: a2.Execute,
-			Reduce:  a2.Reduce,
+			Handler: &a2,
+			/*
+				Status:  a2.Status,
+				Execute: a2.Execute,
+				Reduce:  a2.Reduce,
+			*/
 		},
 		{
 			Id:      "action_3",
-			Status:  a3.Status,
-			Execute: a3.Execute,
-			Reduce:  a3.Reduce,
+			Handler: &a3,
+			/*
+				Status:  a3.Status,
+				Execute: a3.Execute,
+				Reduce:  a3.Reduce,
+			*/
 		},
 	},
 }
@@ -115,9 +131,12 @@ func TestInit(t *testing.T) {
 	s = edt
 }
 
+var id uuid.UUID
+
 func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
-	_, err := s.ExecuteFirst(nil)
+	var err error
+	id, err = s.ExecuteFirst(nil)
 	if err != nil {
 		t.Error(err)
 		return
@@ -126,6 +145,15 @@ func TestExecuteFirst(t *testing.T) {
 
 func TestTairdown(t *testing.T) {
 	wg.Wait()
+	st, err := s.Status(id)
+	if err != nil {
+		t.Error(err, id)
+		return
+	}
+	if st != saga.StateSuccess {
+		t.Error("expected completed saga to be success", st.String())
+		return
+	}
 	ctxGlobalCancel()
 	s.Close()
 }
