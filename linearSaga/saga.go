@@ -14,13 +14,15 @@ import (
 	"github.com/iidesho/gober/discovery/local"
 	tasks "github.com/iidesho/gober/scheduletasks"
 	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/sync"
 	jsoniter "github.com/json-iterator/go"
 )
 
 var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 
-type Saga interface {
-	ExecuteFirst() error
+type Saga[BT any, T bcts.ReadWriter[BT]] interface {
+	ExecuteFirst(T) (uuid.UUID, error)
+	Status(uuid.UUID) (State, error)
 	Close()
 }
 
@@ -30,8 +32,9 @@ type transactionCheck struct {
 }
 
 type saga[BT any, T bcts.ReadWriter[BT]] struct {
-	close func()
-	story Story[BT, T]
+	close  func()
+	story  Story[BT, T]
+	states *sync.Map[states, *states]
 }
 
 type State uint8
@@ -59,6 +62,46 @@ func (s State) String() string {
 	}
 }
 
+func (s State) WriteBytes(w io.Writer) error {
+	return bcts.WriteUInt8(w, s)
+}
+
+func (s *State) ReadBytes(r io.Reader) error {
+	return bcts.ReadUInt8(r, s)
+}
+
+type states []State
+
+func (s states) WriteBytes(w io.Writer) error {
+	err := bcts.WriteUInt32(w, uint32(len(s)))
+	if err != nil {
+		return err
+	}
+	for _, s := range s {
+		err = s.WriteBytes(w)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *states) ReadBytes(r io.Reader) error {
+	var l uint32
+	err := bcts.ReadUInt32(r, &l)
+	if err != nil {
+		return err
+	}
+	*s = make(states, l)
+	for i := range l {
+		err = (*s)[i].ReadBytes(r)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type Handler interface {
 	Status() (State, error)
 	Execute() error
@@ -66,13 +109,12 @@ type Handler interface {
 }
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
+	task    tasks.Tasks[sagaValue[BT, T], *sagaValue[BT, T]]
 	Status  func(T) (State, error)
 	Execute func(T) error
 	Reduce  func(T) error
-	//Handler Handler `json:"handler"`
 	Id      string `json:"id"`
 	Type    string `json:"type"`
-	task    tasks.Tasks[BT, T]
 	Timeout time.Duration
 }
 
@@ -134,6 +176,27 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 }
 */
 
+type sagaValue[BT any, T bcts.ReadWriter[BT]] struct {
+	V  T         `json:"v"`
+	ID uuid.UUID `json:"id"`
+}
+
+func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
+	err := bcts.ReadStaticBytes(r, s.ID[:])
+	if err != nil {
+		return err
+	}
+	return s.V.ReadBytes(r)
+}
+
+func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
+	err := bcts.WriteStaticBytes(w, s.ID[:])
+	if err != nil {
+		return err
+	}
+	return s.V.WriteBytes(w)
+}
+
 func Init[BT any, T bcts.ReadWriter[BT]](
 	pers stream.Stream,
 	dataTypeVersion, name string,
@@ -152,6 +215,10 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		cancel()
 		return nil, err
 	}
+	out = &saga[BT, T]{
+		close:  cancel,
+		states: sync.NewMap[states, *states](),
+	}
 	for actI, action := range story.Actions {
 		actionId := fmt.Sprintf("%s_%s", name, action.Id)
 		story.Actions[actI].task, err = tasks.Init(
@@ -160,32 +227,58 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 			actionId,
 			dataTypeVersion,
 			p,
-			func(v T, ctx context.Context) bool {
+			func(v *sagaValue[BT, T], ctx context.Context) bool {
 				select {
 				case <-ctx.Done():
 					return false
 				default:
 				}
-				log.Info("executing", "aid", actionId, "id", action.Id)
-				s, err := action.Status(v)
+				log.Info(
+					"executing",
+					"aid",
+					actionId,
+					"id",
+					action.Id,
+					"sid",
+					v.ID.String(),
+					"v",
+					v.V,
+				)
+				statuses, ok := out.states.Get(bcts.TinyString(v.ID.String()))
+				log.Info("got states", "ok", ok, "id", v.ID.String(), "statuses", statuses)
+				if (*statuses)[actI] == StateSuccess {
+					return true
+				}
+				s, err := action.Status(v.V)
 				if log.WithError(err).
 					Debug("getting action status", "saga", name, "action", action.Id) {
 					return false
 				}
 				if s == StateSuccess {
+					(*statuses)[actI] = StateSuccess
+					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
 					return true
 				}
 				if s != StatePending {
 					return false
 				}
-				err = action.Execute(v)
+				err = action.Execute(v.V)
 				if log.WithError(err).
 					Debug("executing action", "saga", name, "action", action.Id) {
 					return false
 				}
+				s, err = action.Status(v.V)
+				if log.WithError(err).
+					Debug("getting action status after execute", "saga", name, "action", action.Id) {
+					return false
+				}
+				(*statuses)[actI] = s
 				if len(story.Actions) <= actI+1 {
+					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
 					return true
 				}
+				(*statuses)[actI+1] = StatePending
+				out.states.Set(bcts.TinyString(v.ID.String()), statuses)
 				err = story.Actions[actI+1].task.Create(fmt.Sprintf(
 					"%s_%s_%s",
 					story.Name,
@@ -273,10 +366,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		}
 	*/
 	go cons.Run()
-	out = &saga[BT, T]{
-		story: story,
-		close: cancel,
-	}
+	out.story = story
 	/*
 		selectChan := make(chan struct{}, 0)
 		taskChan := make(chan taskChanData, 0)
@@ -310,17 +400,54 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	return
 }
 
-func (s *saga[BT, T]) ExecuteFirst() (err error) {
+func (s *saga[BT, T]) Status(id uuid.UUID) (State, error) {
+	st, ok := s.states.Get(bcts.TinyString(id.String()))
+	if !ok {
+		return StateInvalid, errors.New("saga id is invalid")
+	}
+	if (*st)[0] == StateInvalid {
+		return StateInvalid, errors.New("first saga status was invalid")
+	}
+	for i, s := range *st {
+		if s == StateSuccess {
+			continue
+		}
+		if s == StateInvalid {
+			return (*st)[i-1], nil
+		}
+		return s, nil
+	}
+	return StateSuccess, nil //This path only happens if all statuses are success
+}
+func (s *saga[BT, T]) ExecuteFirst(v T) (id uuid.UUID, err error) {
+	id, err = uuid.NewV7()
+	if err != nil {
+		return uuid.Nil, err
+	}
+	for _, ok := s.states.Get(bcts.TinyString(id.String())); ok; _, ok = s.states.Get(bcts.TinyString(id.String())) { //This is veryVeryUnlikely
+		id, err = uuid.NewV7()
+		if err != nil {
+			return uuid.Nil, err
+		}
+	}
+	st := make(states, len(s.story.Actions))
+	st[0] = StatePending
+	s.states.Set(bcts.TinyString(id.String()), &st)
+	sv := sagaValue[BT, T]{
+		ID: id,
+		V:  v,
+	}
+	log.Info("executing first", "sv", sv, "states", st)
 	err = s.story.Actions[0].task.Create(
 		fmt.Sprintf(
 			"%s_%s_%s",
 			s.story.Name,
 			s.story.Actions[0].Id,
-			uuid.Must(uuid.NewV7()).String(),
+			id.String(),
 		),
 		time.Now(),
 		tasks.NoInterval,
-		nil,
+		&sv,
 	)
 	/*
 		b := s.story.Arcs[0]

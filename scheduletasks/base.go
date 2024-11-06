@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -161,9 +162,11 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 			for e := range events {
 				func() {
 					defer func() {
-						err := recover()
-						if err != nil {
-							log.WithError(fmt.Errorf("%v", err)).Error("panic while executing")
+						r := recover()
+						if r != nil {
+							log.WithError(
+								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
+							).Error("panic while executing")
 							return
 						}
 					}()

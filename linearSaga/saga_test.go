@@ -13,7 +13,7 @@ import (
 	"github.com/iidesho/gober/stream/event/store/inmemory"
 )
 
-var s saga.Saga
+var s saga.Saga[bcts.Nil, *bcts.Nil]
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -117,7 +117,7 @@ func TestInit(t *testing.T) {
 
 func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
-	err := s.ExecuteFirst()
+	_, err := s.ExecuteFirst(nil)
 	if err != nil {
 		t.Error(err)
 		return
@@ -152,7 +152,7 @@ func BenchmarkSaga(b *testing.B) {
 	}
 	defer edt.Close()
 	for i := 0; i < b.N; i++ {
-		err = edt.ExecuteFirst()
+		_, err = edt.ExecuteFirst(nil)
 		if err != nil {
 			b.Error(err)
 			return
