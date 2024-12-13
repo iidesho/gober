@@ -8,12 +8,15 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/discovery/local"
 	tasks "github.com/iidesho/gober/scheduletasks"
 	"github.com/iidesho/gober/stream"
 	jsoniter "github.com/json-iterator/go"
 )
+
+var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 
 type Saga interface {
 	ExecuteFirst(e executor) error
@@ -120,6 +123,7 @@ func Init(pers stream.Stream, dataTypeVersion, name string, story Story,
 	token := "someTestToken"
 	cons, err := consensus.Init(3134, token, local.New())
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	for li, l := range story.Arcs {
@@ -160,6 +164,7 @@ func Init(pers stream.Stream, dataTypeVersion, name string, story Story,
 			}
 		}
 	}
+	go cons.Run()
 	out = &saga{
 		story: story,
 		close: cancel,

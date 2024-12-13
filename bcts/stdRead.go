@@ -6,6 +6,61 @@ import (
 	"time"
 )
 
+// I hate that we do not have the ability to either write single bit or do better bitwize operations...
+func ExtractBoolsFromUint8(u uint8) (b1, b2, b3, b4, b5, b6, b7, b8 bool) {
+	b1 = u&128 > 0 //1<<7
+	b2 = u&64 > 0  //1<<6
+	b3 = u&32 > 0  //1<<5
+	b4 = u&16 > 0  //1<<4
+	b5 = u&8 > 0   //1<<3
+	b6 = u&4 > 0   //1<<2
+	b7 = u&2 > 0   //1<<1
+	b8 = u&1 > 0   //1<<0
+	return
+}
+
+func Uint8ToBools[T1 ~bool, T2 ~bool, T3 ~bool, T4 ~bool, T5 ~bool, T6 ~bool, T7 ~bool, T8 ~bool](
+	u uint8,
+	b1 *T1, b2 *T2, b3 *T3, b4 *T4, b5 *T5, b6 *T6, b7 *T7, b8 *T8,
+) {
+	if b1 != nil {
+		*b1 = u&128 > 0 //1<<7
+	}
+	if b2 != nil {
+		*b2 = u&64 > 0 //1<<6
+	}
+	if b3 != nil {
+		*b3 = u&32 > 0 //1<<5
+	}
+	if b4 != nil {
+		*b4 = u&16 > 0 //1<<4
+	}
+	if b5 != nil {
+		*b5 = u&8 > 0 //1<<3
+	}
+	if b6 != nil {
+		*b6 = u&4 > 0 //1<<2
+	}
+	if b7 != nil {
+		*b7 = u&2 > 0 //1<<1
+	}
+	if b8 != nil {
+		*b8 = u&1 > 0 //1<<0
+	}
+}
+
+func ReadBools(r io.Reader, b1, b2, b3, b4, b5, b6, b7, b8 *bool) error {
+	var u uint8
+	err := ReadUInt8(r, &u)
+	if err != nil {
+		return err
+	}
+	//*b1, *b2, *b3, *b4, *b5, *b6, *b7, *b8 = ExtractBoolsFromUint8(v)
+	// Inlining as pointers can be nil
+	Uint8ToBools(u, b1, b2, b3, b4, b5, b6, b7, b8)
+	return nil
+}
+
 func ReadInt64[T ~int64](r io.Reader, i *T) error {
 	return binary.Read(r, binary.LittleEndian, i)
 }

@@ -33,8 +33,8 @@ type transactionCheck struct {
 
 type saga[BT any, T bcts.ReadWriter[BT]] struct {
 	close  func()
-	story  Story[BT, T]
 	states *sync.Map[states, *states]
+	story  Story[BT, T]
 }
 
 type State uint8
@@ -106,6 +106,82 @@ type Handler[BT any, T bcts.ReadWriter[BT]] interface {
 	Status(T) (State, error)
 	Execute(T) error
 	Reduce(T) error
+}
+
+type handlerBuilder[BT any, T bcts.ReadWriter[BT]] struct {
+	status  func(T) (State, error)
+	execute func(T) error
+	reduce  func(T) error
+}
+
+type DumHandler[BT any, T bcts.ReadWriter[BT]] struct {
+	StatusFunc  func(T) (State, error)
+	ExecuteFunc func(T) error
+	ReduceFunc  func(T) error
+}
+
+type emptyHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
+	Status(status func(v T) (State, error)) statusHandlerBuilder[BT, T]
+}
+type statusHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
+	Execute(execute func(v T) error) statusExecuteHandlerBuilder[BT, T]
+}
+type statusExecuteHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
+	Reduce(reduce func(v T) error) statusExecuteReduceHandlerBuilder[BT, T]
+}
+type statusExecuteReduceHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
+	Build() Handler[BT, T]
+}
+
+func NewHandlerBuilder[BT any, T bcts.ReadWriter[BT]]() emptyHandlerBuilder[BT, T] {
+	return handlerBuilder[BT, T]{}
+}
+
+func (h handlerBuilder[BT, T]) Status(status func(v T) (State, error)) statusHandlerBuilder[BT, T] {
+	h.status = status
+	return h
+}
+
+func (h handlerBuilder[BT, T]) Execute(execute func(v T) error) statusExecuteHandlerBuilder[BT, T] {
+	h.execute = execute
+	return h
+}
+
+func (h handlerBuilder[BT, T]) Reduce(
+	reduce func(v T) error,
+) statusExecuteReduceHandlerBuilder[BT, T] {
+	h.reduce = reduce
+	return h
+}
+
+func (h handlerBuilder[BT, T]) Build() Handler[BT, T] {
+	return DumHandler[BT, T]{
+		StatusFunc:  h.status,
+		ExecuteFunc: h.execute,
+		ReduceFunc:  h.reduce,
+	}
+}
+
+func (h DumHandler[BT, T]) Status(v T) (State, error) {
+	return h.StatusFunc(v)
+}
+func (h DumHandler[BT, T]) Execute(v T) error {
+	return h.ExecuteFunc(v)
+}
+func (h DumHandler[BT, T]) Reduce(v T) error {
+	return h.ReduceFunc(v)
+}
+
+func NewDumHandler[BT any, T bcts.ReadWriter[BT]](
+	status func(T) (State, error),
+	execute func(T) error,
+	reduce func(T) error,
+) Handler[BT, T] {
+	return DumHandler[BT, T]{
+		StatusFunc:  status,
+		ExecuteFunc: execute,
+		ReduceFunc:  reduce,
+	}
 }
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
@@ -483,6 +559,7 @@ func (s *saga[BT, T]) Close() {
 	s.close()
 }
 
+var ErrRetryable = errors.New("error occured but can be retried")
 var ErrPreconditionsNotMet = errors.New("preconfitions not met for action")
 var ErrNotEnoughActions = errors.New("a story need more than one arc")
 var ErrBaseArcNeedsExactlyOneAction = errors.New("base arc can only and needs one action")

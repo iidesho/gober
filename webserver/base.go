@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"runtime/debug"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
@@ -46,11 +45,13 @@ var json = jsoniter.Config{
 func init() {
 	err := godotenv.Load("local_override.properties")
 	if err != nil {
-		sbragi.WithError(err).
-			Warning("Error loading local_override.properties file", "file", "local_override.properties")
+		sbragi.WithoutEscalation().WithError(err).
+			Debug("Error loading local_override.properties file", "file", "local_override.properties")
 		err = godotenv.Load(".env")
 		if err != nil {
-			sbragi.WithError(err).Warning("Error loading .env file", "file", ".env")
+			sbragi.WithoutEscalation().
+				WithError(err).
+				Debug("Error loading .env file", "file", ".env")
 		}
 	}
 	logDir := os.Getenv("log.dir")
@@ -138,13 +139,16 @@ func Init(port uint16, from_base bool) (Server, error) {
 		healthPath = "/" + health.Name + "/health"
 	}
 	s.r.Use(func(c *fiber.Ctx) error {
-		if c.Route().Path == healthPath {
+
+		if string(c.Context().Path()) == healthPath {
 			return c.Next()
 		}
-		start := time.Now()
+		//start := time.Now()
 		err := c.Next()
-		sbragi.WithError(err).
-			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
+		/*
+			sbragi.WithError(err).
+				Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
+		*/
 		return err
 	})
 	s.r.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))

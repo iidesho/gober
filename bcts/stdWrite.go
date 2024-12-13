@@ -7,6 +7,46 @@ import (
 	"time"
 )
 
+// I hate that we do not have the ability to either write single bit or do better bitwize operations...
+func BoolsToUint8(b1, b2, b3, b4, b5, b6, b7, b8 bool) (u uint8) {
+	if b1 {
+		u = 1
+	}
+	u = u << 1
+	if b2 {
+		u = u | 1
+	}
+	u = u << 1
+	if b3 {
+		u = u | 1
+	}
+	u = u << 1
+	if b4 {
+		u = u | 1
+	}
+	u = u << 1
+	if b5 {
+		u = u | 1
+	}
+	u = u << 1
+	if b6 {
+		u = u | 1
+	}
+	u = u << 1
+	if b7 {
+		u = u | 1
+	}
+	u = u << 1
+	if b8 {
+		return u | 1
+	}
+	return
+}
+
+func WriteBools(w io.Writer, b1, b2, b3, b4, b5, b6, b7, b8 bool) error {
+	return WriteUInt8(w, BoolsToUint8(b1, b2, b3, b4, b5, b6, b7, b8))
+}
+
 func WriteInt64[T ~int64](w io.Writer, i T) error {
 	return binary.Write(w, binary.LittleEndian, i)
 }

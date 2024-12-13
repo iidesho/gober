@@ -8,18 +8,18 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
-	"github.com/iidesho/gober/bcts"
-	saga "github.com/iidesho/gober/linearSaga"
+	saga "github.com/iidesho/gober/extendedSaga"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
 )
 
-var s saga.Saga[bcts.Nil, *bcts.Nil]
+var s saga.Saga
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
 var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 
 var STREAM_NAME = "TestSaga_" + uuid.Must(uuid.NewV7()).String()
+
 var wg = &sync.WaitGroup{}
 
 type dd struct {
@@ -33,89 +33,66 @@ func cryptKeyProvider(_ string) string {
 
 type act1 struct {
 	Inner string `json:"inner"`
-	State saga.State
 }
 
-func (a *act1) Execute(*bcts.Nil) error {
+func (a act1) Execute() error {
 	defer wg.Done()
 	log.Info(a.Inner)
-	a.State = saga.StateSuccess
 	return nil
 }
-func (a act1) Reduce(*bcts.Nil) error {
+func (a act1) Reduce() error {
 	return nil
 }
-func (a act1) Status(*bcts.Nil) (saga.State, error) {
-	return a.State, nil
+func (a act1) Status() (saga.State, error) {
+	return saga.StatePending, nil
 }
 
 type act2 struct {
-	Pre    string `json:"pre"`
-	Post   string `json:"post"`
-	Failed bool   `json:"failed"`
-	State  saga.State
+	Pre  string `json:"pre"`
+	Post string `json:"post"`
 }
 
-func (a *act2) Execute(*bcts.Nil) error {
-	if !a.Failed {
-		a.Failed = true
-		return saga.ErrRetryable
-	}
+func (a act2) Execute() error {
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
-	a.State = saga.StateSuccess
 	return nil
 }
-func (a act2) Reduce(*bcts.Nil) error {
+func (a act2) Reduce() error {
 	return nil
 }
-func (a act2) Status(*bcts.Nil) (saga.State, error) {
-	return a.State, nil
+func (a act2) Status() (saga.State, error) {
+	return saga.StatePending, nil
 }
 
-var a1 = act1{
-	Inner: "test",
-	State: saga.StatePending,
-}
-var a2 = act2{
-	Pre:   "bef",
-	Post:  "aft",
-	State: saga.StatePending,
-}
-var a3 = act1{
-	Inner: "test2",
-	State: saga.StatePending,
-}
-
-var stry = saga.Story[bcts.Nil, *bcts.Nil]{
+var stry = saga.Story{
 	Name: "test",
-	Actions: []saga.Action[bcts.Nil, *bcts.Nil]{
+	Arcs: []saga.Arc{
 		{
-			Id:      "action_1",
-			Handler: &a1,
-			/*
-				Status:  a1.Status,
-				Execute: a1.Execute,
-				Reduce:  a1.Reduce,
-			*/
+			Actions: []saga.Action{
+				{
+					Id: "action_1",
+					Handler: act1{
+						Inner: "test",
+					},
+				},
+			},
 		},
 		{
-			Id:      "action_2",
-			Handler: &a2,
-			/*
-				Status:  a2.Status,
-				Execute: a2.Execute,
-				Reduce:  a2.Reduce,
-			*/
-		},
-		{
-			Id:      "action_3",
-			Handler: &a3,
-			/*
-				Status:  a3.Status,
-				Execute: a3.Execute,
-				Reduce:  a3.Reduce,
-			*/
+			Actions: []saga.Action{
+				{
+					Id: "action_3",
+					Handler: act1{
+						Inner: "test",
+					},
+				},
+				{
+					Id: "action_2",
+					Handler: act2{
+						Pre:  "bef",
+						Post: "aft",
+					},
+				},
+			},
 		},
 	},
 }
@@ -135,12 +112,9 @@ func TestInit(t *testing.T) {
 	s = edt
 }
 
-var id uuid.UUID
-
 func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
-	var err error
-	id, err = s.ExecuteFirst(nil)
+	err := s.ExecuteFirst()
 	if err != nil {
 		t.Error(err)
 		return
@@ -149,15 +123,6 @@ func TestExecuteFirst(t *testing.T) {
 
 func TestTairdown(t *testing.T) {
 	wg.Wait()
-	st, err := s.Status(id)
-	if err != nil {
-		t.Error(err, id)
-		return
-	}
-	if st != saga.StateSuccess {
-		t.Error("expected completed saga to be success", st.String())
-		return
-	}
 	ctxGlobalCancel()
 	s.Close()
 }
@@ -184,7 +149,7 @@ func BenchmarkSaga(b *testing.B) {
 	}
 	defer edt.Close()
 	for i := 0; i < b.N; i++ {
-		_, err = edt.ExecuteFirst(nil)
+		err = edt.ExecuteFirst()
 		if err != nil {
 			b.Error(err)
 			return

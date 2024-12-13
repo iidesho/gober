@@ -1,4 +1,4 @@
-package saga
+package saga_test
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/saga"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
 )
 
-var s Saga
+var s saga.Saga
 var ctxGlobal context.Context
 var ctxGlobalCancel context.CancelFunc
 var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
@@ -19,8 +20,8 @@ var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 var STREAM_NAME = "TestSaga_" + uuid.Must(uuid.NewV7()).String()
 
 type dd struct {
-	Id   int    `json:"id"`
 	Name string `json:"name"`
+	Id   int    `json:"id"`
 }
 
 func cryptKeyProvider(_ string) string {
@@ -46,11 +47,11 @@ func (a act2) Execute() error {
 	return nil
 }
 
-var stry = Story{
+var stry = saga.Story{
 	Name: "test",
-	Arcs: []Arc{
+	Arcs: []saga.Arc{
 		{
-			Actions: []Action{
+			Actions: []saga.Action{
 				{
 					Id: "action_1",
 					Body: act1{
@@ -60,7 +61,7 @@ var stry = Story{
 			},
 		},
 		{
-			Actions: []Action{
+			Actions: []saga.Action{
 				{
 					Id: "action_3",
 					Body: act1{
@@ -86,13 +87,12 @@ func TestInit(t *testing.T) {
 		return
 	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := Init(store, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
+	edt, err := saga.Init(store, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	s = edt
-	return
 }
 
 func TestExecuteFirst(t *testing.T) {
@@ -101,7 +101,6 @@ func TestExecuteFirst(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	return
 }
 
 func TestTairdown(t *testing.T) {
@@ -117,7 +116,7 @@ func BenchmarkSaga(b *testing.B) {
 	}
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
-	edt, err := Init(
+	edt, err := saga.Init(
 		store,
 		"1.0.0",
 		fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N),

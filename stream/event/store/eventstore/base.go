@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iidesho/gober/stream/event"
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/stream/event"
 
 	//"github.com/EventStore/EventStore-Client-Go/esdb/v2"
-	"github.com/iidesho/gober/stream/event/store"
 	"github.com/EventStore/EventStore-Client-Go/esdb"
+	"github.com/iidesho/gober/stream/event/store"
 )
 
 type Client struct {
@@ -100,7 +100,7 @@ func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err er
 					}
 				}
 
-				log.Info("writing events", "number of events", i)
+				log.Debug("writing events", "number of events", i)
 				wr, err := s.c.c.AppendToStream(
 					ctx,
 					s.name,
