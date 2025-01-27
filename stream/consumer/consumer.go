@@ -5,17 +5,16 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid"
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/mergedcontext"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
-	jsoniter "github.com/json-iterator/go"
 )
 
-var json = jsoniter.ConfigDefault
+var log = sbragi.WithLocalScope(sbragi.LevelError)
 
 type consumer[BT any, T bcts.ReadWriter[BT]] struct {
 	stream             stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
@@ -104,7 +103,7 @@ func (c *consumer[BT, T]) Stream(
 }
 
 func (c *consumer[BT, T]) store(e event.WriteEventReadStatus[BT, T]) (position uint64, err error) {
-	es, err := EncryptEvent[BT, T](e.Event(), c.cryptoKey)
+	es, err := EncryptEvent(e.Event(), c.cryptoKey)
 	if err != nil {
 		return
 	}
@@ -166,7 +165,8 @@ func (c *consumer[BT, T]) streamReadEvents(
 			case e := <-s:
 				o, err := DecryptEvent[BT, T](e, c.cryptoKey)
 				if err != nil {
-					log.WithError(err).Error("while reading event")
+					log.WithError(err).
+						Error("while reading event", "?", e.Metadata.DataType, "len", len(*e.Data))
 					continue
 				}
 				eventChan <- event.ReadEventWAcc[BT, T]{
@@ -201,10 +201,12 @@ func EncryptEvent[BT any, T bcts.ReadWriter[BT]](
 	e *event.Event[BT, T],
 	cryptoKey stream.CryptoKeyProvider,
 ) (es event.Event[bcts.Bytes, *bcts.Bytes], err error) {
-	data, err := json.Marshal(e.Data)
+	// data, err := json.Marshal(e.Data)
+	data, err := bcts.Write(e.Data)
 	if err != nil {
 		return
 	}
+	log.Info("encrypting", "data", data, "e.Data", e.Data)
 	edata, err := crypto.Encrypt(data, cryptoKey(e.Metadata.Key))
 	if err != nil {
 		return
@@ -230,12 +232,15 @@ func DecryptEvent[BT any, T bcts.ReadWriter[BT]](
 		log.WithError(err).Warning("Decrypting event data error")
 		return
 	}
-	var data T
-	err = json.Unmarshal(dataJson, &data)
+	// var data T
+	// err = json.Unmarshal(dataJson, &data)
+	data, err := bcts.Read[BT, T](dataJson)
 	if err != nil {
-		log.WithError(err).Warning("Unmarshalling event data error")
+		log.WithError(err).
+			Warning("Unmarshalling event data error", "type", e.Metadata.DataType, "len", len(dataJson), "data", dataJson)
 		return
 	}
+	log.Info("decrypting", "data", dataJson, "e.Data", data)
 	out = event.ReadEvent[BT, T]{
 		Event: event.Event[BT, T]{
 			Type:     e.Type,

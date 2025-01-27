@@ -1,72 +1,51 @@
 package sync
 
 import (
+	"fmt"
+	"io"
 	"reflect"
 	"sync"
 
-	"github.com/iidesho/gober/itr"
+	"github.com/iidesho/gober/bcts"
 )
 
-type Slice[T any] interface {
+type SliceBCTS[T any, RT bcts.ReadWriter[T]] interface {
 	Add(data T)
-	AddUnique(data T, eq func(v1, v2 T) bool) bool
 	Set(i int, data T)
 	Get(i int) (data T, ok bool)
 	Len() int
 	Contains(val T) int
-	Slice() []T
+	SliceBCTS() []T
 	Delete(i int) T
-	DeleteWhere(where func(v T) bool)
 	Clear()
 }
 
-func NewSlice[T any]() *slice[T] {
-	return &slice[T]{}
+func NewSliceBCTS[T any, RT bcts.ReadWriter[T]]() *sliceBCTS[T, RT] {
+	return &sliceBCTS[T, RT]{}
 }
 
-type slice[T any] struct {
-	data   []T
+type sliceBCTS[T any, RT bcts.ReadWriter[T]] struct {
+	data   []RT
 	dloc   []*sync.RWMutex
 	rwLock sync.RWMutex
 }
 
-func (s *slice[T]) Add(data T) {
+func (s *sliceBCTS[T, RT]) Add(data T) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
-	s.data = append(s.data, data)
+	s.data = append(s.data, &data)
 	s.dloc = append(s.dloc, &sync.RWMutex{})
 }
 
-func (s *slice[T]) AddUnique(data T, eq func(v1, v2 T) bool) bool {
-	s.rwLock.RLock()
-	for _, v := range s.data {
-		if eq(data, v) {
-			s.rwLock.RUnlock()
-			return false
-		}
-	}
-	s.rwLock.RUnlock()
-	s.rwLock.Lock()
-	defer s.rwLock.Unlock()
-	for _, v := range s.data {
-		if eq(data, v) {
-			return false
-		}
-	}
-	s.data = append(s.data, data)
-	s.dloc = append(s.dloc, &sync.RWMutex{})
-	return true
-}
-
-func (s *slice[T]) Set(i int, data T) {
+func (s *sliceBCTS[T, RT]) Set(i int, data T) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	s.dloc[i].Lock()
 	defer s.dloc[i].Unlock()
-	s.data[i] = data
+	s.data[i] = &data
 }
 
-func (s *slice[T]) Get(i int) (data T, ok bool) {
+func (s *sliceBCTS[T, RT]) Get(i int) (data T, ok bool) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	s.dloc[i].RLock()
@@ -74,17 +53,17 @@ func (s *slice[T]) Get(i int) (data T, ok bool) {
 	if i < 0 || i >= len(s.data) {
 		return
 	}
-	data = s.data[i]
+	data = *s.data[i]
 	return
 }
 
-func (s *slice[T]) Len() int {
+func (s *sliceBCTS[T, RT]) Len() int {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	return len(s.data)
 }
 
-func (s *slice[T]) Contains(val T) int {
+func (s *sliceBCTS[T, RT]) Contains(val T) int {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	/* For simplicity ill just use deep equal for now
@@ -103,7 +82,7 @@ func (s *slice[T]) Contains(val T) int {
 	return -1
 }
 
-func (s *slice[T]) Slice() (data []T) {
+func (s *sliceBCTS[T, RT]) SliceBCTS() (data []T) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	// copy(data, s.data)
@@ -111,13 +90,13 @@ func (s *slice[T]) Slice() (data []T) {
 	for i := range s.data {
 		// Should consider impact of  aquiering and releasing the read lock of each element
 		s.dloc[i].RLock()
-		data[i] = s.data[i]
+		data[i] = *s.data[i]
 		s.dloc[i].RUnlock()
 	}
 	return
 }
 
-func (s *slice[T]) Delete(i int) (d T) {
+func (s *sliceBCTS[T, RT]) Delete(i int) (d T) {
 	var ok bool
 	d, ok = s.Get(i)
 	if !ok {
@@ -130,20 +109,39 @@ func (s *slice[T]) Delete(i int) (d T) {
 	return
 }
 
-func (s *slice[T]) DeleteWhere(where func(v T) bool) {
-	s.rwLock.Lock()
-	defer s.rwLock.Unlock()
-	s.data = itr.NewIterator(s.data).
-		Filter(func(s T) bool {
-			return !where(s)
-		}).Collect()
-	// s.data = append(s.data[:i], s.data[i:]...)
-	s.dloc = s.dloc[:len(s.data)] // All locks should be unlocked at this point
-}
-
-func (s *slice[T]) Clear() {
+func (s *sliceBCTS[T, RT]) Clear() {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	s.dloc = []*sync.RWMutex{}
-	s.data = []T{}
+	s.data = []RT{}
+}
+
+func (s *sliceBCTS[T, RT]) WriteBytes(w io.Writer) (err error) {
+	s.rwLock.RLock()
+	defer s.rwLock.RUnlock()
+	err = bcts.WriteUInt8(w, uint8(0)) // Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteSlice(w, s.data)
+	if err != nil {
+		return
+	}
+	return nil
+}
+
+func (s *sliceBCTS[T, RT]) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid sliceBCTS version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadSlice(r, &s.data)
+	if err != nil {
+		return
+	}
+	return nil
 }

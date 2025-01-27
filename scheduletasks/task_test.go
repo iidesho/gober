@@ -107,7 +107,7 @@ func TestInit(t *testing.T) {
 		return
 	}
 	token := "someTestToken"
-	p, err := consensus.Init(3134, token, local.New())
+	p, err := consensus.Init(3138, token, local.New())
 	if err != nil {
 		t.Fatal(err)
 	}

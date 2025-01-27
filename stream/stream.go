@@ -9,13 +9,15 @@ import (
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/mergedcontext"
-	jsoniter "github.com/json-iterator/go"
+	// jsoniter "github.com/json-iterator/go"
 
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-var json = jsoniter.ConfigDefault
+var log = sbragi.WithLocalScope(sbragi.LevelError)
+
+// var json = jsoniter.ConfigDefault
 
 type eventService[BT any, T bcts.ReadWriter[BT]] struct {
 	store  Stream
@@ -117,28 +119,29 @@ func (es eventService[BT, T]) Stream(
 				return
 			case e := <-s:
 				t := event.TypeFromString(e.Type)
-				sbragi.Trace("read event", "type", t)
+				log.Trace("read event", "type", t)
 				if filterEventTypes {
 					if _, ok := ets[t]; !ok {
-						sbragi.Debug("filtered event", "type", t)
+						log.Debug("filtered event", "type", t)
 						continue
 					}
 				}
 				var metadata event.Metadata
 				err := metadata.ReadBytes(bytes.NewReader(e.Metadata))
 				// err := json.Unmarshal(e.Metadata, &metadata)
-				sbragi.WithError(err).
+				log.WithError(err).
 					Trace("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 				if err != nil {
 					continue
 				}
 				if filter(metadata) {
-					sbragi.Debug("Filtering metadata", "metadata", metadata)
+					log.Debug("Filtering metadata", "metadata", metadata)
 					continue
 				}
-				var d T
-				err = json.Unmarshal(e.Data, &d)
-				sbragi.WithError(err).
+				// var d T
+				// err = json.Unmarshal(e.Data, &d)
+				d, err := bcts.Read[BT, T](e.Data)
+				log.WithError(err).
 					Trace("Unmarshalling event data", "event", string(e.Data), "data", d)
 				if err != nil {
 					continue
@@ -186,7 +189,7 @@ func (es eventService[BT, T]) FilteredEnd(
 	if err != nil {
 		return
 	}
-	sbragi.WithError(err).Info("got stream end", "end", end, "stream", es.Name())
+	log.WithError(err).Info("got stream end", "end", end, "stream", es.Name())
 	for p < end {
 		e := <-s
 		p = e.Position
@@ -197,8 +200,9 @@ func (es eventService[BT, T]) FilteredEnd(
 			}
 		}
 		var metadata event.Metadata
-		err := json.Unmarshal(e.Metadata, &metadata)
-		sbragi.WithError(err).
+		err := metadata.ReadBytes(bytes.NewReader(e.Metadata))
+		// err := json.Unmarshal(e.Metadata, &metadata)
+		log.WithError(err).
 			Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 		if err != nil {
 			continue

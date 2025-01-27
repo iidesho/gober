@@ -1,0 +1,252 @@
+package itr
+
+import (
+	"iter"
+	"log/slog"
+	"sort"
+
+	"github.com/iidesho/bragi/sbragi"
+)
+
+var log = sbragi.WithLocalScope(sbragi.LevelError)
+
+type Iterator[V any] iter.Seq[okerr[V]]
+
+type okerr[T any] struct {
+	ok  T
+	err error
+}
+
+func NewIterator[V any](arr []V) Iterator[V] {
+	return func(yield func(okerr[V]) bool) {
+		for _, v := range arr {
+			if !yield(okerr[V]{ok: v}) {
+				break
+			}
+		}
+	}
+}
+
+func NewMapKeysIterator[K comparable, V any](arr map[K]V) Iterator[K] {
+	return func(yield func(okerr[K]) bool) {
+		for v := range arr {
+			if !yield(okerr[K]{ok: v}) {
+				break
+			}
+		}
+	}
+}
+
+func NewMapValuesIterator[K comparable, V any](arr map[K]V) Iterator[V] {
+	return func(yield func(okerr[V]) bool) {
+		for _, v := range arr {
+			if !yield(okerr[V]{ok: v}) {
+				break
+			}
+		}
+	}
+}
+
+func (seq Iterator[V]) Filter(keep func(s V) bool) Iterator[V] {
+	return func(yield func(okerr[V]) bool) {
+		for v := range seq {
+			if v.err == nil {
+				if !keep(v.ok) {
+					continue
+				}
+			}
+
+			if !yield(v) {
+				break
+			}
+		}
+	}
+}
+
+func (seq Iterator[V]) FilterOk() Iterator[V] {
+	return func(yield func(okerr[V]) bool) {
+		for v := range seq {
+			if v.err != nil {
+				continue
+			}
+
+			if !yield(v) {
+				break
+			}
+		}
+	}
+}
+
+func (seq Iterator[V]) FilterErr() Iterator[V] {
+	return func(yield func(okerr[V]) bool) {
+		for v := range seq {
+			if v.err == nil {
+				continue
+			}
+
+			if !yield(v) {
+				break
+			}
+		}
+	}
+}
+
+func (seq Iterator[V]) Last() V {
+	var v V
+	for o := range seq {
+		if o.err != nil {
+			continue
+		}
+		v = o.ok
+	}
+	return v
+}
+
+func (seq Iterator[V]) First() (v V) {
+	for o := range seq {
+		if o.err != nil {
+			continue
+		}
+		return o.ok
+	}
+	/*
+		var v V
+		seq(func(v2 V) bool {
+			v = v2
+			return false
+		})
+		return v
+	*/
+	return // If no ok value exists we return Zero type
+}
+
+func (seq Iterator[V]) Count() int {
+	c := 0
+	for range seq {
+		c++
+	}
+	return c
+}
+
+func (seq Iterator[V]) CollectOk(log sbragi.ErrorLogger, lvl slog.Level) []V {
+	s := []V{}
+	for o := range seq {
+		if o.err != nil {
+			log.WithoutEscalation().WithError(o.err).Level(lvl, "hidden iter error")
+			continue
+		}
+		s = append(s, o.ok)
+	}
+	return s
+}
+
+func (seq Iterator[V]) CollectErr() []error {
+	s := []error{}
+	for o := range seq {
+		if o.err == nil {
+			continue
+		}
+		s = append(s, o.err)
+	}
+	return s
+}
+
+func (seq Iterator[V]) CollectAll() []error {
+	s := []error{}
+	for o := range seq {
+		if o.err == nil {
+			continue
+		}
+		s = append(s, o.err)
+	}
+	return s
+}
+
+func (seq Iterator[V]) CollectMap(key func(v V) string) map[string]V {
+	s := map[string]V{}
+	for o := range seq {
+		if o.err != nil {
+			continue
+		}
+		s[key(o.ok)] = o.ok
+	}
+	return s
+}
+
+func (seq Iterator[V]) Contains(eq func(v V) bool) bool {
+	contains := false
+	for o := range seq {
+		if o.err != nil {
+			continue
+		}
+		if eq(o.ok) {
+			contains = true
+			break
+		}
+	}
+	return contains
+}
+
+func (seq Iterator[V]) Deduplicate(eq func(v1, v2 V) bool) Iterator[V] {
+	keep := []V{}
+duplicate:
+	for o := range seq {
+		if o.err != nil {
+			continue // Looses errors
+		}
+		for _, k := range keep {
+			if eq(k, o.ok) {
+				continue duplicate
+			}
+		}
+		keep = append(keep, o.ok)
+	}
+	return NewIterator(keep)
+}
+
+func (seq Iterator[V]) EQ(seq2 Iterator[V], eq func(v1, v2 V) bool) bool {
+	c1 := seq.CollectOk(log, sbragi.LevelDebug)
+	c2 := seq2.CollectOk(log, sbragi.LevelDebug)
+	if len(c1) != len(c2) {
+		return false
+	}
+	for i := range c1 {
+		if !eq(c1[i], c2[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (seq Iterator[V]) Sort(swap func(v1, v2 V) bool) Iterator[V] {
+	// Sholid keep the errors and not create a new iterator
+	s := seq.CollectOk(log, sbragi.LevelError)
+	sort.Slice(s, func(i, j int) bool {
+		return swap(s[i], s[j])
+	})
+	return NewIterator(s)
+}
+
+func (seq Iterator[V]) Transform(trans func(s V) (V, error)) Iterator[V] {
+	return func(yield func(okerr[V]) bool) {
+		for o := range seq {
+			if o.err == nil {
+				o.ok, o.err = trans(o.ok)
+			}
+
+			if !yield(o) {
+				break
+			}
+		}
+	}
+}
+
+func keys[T any](m map[string]T) []string {
+	out := make([]string, len(m))
+	i := 0
+	for k := range m {
+		out[i] = k
+		i++
+	}
+	return out
+}

@@ -8,10 +8,7 @@ import (
 
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/discovery"
-	jsoniter "github.com/json-iterator/go"
 )
-
-var json = jsoniter.ConfigDefault
 
 type ReqFunc func(id string) bool
 
@@ -41,7 +38,7 @@ type topic struct {
 }
 
 func (t topic) WriteBytes(w io.Writer) (err error) {
-	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	err = bcts.WriteUInt8(w, uint8(0)) // Version
 	if err != nil {
 		return
 	}
@@ -89,7 +86,7 @@ func (t *topic) ReadBytes(r io.Reader) (err error) {
 	if err != nil {
 		return
 	}
-	//err = bcts.ReadSlice(r, &t.Consents)
+	// err = bcts.ReadSlice(r, &t.Consents)
 	if err != nil {
 		return
 	}
@@ -116,9 +113,45 @@ func (t *topic) ReadBytes(r io.Reader) (err error) {
 }
 
 type consentRequest struct {
-	topic
 	Topic string `json:"topic" xml:"topic,attr" html:"topic"`
 	Id    string `json:"id"    xml:"id,attr"    html:"id"`
+	topic
+}
+
+func (c consentRequest) WriteBytes(w io.Writer) (err error) {
+	err = bcts.WriteUInt8(w, uint8(0)) // Version
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTinyString(w, c.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.WriteTinyString(w, c.Topic)
+	if err != nil {
+		return
+	}
+	return nil
+}
+
+func (c *consentRequest) ReadBytes(r io.Reader) (err error) {
+	var vers uint8
+	err = bcts.ReadUInt8(r, &vers)
+	if err != nil {
+		return
+	}
+	if vers != 0 {
+		return fmt.Errorf("invalid consent version, %s=%d, %s=%d", "expected", 0, "got", vers)
+	}
+	err = bcts.ReadTinyString(r, &c.Id)
+	if err != nil {
+		return
+	}
+	err = bcts.ReadTinyString(r, &c.Topic)
+	if err != nil {
+		return
+	}
+	return nil
 }
 
 type consentResponse struct {
@@ -134,7 +167,7 @@ type Consent struct {
 }
 
 func (c Consent) WriteBytes(w io.Writer) (err error) {
-	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	err = bcts.WriteUInt8(w, uint8(0)) // Version
 	if err != nil {
 		return
 	}

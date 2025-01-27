@@ -3,28 +3,33 @@ package websocket
 import (
 	"context"
 	"errors"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/gobwas/ws"
 	"io"
 	"net"
 	"net/url"
-	"nhooyr.io/websocket"
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/gobwas/ws"
+
+	"nhooyr.io/websocket"
 )
 
-func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerOut chan<- Write[T], err error) {
+func Dial[T any](
+	url *url.URL,
+	ctx context.Context,
+) (readerOut <-chan T, writerOut chan<- Write[T], err error) {
 	log.Info("dailing websocket", "url", url.String())
 	conn, initBuff, _, err := ws.Dial(ctx, url.String())
 	if err != nil {
-		//log.WithError(err).Fatal("while connecting to nerthus", "url", url.String())
+		// log.WithError(err).Fatal("while connecting to nerthus", "url", url.String())
 		return
 	}
 	serverClosed := false
 	reader := make(chan T, BufferSize)
 	writer := make(chan Write[T], BufferSize)
-	tick := time.Second * 20
+	// tick := time.Second * 20
+	tick := time.Millisecond * 20
 	sucker := webSucker[T]{
 		pingTimout: tick,
 		pingTicker: time.NewTicker(tick),
@@ -34,7 +39,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 	go func() {
 		defer func() {
 			if !serverClosed {
-				err = ws.WriteFrame(conn, ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")))
+				err = ws.WriteFrame(
+					conn,
+					ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusNormalClosure, "writer closed")),
+				)
 				log.WithError(err).Info("writing client websocket close frame")
 			}
 			log.WithError(conn.Close()).Info("closing client net conn")
@@ -49,7 +57,10 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 				}
 				err := sucker.Write(write)
 				if err != nil {
-					log.WithError(err).Error("while writing to websocket", "path", url.String(), "type", reflect.TypeOf(write).String(), "data", write) // This could end up logging person sensitive data.
+					log.WithError(err).
+						Error("while writing to websocket", "path", url.String(), "type", reflect.TypeOf(write).String(), "data", write)
+
+						// This could end up logging person sensitive data.
 					if errors.Is(err, net.ErrClosed) {
 						serverClosed = true
 						return
@@ -106,8 +117,8 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 			case <-ctx.Done():
 				return
 			default:
-				//tkr.Stop()
-				//read, err = ReadWebsocket[T](conn, connWriter)
+				// tkr.Stop()
+				// read, err = ReadWebsocket[T](conn, connWriter)
 				read, err = sucker.Read()
 				if err != nil {
 					if errors.Is(err, ErrNoErrorHandled) {
@@ -126,10 +137,13 @@ func Dial[T any](url *url.URL, ctx context.Context) (readerOut <-chan T, writerO
 						log.Info("websocket is closed, client closing...")
 						return
 					}
-					log.WithError(err).Error("while client reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{})) // This could end up logging person sensitive data.
+					log.WithError(err).
+						Error("while client reading from websocket", "type", reflect.TypeOf(read).String(), "isCloseError", errors.Is(err, websocket.CloseError{}))
+
+						// This could end up logging person sensitive data.
 					return
 				}
-				//tkr.Reset(tickD)
+				// tkr.Reset(tickD)
 				reader <- read
 			}
 		}

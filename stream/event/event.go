@@ -11,10 +11,10 @@ import (
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream/event/store"
-	jsoniter "github.com/json-iterator/go"
+	// jsoniter "github.com/json-iterator/go"
 )
 
-var json = jsoniter.ConfigDefault
+// var json = jsoniter.ConfigDefault
 
 type Metadata struct {
 	Created   time.Time                           `json:"created"`
@@ -239,7 +239,7 @@ func Map[OT, NT any, OOT bcts.ReadWriter[OT], NNT bcts.ReadWriter[NT]](
 
 func NewWriteEvent[BT any, T bcts.ReadWriter[BT]](
 	e Event[BT, T],
-) WriteEventReadStatus[BT, T] { //Dont think i like this
+) WriteEventReadStatus[BT, T] { // Dont think i like this
 	return &WriteEvent[BT, T]{
 		event:  e,
 		status: make(chan store.WriteStatus, 1),
@@ -278,10 +278,10 @@ func (e *WriteEvent[BT, T]) Store() *store.WriteEvent {
 		}
 	*/
 	mByte := bytes.NewBuffer([]byte{})
-	bw := bufio.NewWriter(mByte)
-	err := e.event.Metadata.WriteBytes(bw)
+	mBw := bufio.NewWriter(mByte)
+	err := e.event.Metadata.WriteBytes(mBw)
 	if err == nil {
-		err = bw.Flush()
+		err = mBw.Flush()
 	}
 	if err != nil {
 		log.WithError(err).Error("while marshaling metadata")
@@ -291,7 +291,13 @@ func (e *WriteEvent[BT, T]) Store() *store.WriteEvent {
 		return nil
 	}
 
-	dByte, err := json.Marshal(e.event.Data)
+	dByte := bytes.NewBuffer([]byte{})
+	dBw := bufio.NewWriter(dByte)
+	err = e.event.Data.WriteBytes(dBw)
+	if err == nil {
+		err = dBw.Flush()
+	}
+	// dByte, err := json.Marshal(e.event.Data)
 	if err != nil {
 		log.WithError(err).Error("while marshaling data")
 		e.Close(store.WriteStatus{
@@ -302,13 +308,15 @@ func (e *WriteEvent[BT, T]) Store() *store.WriteEvent {
 	return &store.WriteEvent{
 		Event: store.Event{
 			Type:     string(e.event.Type),
-			Data:     dByte,
+			Data:     dByte.Bytes(),
 			Metadata: mByte.Bytes(),
 		},
 		Status: e.status,
 	}
 }
 
-type ByteEvent Event[bcts.Bytes, *bcts.Bytes]
-type ByteWriteEvent WriteEvent[bcts.Bytes, *bcts.Bytes]
-type ByteReadEvent ReadEvent[bcts.Bytes, *bcts.Bytes]
+type (
+	ByteEvent      Event[bcts.Bytes, *bcts.Bytes]
+	ByteWriteEvent WriteEvent[bcts.Bytes, *bcts.Bytes]
+	ByteReadEvent  ReadEvent[bcts.Bytes, *bcts.Bytes]
+)

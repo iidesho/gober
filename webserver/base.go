@@ -9,6 +9,9 @@ import (
 	"net/url"
 	"os"
 	"runtime/debug"
+	"strconv"
+	"sync/atomic"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
@@ -22,6 +25,8 @@ import (
 	"github.com/joho/godotenv"
 	jsoniter "github.com/json-iterator/go"
 )
+
+var log = sbragi.WithLocalScope(sbragi.LevelError)
 
 const (
 	CONTENT_TYPE      = "Content-Type"
@@ -45,11 +50,11 @@ var json = jsoniter.Config{
 func init() {
 	err := godotenv.Load("local_override.properties")
 	if err != nil {
-		sbragi.WithoutEscalation().WithError(err).
+		log.WithoutEscalation().WithError(err).
 			Debug("Error loading local_override.properties file", "file", "local_override.properties")
 		err = godotenv.Load(".env")
 		if err != nil {
-			sbragi.WithoutEscalation().
+			log.WithoutEscalation().
 				WithError(err).
 				Debug("Error loading .env file", "file", ".env")
 		}
@@ -58,20 +63,18 @@ func init() {
 	if logDir != "" {
 		bragi.SetPrefix(health.Name)
 		handler, err := sbragi.NewHandlerInFolder(logDir)
-		if err != nil {
-			sbragi.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
-		}
+		log.WithError(err).Fatal("Unable to sett logdir", "path", logDir)
+
 		handler.MakeDefault()
 		sbragiger, err := sbragi.NewLogger(&handler)
-		if err != nil {
-			sbragi.WithError(err).Fatal("Unable create new logger", "handler", handler)
-		}
+		log.WithError(err).Fatal("Unable create new logger", "handler", handler)
+
 		sbragiger.SetDefault()
-		//defer handler.Cancel()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
+		// defer handler.Cancel()    removed because it should run for the entirety of the program and will be cleaned up by the os. Reff: Russ Cox comments on AtExit
 	}
 	if os.Getenv("debug.port") != "" {
 		go func() {
-			sbragi.WithError(http.ListenAndServe(":"+os.Getenv("debug.port"), nil)).
+			log.WithError(http.ListenAndServe(":"+os.Getenv("debug.port"), nil)).
 				Info("while running debug server", "port", os.Getenv("debug.port"))
 		}()
 	}
@@ -81,6 +84,7 @@ type Server interface {
 	Base() fiber.Router
 	API() fiber.Router
 	Run()
+	Shutdown()
 	Port() uint16
 	Url() (u *url.URL)
 }
@@ -96,7 +100,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 	h := health.Init()
 	s := server{
 		r: fiber.New(fiber.Config{
-			//Prefork:           true,
+			// Prefork:           true,
 			AppName:           health.Name,
 			StreamRequestBody: true,
 			EnablePrintRoutes: true,
@@ -105,7 +109,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 			// Override default error handler
 			ErrorHandler: func(c *fiber.Ctx, err error) error {
 				// Status code defaults to 500
-				status := http.StatusInternalServerError //default error status
+				status := http.StatusInternalServerError // default error status
 
 				// Retrieve the custom status code if it's a *fiber.Error
 				var e *fiber.Error
@@ -138,17 +142,46 @@ func Init(port uint16, from_base bool) (Server, error) {
 	if !from_base && health.Name != "" {
 		healthPath = "/" + health.Name + "/health"
 	}
+	QPSs := make([]atomic.Uint64, 60)
+	for i := range QPSs {
+		QPSs[i] = atomic.Uint64{}
+	}
+	go func() {
+		t := time.Now().Add(time.Second * 20)
+		t = time.Date(
+			t.Year(),
+			t.Month(),
+			t.Day(),
+			t.Hour(),
+			t.Minute(),
+			58, // Sleep until 58 so we can clear second 0 when we are on second 59
+			0,
+			t.Location(),
+		)
+		time.Sleep(
+			time.Until(
+				t,
+			),
+		)
+		i := 0
+		timer := time.NewTicker(time.Second)
+		for range timer.C {
+			QPSs[i].Store(0)
+			i++
+			if i > 59 {
+				i = 0
+			}
+		}
+	}()
 	s.r.Use(func(c *fiber.Ctx) error {
-
+		start := time.Now()
+		QPSs[start.Second()].Add(1)
 		if string(c.Context().Path()) == healthPath {
 			return c.Next()
 		}
-		//start := time.Now()
 		err := c.Next()
-		/*
-			sbragi.WithError(err).
-				Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
-		*/
+		sbragi.WithError(err).
+			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
 		return err
 	})
 	s.r.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))
@@ -172,11 +205,40 @@ func Init(port uint16, from_base bool) (Server, error) {
 	} else {
 		s.api = s.base.Group("/" + health.Name)
 	}
-	//sbragi.Fatal("formats", "json", string(hrj), "time", string(bv), "hrni", hrni, "hrne", hrne)
+	// sbragi.Fatal("formats", "json", string(hrj), "time", string(bv), "hrni", hrni, "hrne", hrne)
 	s.api.Get("/health", func(c *fiber.Ctx) error {
 		return h.WriteHealthReport(c)
-		//return c.JSON(hr)
-		//return c.JSON(h.GetHealthReport())
+		// return c.JSON(hr)
+		// return c.JSON(h.GetHealthReport())
+	})
+	s.api.Get("/qps", func(c *fiber.Ctx) error {
+		tot := 0
+		i := time.Now().Second() + 50
+		for i2 := range 10 {
+			tot += int(QPSs[(i+i2)%60].Load())
+		}
+		_, err := c.WriteString(strconv.Itoa(tot / 10))
+		return err
+		// return c.JSON(hr)
+		// return c.JSON(h.GetHealthReport())
+	})
+	s.api.Get("/qps_sec", func(c *fiber.Ctx) error {
+		_, err := c.WriteString(
+			strconv.Itoa(int(QPSs[time.Now().Add(-time.Second).Second()].Load())),
+		)
+		return err
+		// return c.JSON(hr)
+		// return c.JSON(h.GetHealthReport())
+	})
+	s.api.Get("/qps_min", func(c *fiber.Ctx) error {
+		tot := 0
+		for qps := range QPSs {
+			tot += int(QPSs[qps].Load())
+		}
+		_, err := c.WriteString(strconv.Itoa(tot / 60))
+		return err
+		// return c.JSON(hr)
+		// return c.JSON(h.GetHealthReport())
 	})
 	user := os.Getenv("debug.user")
 	pass := os.Getenv("debug.pass")
@@ -190,16 +252,16 @@ func Init(port uint16, from_base bool) (Server, error) {
 			switch c.Params("type") {
 			case "/profile":
 				return adaptor.HTTPHandlerFunc(pprof.Profile)(c)
-				//pprof.Profile(c.Writer, c.Request)
+				// pprof.Profile(c.Writer, c.Request)
 			case "/trace":
 				return adaptor.HTTPHandlerFunc(pprof.Trace)(c)
-				//pprof.Trace(c.Writer, c.Request)
+				// pprof.Trace(c.Writer, c.Request)
 			case "/symbol":
 				return adaptor.HTTPHandlerFunc(pprof.Symbol)(c)
-				//pprof.Symbol(c.Writer, c.Request)
+				// pprof.Symbol(c.Writer, c.Request)
 			default:
 				return adaptor.HTTPHandlerFunc(pprof.Index)(c)
-				//pprof.Index(c.Writer, c.Request)
+				// pprof.Index(c.Writer, c.Request)
 			}
 		})
 	}
@@ -209,15 +271,18 @@ func Init(port uint16, from_base bool) (Server, error) {
 func (s *server) Base() fiber.Router {
 	return s.base
 }
+
 func (s *server) API() fiber.Router {
 	return s.api
 }
 
 func (s *server) Run() {
-	err := s.r.Listen(fmt.Sprintf(":%d", s.Port()))
-	if err != nil {
-		sbragi.WithError(err).Fatal("while starting or running webserver")
-	}
+	sbragi.WithError(s.r.Listen(fmt.Sprintf(":%d", s.Port()))).
+		Fatal("while starting or running webserver")
+}
+
+func (s *server) Shutdown() {
+	sbragi.WithError(s.r.Shutdown()).Fatal("while shutdown webserver")
 }
 
 func (s *server) Port() uint16 {
@@ -228,7 +293,7 @@ func (s *server) Url() (u *url.URL) {
 	u = &url.URL{}
 	u.Scheme = "http"
 	u.Host = fmt.Sprintf("%s:%d", health.GetOutboundIP(), s.Port())
-	u.Path = "" //strings.TrimSuffix(s.base.BasePath(), "/")
+	u.Path = "" // strings.TrimSuffix(s.base.BasePath(), "/")
 	return
 }
 

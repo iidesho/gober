@@ -3,6 +3,7 @@ package saga_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,16 +12,21 @@ import (
 	"github.com/iidesho/gober/bcts"
 	saga "github.com/iidesho/gober/linearSaga"
 	"github.com/iidesho/gober/stream/event/store/inmemory"
+	"github.com/iidesho/gober/webserver"
 )
 
-var s saga.Saga[bcts.Nil, *bcts.Nil]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
-var testCryptKey = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
-var log = sbragi.WithLocalScope(sbragi.LevelDebug)
+var (
+	s               saga.Saga[bcts.TinyString, *bcts.TinyString]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+	testCryptKey    = "aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="
+	log             = sbragi.WithLocalScope(sbragi.LevelDebug)
+)
 
-var STREAM_NAME = "TestSaga_" + uuid.Must(uuid.NewV7()).String()
-var wg = &sync.WaitGroup{}
+var (
+	STREAM_NAME = "TestSaga_" + uuid.Must(uuid.NewV7()).String()
+	wg          = &sync.WaitGroup{}
+)
 
 type dd struct {
 	Name string `json:"name"`
@@ -36,16 +42,23 @@ type act1 struct {
 	State saga.State
 }
 
-func (a *act1) Execute(*bcts.Nil) error {
+func (a *act1) Execute(s *bcts.TinyString) error {
 	defer wg.Done()
-	log.Info(a.Inner)
+	log.Info(a.Inner, "s", s)
+	*s = bcts.TinyString(fmt.Sprint(*s, "-", a.Inner))
 	a.State = saga.StateSuccess
 	return nil
 }
-func (a act1) Reduce(*bcts.Nil) error {
+
+func (a act1) Reduce(*bcts.TinyString) error {
 	return nil
 }
-func (a act1) Status(*bcts.Nil) (saga.State, error) {
+
+func (a act1) Status(s *bcts.TinyString) (saga.State, error) {
+	sbragi.Info("act1 status", "data", *s, "contains", strings.Contains(string(*s), "init"))
+	if !strings.Contains(string(*s), "init") {
+		return saga.StateInvalid, nil
+	}
 	return a.State, nil
 }
 
@@ -56,7 +69,7 @@ type act2 struct {
 	State  saga.State
 }
 
-func (a *act2) Execute(*bcts.Nil) error {
+func (a *act2) Execute(*bcts.TinyString) error {
 	if !a.Failed {
 		a.Failed = true
 		return saga.ErrRetryable
@@ -66,10 +79,12 @@ func (a *act2) Execute(*bcts.Nil) error {
 	a.State = saga.StateSuccess
 	return nil
 }
-func (a act2) Reduce(*bcts.Nil) error {
+
+func (a act2) Reduce(*bcts.TinyString) error {
 	return nil
 }
-func (a act2) Status(*bcts.Nil) (saga.State, error) {
+
+func (a act2) Status(*bcts.TinyString) (saga.State, error) {
 	return a.State, nil
 }
 
@@ -77,19 +92,25 @@ var a1 = act1{
 	Inner: "test",
 	State: saga.StatePending,
 }
+
 var a2 = act2{
 	Pre:   "bef",
 	Post:  "aft",
 	State: saga.StatePending,
 }
+
+var a2D = act2{
+	State: saga.StateSuccess,
+}
+
 var a3 = act1{
 	Inner: "test2",
 	State: saga.StatePending,
 }
 
-var stry = saga.Story[bcts.Nil, *bcts.Nil]{
+var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 	Name: "test",
-	Actions: []saga.Action[bcts.Nil, *bcts.Nil]{
+	Actions: []saga.Action[bcts.TinyString, *bcts.TinyString]{
 		{
 			Id:      "action_1",
 			Handler: &a1,
@@ -102,6 +123,15 @@ var stry = saga.Story[bcts.Nil, *bcts.Nil]{
 		{
 			Id:      "action_2",
 			Handler: &a2,
+			/*
+				Status:  a2.Status,
+				Execute: a2.Execute,
+				Reduce:  a2.Reduce,
+			*/
+		},
+		{
+			Id:      "action_2_pre_done",
+			Handler: &a2D,
 			/*
 				Status:  a2.Status,
 				Execute: a2.Execute,
@@ -126,13 +156,18 @@ func TestInit(t *testing.T) {
 		t.Error(err)
 		return
 	}
+	serv, err := webserver.Init(3132, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := saga.Init(store, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
+	edt, err := saga.Init(store, serv, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	s = edt
+	go serv.Run()
 }
 
 var id uuid.UUID
@@ -140,7 +175,8 @@ var id uuid.UUID
 func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
 	var err error
-	id, err = s.ExecuteFirst(nil)
+	v := bcts.TinyString("init")
+	id, err = s.ExecuteFirst(&v)
 	if err != nil {
 		t.Error(err)
 		return
@@ -168,10 +204,15 @@ func BenchmarkSaga(b *testing.B) {
 		b.Error(err)
 		return
 	}
+	serv, err := webserver.Init(3132, true)
+	if err != nil {
+		b.Fatal(err)
+	}
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 	edt, err := saga.Init(
 		store,
+		serv,
 		"1.0.0",
 		fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N),
 		stry,
@@ -183,6 +224,7 @@ func BenchmarkSaga(b *testing.B) {
 		return
 	}
 	defer edt.Close()
+	go serv.Run()
 	for i := 0; i < b.N; i++ {
 		_, err = edt.ExecuteFirst(nil)
 		if err != nil {

@@ -19,7 +19,7 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelDebug)
+var log = sbragi.WithLocalScope(sbragi.LevelError)
 
 type Tasks[BT, T any] interface {
 	Create(string, time.Time, time.Duration, T) error
@@ -90,7 +90,8 @@ func (t *tm[BT, T]) ReadBytes(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	return t.Task.ReadBytes(r)
+	t.Task, err = bcts.ReadReader[BT, T](r)
+	return err
 }
 
 const timeoutOffsett = time.Second * 5
@@ -149,13 +150,13 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 			return timeout + timeoutOffsett
 		},
 		ctx,
-	) //This 15 min timout might be a huge issue
+	) // This 15 min timout might be a huge issue
 	if err != nil {
 		return
 	}
 	t.es = es
 
-	//Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
+	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
 	exec := make(chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]])
 	for i := 0; i < workers; i++ {
 		go func(events <-chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]]) {
@@ -177,7 +178,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						return
 					}
 					log.Trace("executed task", "event", e)
-					//Since the context can have timedout and thus another one could have been selected. This will create duplecate and competing tasks.
+					// Since the context can have timedout and thus another one could have been selected. This will create duplecate and competing tasks.
 					select {
 					case <-e.CTX.Done():
 						log.Warning(
@@ -212,7 +213,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	go t.handler(timeout, skipable, exec)
 	go func() {
 		for range t.es.Completed() {
-		} //Discard all completed events
+		} // Discard all completed events
 	}()
 
 	ed = &t
@@ -225,7 +226,7 @@ func (s *scheduledtasks[BT, T]) handler(
 	execChan chan competing.ReadEventWAcc[tm[BT, T], *tm[BT, T]],
 ) {
 	for e := range s.es.Stream() {
-		//Could be valuable to keep the task collection here
+		// Could be valuable to keep the task collection here
 		log.Info(
 			"won event",
 			"name",
@@ -244,7 +245,7 @@ func (s *scheduledtasks[BT, T]) handler(
 		if skipable && e.Data.Metadata.Interval != NoInterval &&
 			time.Now().After(e.Data.Metadata.After.Add(e.Data.Metadata.Interval)) {
 			log.Trace("skipping event, execution to late", "id", e.Data.Metadata.Id)
-			//My issue is right here, it is not getting acepted as written
+			// My issue is right here, it is not getting acepted as written
 			err := s.create(
 				e.Data.Metadata.Id,
 				e.Data.Metadata.After.Add(e.Data.Metadata.Interval),

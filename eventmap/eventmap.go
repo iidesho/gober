@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/consumer"
@@ -16,15 +16,17 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
+var log = sbragi.WithLocalScope(sbragi.LevelError)
+
 type EventMap[BT any, T bcts.ReadWriter[BT]] interface {
-	Get(key bcts.TinyString) (data T, err error)
-	Exists(key bcts.TinyString) (exists bool)
+	Get(key string) (data BT, err error)
+	Exists(key string) (exists bool)
 	Len() (l int)
-	Keys() (keys []bcts.TinyString)
-	Range(f func(key bcts.TinyString, value T) bool)
-	GetMap() map[bcts.TinyString]T
-	Delete(key bcts.TinyString) (err error)
-	Set(key bcts.TinyString, data T) (err error)
+	Keys() (keys []string)
+	Range(f func(key string, value BT) bool)
+	GetMap() map[string]BT
+	Delete(key string) (err error)
+	Set(key string, data T) (err error)
 	Stream(
 		eventTypes []event.Type,
 		from store.StreamPosition,
@@ -35,7 +37,7 @@ type EventMap[BT any, T bcts.ReadWriter[BT]] interface {
 
 type mapData[BT any, T bcts.ReadWriter[BT]] struct {
 	es               consumer.Consumer[kv[BT, T], *kv[BT, T]]
-	data             *sync.Map[BT, T]
+	data             sync.Map[string, BT]
 	provider         stream.CryptoKeyProvider
 	eventTypeName    string
 	eventTypeVersion string
@@ -59,7 +61,13 @@ func (k *kv[BT, T]) ReadBytes(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	return k.Value.ReadBytes(r)
+	k.Value = new(BT)
+	err = k.Value.ReadBytes(r)
+	if err != nil {
+		return err
+	}
+	return nil
+	// return k.Value.ReadBytes(r)
 }
 
 func Init[BT any, T bcts.ReadWriter[BT]](
@@ -71,7 +79,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 ) (ed EventMap[BT, T], err error) {
 	es, err := consumer.New[kv[BT, T]](pers, p, ctx)
 	m := mapData[BT, T]{
-		data:             sync.NewMap[BT, T](),
+		data:             sync.NewMap[string, BT](),
 		eventTypeName:    eventType,
 		eventTypeVersion: dataTypeVersion,
 		provider:         p,
@@ -96,10 +104,10 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						opt(e.Type, &e.Data.Value)
 					}
 					if e.Type == event.Deleted {
-						m.data.Delete(bcts.TinyString(e.Data.Key))
+						m.data.Delete(e.Data.Key)
 						return
 					}
-					m.data.Set(bcts.TinyString(e.Data.Key), e.Data.Value)
+					m.data.Set(e.Data.Key, *e.Data.Value)
 				}()
 			}
 		}
@@ -138,7 +146,7 @@ func (m *mapData[BT, T]) Stream(
 	return
 }
 
-func (m *mapData[BT, T]) Get(key bcts.TinyString) (data T, err error) {
+func (m *mapData[BT, T]) Get(key string) (data BT, err error) {
 	ed, ok := m.data.Get(key)
 	if !ok {
 		err = ErrKeyNotFound
@@ -151,9 +159,9 @@ func (m *mapData[BT, T]) Len() (l int) {
 	return len(m.Keys())
 }
 
-func (m *mapData[BT, T]) Keys() (keys []bcts.TinyString) {
-	keys = make([]bcts.TinyString, 0)
-	m.Range(func(k bcts.TinyString, _ T) bool {
+func (m *mapData[BT, T]) Keys() (keys []string) {
+	keys = make([]string, 0)
+	m.Range(func(k string, _ BT) bool {
 		keys = append(keys, k)
 		return true
 	})
@@ -168,7 +176,7 @@ func (m *mapData[BT, T]) Keys() (keys []bcts.TinyString) {
 // is stored or deleted concurrently (including by f), Range may reflect any
 // mapping for that key from any point during the Range call. Range does not
 // block other methods on the receiver; even f itself may call any method on m.
-func (m *mapData[BT, T]) Range(f func(key bcts.TinyString, value T) bool) {
+func (m *mapData[BT, T]) Range(f func(key string, value BT) bool) {
 	for k, v := range m.GetMap() {
 		if !f(k, v) {
 			return
@@ -176,17 +184,17 @@ func (m *mapData[BT, T]) Range(f func(key bcts.TinyString, value T) bool) {
 	}
 }
 
-func (m *mapData[BT, T]) GetMap() map[bcts.TinyString]T {
+func (m *mapData[BT, T]) GetMap() map[string]BT {
 	return m.data.GetMap()
 }
 
-func (m *mapData[BT, T]) Exists(key bcts.TinyString) (exists bool) {
-	_, exists = m.data.Get(bcts.TinyString(key))
+func (m *mapData[BT, T]) Exists(key string) (exists bool) {
+	_, exists = m.data.Get(key)
 	return
 }
 
 func (m *mapData[BT, T]) createEvent(
-	key bcts.TinyString,
+	key string,
 	data T,
 ) (e event.Event[kv[BT, T], *kv[BT, T]], err error) {
 	eventType := event.Created
@@ -209,7 +217,7 @@ func (m *mapData[BT, T]) createEvent(
 	return
 }
 
-func (m *mapData[BT, T]) Delete(key bcts.TinyString) (err error) {
+func (m *mapData[BT, T]) Delete(key string) (err error) {
 	e := event.Event[kv[BT, T], *kv[BT, T]]{
 		Type: event.Deleted,
 		Data: &kv[BT, T]{
@@ -223,11 +231,11 @@ func (m *mapData[BT, T]) Delete(key bcts.TinyString) (err error) {
 	}
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
-	<-we.Done() //Missing error
+	<-we.Done() // Missing error
 	return
 }
 
-func (m *mapData[BT, T]) Set(key bcts.TinyString, data T) (err error) {
+func (m *mapData[BT, T]) Set(key string, data T) (err error) {
 	log.Trace("Set and wait start", "key", key)
 	e, err := m.createEvent(key, data)
 	if err != nil {
@@ -235,7 +243,7 @@ func (m *mapData[BT, T]) Set(key bcts.TinyString, data T) (err error) {
 	}
 	we := event.NewWriteEvent(e)
 	m.es.Write() <- we
-	<-we.Done() //Missing error
+	<-we.Done() // Missing error
 	log.Trace("Set and wait end", "key", key)
 	return
 }

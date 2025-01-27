@@ -7,11 +7,16 @@ import (
 	"net/http"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/sync"
 	"github.com/iidesho/gober/webserver"
+	jsoniter "github.com/json-iterator/go"
 )
+
+var log = sbragi.WithLocalScope(sbragi.LevelInfo)
+
+var json = jsoniter.ConfigFastest
 
 type Consensus interface {
 	Request(id string) bool
@@ -19,9 +24,9 @@ type Consensus interface {
 }
 
 type consensus struct {
+	reqs  *sync.MapBCTS[sync.Stack[topic, *topic], *sync.Stack[topic, *topic]]
+	topic string
 	server
-	reqs    *sync.Map[sync.Stack[topic, *topic], *sync.Stack[topic, *topic]]
-	topic   string
 	timeout time.Duration
 }
 
@@ -31,7 +36,7 @@ func (cons *consensus) Request(id string) bool {
 		cr, ok := crs.Peek()
 		if ok && (cr.State == Completed || cr.Timeout.After(time.Now())) {
 			log.Warning("consensus request already exists", "state", cr.State)
-			return false //len(cr.Consents) > len(cons.disc.Servers())/2
+			return false // len(cr.Consents) > len(cons.disc.Servers())/2
 		}
 
 	}
@@ -46,7 +51,7 @@ func (cons *consensus) Request(id string) bool {
 		topic: t,
 	}
 	crs.Push(&t)
-	b, _ := json.Marshal(cr) //Should not be able to error
+	b, _ := json.Marshal(cr) // Should not be able to error
 	for _, ip := range cons.disc.Servers() {
 		func() {
 			req, err := http.NewRequest(
@@ -125,7 +130,7 @@ func (cons *consensus) Request(id string) bool {
 		crStored.State = Consented
 	}
 	log.Debug("request state", "stored", crStored, "req", cr)
-	//Missing conseed flow
+	// Missing conseed flow
 	return won
 }
 
@@ -140,7 +145,7 @@ func (cons *consensus) Completed(id string) {
 		log.Warning("compleded a empty consensus", "topic", cons.topic, "id", id)
 		return
 	}
-	//TODO: Need to look at what to do when the newest consensus was not won by completer.
+	// TODO: Need to look at what to do when the newest consensus was not won by completer.
 	c.State = Completed
-	//TODO: Should inform all other servers of completion
+	// TODO: Should inform all other servers of completion
 }

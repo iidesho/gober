@@ -1,14 +1,15 @@
-package consensus
+package consensus_test
 
 import (
 	"testing"
 	"time"
 
 	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/consensus"
 	"github.com/iidesho/gober/discovery/local"
 )
 
-var c Consensus
+var c consensus.Consensus
 
 func TestInit(t *testing.T) {
 	dl, _ := log.NewDebugLogger()
@@ -16,7 +17,7 @@ func TestInit(t *testing.T) {
 	log.Info("Initializing consensus")
 	token := "someTestToken"
 	topic := "test"
-	p, err := Init(3132, token, local.New())
+	p, err := consensus.Init(3132, token, local.New())
 	if err != nil {
 		t.Fatal(err)
 	}

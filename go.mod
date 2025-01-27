@@ -12,14 +12,13 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.5
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/google/uuid v1.6.0
-	github.com/iidesho/bragi v0.7.5
+	github.com/iidesho/bragi v0.7.6
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
 	github.com/nutsdb/nutsdb v1.0.4
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.25.0
 	golang.org/x/exp v0.0.0-20240707233637-46b078467d37
-	golang.org/x/tools v0.23.0
 	nhooyr.io/websocket v1.8.11
 )
 

@@ -5,7 +5,6 @@ import (
 	"io"
 	"sync"
 
-	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 )
 
@@ -62,8 +61,7 @@ func (s *Que[BT, T]) Pop() (data T, ok bool) {
 		s.has = false
 		s.signal = make(chan struct{})
 	} else {
-		//log.Info("poped que", "el", data, "next", s.data[0])
-		log.Trace("poped que")
+		// log.Info("poped que", "el", data, "next", s.data[0])
 	}
 	return
 }
@@ -98,7 +96,7 @@ func (s *Que[BT, T]) HasData() <-chan struct{} {
 func (s *Que[BT, T]) WriteBytes(w io.Writer) (err error) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
-	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	err = bcts.WriteUInt8(w, uint8(0)) // Version
 	if err != nil {
 		return
 	}

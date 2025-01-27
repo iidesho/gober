@@ -8,17 +8,22 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/gobwas/ws"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	jsoniter "github.com/json-iterator/go"
 )
 
-var json = jsoniter.ConfigDefault
+var (
+	log  = sbragi.WithLocalScope(sbragi.LevelError)
+	json = jsoniter.ConfigDefault
+)
 
 var BufferSize = 100
 
@@ -42,7 +47,8 @@ func ServeFiber[T any](
 			clientClosed := false
 			reader := make(chan T, BufferSize)
 			writer := make(chan Write[T], BufferSize)
-			tick := time.Second * 50
+			// tick := time.Second * 50
+			tick := time.Millisecond * 50
 			sucker := webSucker[T]{
 				pingTimout: tick,
 				pingTicker: time.NewTicker(tick),
@@ -375,17 +381,28 @@ func (sucker *webSucker[T]) Write(write Write[T]) (err error) {
 			close(write.Err)
 		}
 	}()
-	payload, err := json.Marshal(write.Data)
-	if err != nil {
-		if write.Err != nil {
-			write.Err <- err
-		}
-		return err
-	}
 	var frame []byte
-	frame, err = ws.CompileFrame(ws.NewTextFrame(payload))
-	if err != nil {
-		return
+	var x interface{} = write.Data
+	var ok bool
+	if frame, ok = x.([]byte); ok {
+		sbragi.Trace("wrote package", "n", len(frame))
+		frame, err = ws.CompileFrame(ws.NewBinaryFrame(frame))
+		if err != nil {
+			return err
+		}
+	} else {
+		payload, err := json.Marshal(write.Data)
+		if err != nil {
+			if write.Err != nil {
+				write.Err <- err
+			}
+			return err
+		}
+		frame, err = ws.CompileFrame(ws.NewTextFrame(payload))
+		if err != nil {
+			return err
+		}
+		sbragi.Trace("wrote package", "n", len(payload))
 	}
 	err = sucker.WriteConn(frame)
 	/*
@@ -471,118 +488,57 @@ func (sucker *webSucker[T]) Read() (out T, err error) {
 
 	if header.OpCode == ws.OpContinuation {
 		_, err = io.CopyN(io.Discard, sucker.conn, header.Length)
+		sbragi.Error("continuation is not implemented")
 		err = ErrNotImplemented
 		return
 	}
 
 	if header.OpCode == ws.OpBinary {
-		_, err = io.CopyN(io.Discard, sucker.conn, header.Length)
-		err = ErrNotImplemented
-		return
-	}
-
-	payload := make([]byte, header.Length)
-	_, err = io.ReadFull(sucker.conn, payload)
-	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			err = io.EOF
-			return
-		}
-		return
-	}
-	if header.Masked {
-		ws.Cipher(payload, header.Mask, 0)
-	}
-	err = json.Unmarshal(payload, &out)
-	return
-}
-
-/*
-func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err error) {
-	header, err := ws.ReadHeader(conn)
-	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			err = io.EOF
-			return
-		}
-		return
-	}
-	if header.OpCode == ws.OpClose {
-		err = io.EOF
-		return
-	}
-	if header.OpCode == ws.OpPing {
-		log.Info("ping received, ponging...")
-		//Could also use ws.NewPingFrame(body)
 		payload := make([]byte, header.Length)
-		_, err = io.ReadFull(conn, payload)
+		n, err := io.ReadFull(sucker.conn, payload)
 		if err != nil {
-			return
-		}
-
-		writer <- append(websocketHeaderBytes(ws.Header{ //This can write to a closed channel
-			Fin:    true,
-			Rsv:    0,
-			OpCode: ws.OpPong,
-			Masked: false,
-			Mask:   [4]byte{},
-			Length: header.Length,
-		}), payload...)
-		/*
-			err = ws.WriteHeader(conn, ws.Header{
-				Fin:    true,
-				Rsv:    0,
-				OpCode: ws.OpPong,
-				Masked: false,
-				Mask:   [4]byte{},
-				Length: header.Length,
-			})
-			if err != nil {
-				return
+			if errors.Is(err, net.ErrClosed) {
+				err = io.EOF
+				return out, err
 			}
-			_, err = io.CopyN(conn, conn, header.Length)
-*/ /*
-		err = ErrNoErrorHandled
-		return
-	}
-
-	/*
-		1. Should verify against outstanding ping TODO
-		2. Should ignore if no outstanding ping
-*/ /*
-	if header.OpCode == ws.OpPong {
-		log.Info("pong received")
-		if header.Length == 0 {
-			err = ErrNoErrorHandled
-			return
+			return out, err
 		}
-		_, err = io.CopyN(io.Discard, conn, header.Length)
-		err = ErrNoErrorHandled
-		return
-	}
+		sbragi.Trace("read package", "n", n)
 
-	if header.OpCode == ws.OpContinuation {
-		_, err = io.CopyN(io.Discard, conn, header.Length)
-		err = ErrNotImplemented
-		return
-	}
+		// p := unsafe.Pointer(&out) // Or unsafe.Pointer(&arr[0])
+		// data := unsafe.Slice((*byte)(p), header.Length)
+		/*
+			unsafeOut := (*reflect.SliceHeader)(unsafe.Pointer(&out))
+			unsafeOut.Data = uintptr(unsafe.Pointer(&payload))
+			unsafeOut.Len = n
+			unsafeOut.Cap = n
+		*/
+		out = *(*T)(unsafe.Pointer(&payload))
 
-	if header.OpCode == ws.OpBinary {
-		_, err = io.CopyN(io.Discard, conn, header.Length)
-		err = ErrNotImplemented
-		return
+		/*
+			if n < 30 {
+				sbragi.Info(
+					"data",
+					"read",
+					fmt.Sprintf("%d", payload),
+					"converted",
+					fmt.Sprintf("%v", out),
+				)
+			}
+		*/
+
+		runtime.KeepAlive(payload)
+
+		/*
+			sbragi.Error("binary is not implemented")
+			_, err = io.CopyN(io.Discard, sucker.conn, header.Length)
+			err = ErrNotImplemented
+		*/
+		return out, nil
 	}
 
 	payload := make([]byte, header.Length)
-	_, err = io.ReadFull(conn, payload) //Could be an idea to change this to ReadAll to not have EOF errors. Or silence them ourselves
-	/*
-		total, err := conn.Read(payload)
-		var n int
-		for err == nil && total < int(header.Length) {
-			n, err = conn.Read(payload[total:])
-			total += n
-		}
-*/ /*
+	n, err := io.ReadFull(sucker.conn, payload)
 	if err != nil {
 		if errors.Is(err, net.ErrClosed) {
 			err = io.EOF
@@ -590,58 +546,13 @@ func ReadWebsocket[T any](conn io.Reader, writer chan<- []byte) (out T, err erro
 		}
 		return
 	}
+	sbragi.Trace("read package", "n", n)
 	if header.Masked {
 		ws.Cipher(payload, header.Mask, 0)
 	}
 	err = json.Unmarshal(payload, &out)
 	return
 }
-
-
-func WriteWebsocket[T any](writer chan<- []byte, write Write[T]) error {
-	defer func() {
-		if write.Err != nil {
-			close(write.Err)
-		}
-	}()
-	payload, err := json.Marshal(write.Data)
-	if err != nil {
-		if write.Err != nil {
-			write.Err <- err
-		}
-		return err
-	}
-	writer <- append(websocketHeaderBytes(ws.Header{
-		Fin:    true,
-		Rsv:    0,
-		OpCode: ws.OpText,
-		Masked: false,
-		Mask:   [4]byte{},
-		Length: int64(len(payload)),
-	}), payload...)
-	/*
-		err = ws.WriteFrame(conn, ws.Frame{
-			Header: ws.Header{
-				Fin:    true,
-				Rsv:    0,
-				OpCode: ws.OpText,
-				Masked: false,
-				Mask:   [4]byte{},
-				Length: int64(len(payload)),
-			},
-			Payload: payload,
-		})
-		//_, err = conn.Write(payload)
-		if err != nil {
-			if write.Err != nil {
-				write.Err <- err
-			}
-			return err
-		}
-*/ /*
-	return nil
-}
-*/
 
 func websocketHeaderBytes(h ws.Header) []byte {
 	bts := make([]byte, ws.MaxHeaderSize)

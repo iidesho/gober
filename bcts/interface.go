@@ -1,8 +1,13 @@
 package bcts
 
 import (
+	"fmt"
 	"io"
 )
+
+func ToString[T any, RT Reader[T]](v RT) string {
+	return fmt.Sprint(*v)
+}
 
 type Reader[T any] interface {
 	ReadBytes(io.Reader) error

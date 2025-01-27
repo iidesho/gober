@@ -10,12 +10,13 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
-	"github.com/iidesho/gober/consensus"
+	"github.com/iidesho/gober/consensus/contenious"
 	"github.com/iidesho/gober/discovery/local"
-	tasks "github.com/iidesho/gober/scheduletasks"
+	"github.com/iidesho/gober/lte"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/sync"
-	jsoniter "github.com/json-iterator/go"
+	"github.com/iidesho/gober/webserver"
+	// jsoniter "github.com/json-iterator/go"
 )
 
 var log = sbragi.WithLocalScope(sbragi.LevelDebug)
@@ -33,7 +34,7 @@ type transactionCheck struct {
 
 type saga[BT any, T bcts.ReadWriter[BT]] struct {
 	close  func()
-	states *sync.Map[states, *states]
+	states *sync.MapBCTS[states, *states]
 	story  Story[BT, T]
 }
 
@@ -63,6 +64,7 @@ func (s State) String() string {
 }
 
 func (s State) WriteBytes(w io.Writer) error {
+	log.Info("writing", "s", s)
 	return bcts.WriteUInt8(w, s)
 }
 
@@ -165,9 +167,11 @@ func (h handlerBuilder[BT, T]) Build() Handler[BT, T] {
 func (h DumHandler[BT, T]) Status(v T) (State, error) {
 	return h.StatusFunc(v)
 }
+
 func (h DumHandler[BT, T]) Execute(v T) error {
 	return h.ExecuteFunc(v)
 }
+
 func (h DumHandler[BT, T]) Reduce(v T) error {
 	return h.ReduceFunc(v)
 }
@@ -185,7 +189,8 @@ func NewDumHandler[BT any, T bcts.ReadWriter[BT]](
 }
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
-	task    tasks.Tasks[sagaValue[BT, T], *sagaValue[BT, T]]
+	// task    tasks.Tasks[sagaValue[BT, T], *sagaValue[BT, T]]
+	task    lte.Executor[sagaValue[BT, T], *sagaValue[BT, T]]
 	Handler Handler[BT, T]
 	/*
 		Status  func(T) (State, error)
@@ -212,11 +217,37 @@ var executors []struct {
 */
 
 func (a *Action[BT, T]) ReadBytes(r io.Reader) error {
-	return jsoniter.NewDecoder(r).Decode(a)
+	err := bcts.ReadSmallString(r, &a.Id)
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadSmallString(r, &a.Type)
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadInt64(r, &a.Timeout)
+	if err != nil {
+		return err
+	}
+	return nil
+	// return jsoniter.NewDecoder(r).Decode(a)
 }
 
 func (a Action[BT, T]) WriteBytes(w io.Writer) error {
-	return jsoniter.NewEncoder(w).Encode(a)
+	err := bcts.WriteSmallString(w, a.Id)
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteSmallString(w, a.Type)
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteInt64(w, a.Timeout)
+	if err != nil {
+		return err
+	}
+	return nil
+	// return jsoniter.NewEncoder(w).Encode(a)
 }
 
 /*
@@ -265,7 +296,8 @@ func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	return s.V.ReadBytes(r)
+	s.V, err = bcts.ReadReader[BT, T](r)
+	return err
 }
 
 func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
@@ -278,6 +310,7 @@ func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
 
 func Init[BT any, T bcts.ReadWriter[BT]](
 	pers stream.Stream,
+	serv webserver.Server,
 	dataTypeVersion, name string,
 	story Story[BT, T],
 	p stream.CryptoKeyProvider,
@@ -288,28 +321,37 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		return
 	}
 	ctxTask, cancel := context.WithCancel(ctx)
-	token := "someTestToken"
-	cons, err := consensus.Init(3134, token, local.New())
+	token := sync.NewObj[string]()
+	token.Set("someTestToken")
+	// cons, err := consensus.Init(3134, token, local.New())
+	cons, err := contenious.New(
+		serv,
+		token,
+		local.New(),
+		fmt.Sprintf("%s_saga", name),
+		ctx,
+	)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	out = &saga[BT, T]{
 		close:  cancel,
-		states: sync.NewMap[states, *states](),
+		states: sync.NewMapBCTS[states](),
 	}
 	for actI, action := range story.Actions {
 		actionId := fmt.Sprintf("%s_%s", name, action.Id)
-		story.Actions[actI].task, err = tasks.Init(
+		story.Actions[actI].task, err = lte.Init(
 			pers,
-			cons.AddTopic,
+			cons,
+			// cons.AddTopic,
 			actionId,
 			dataTypeVersion,
 			p,
-			func(v *sagaValue[BT, T], ctx context.Context) bool {
+			func(v *sagaValue[BT, T], ctx context.Context) error {
 				select {
 				case <-ctx.Done():
-					return false
+					return fmt.Errorf("context done")
 				default:
 				}
 				log.Info(
@@ -321,61 +363,70 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 					"sid",
 					v.ID.String(),
 					"v",
-					v.V,
+					*v.V,
 				)
 				statuses, ok := out.states.Get(bcts.TinyString(v.ID.String()))
-				log.Info("got states", "ok", ok, "id", v.ID.String(), "statuses", statuses)
+				if !ok {
+					sbragi.Fatal(
+						"tried getting states for undefined saga, behaviour is undefined",
+						"id",
+						v.ID.String(),
+					)
+				}
 				if (*statuses)[actI] == StateSuccess {
-					return true
+					return nil
 				}
 				s, err := action.Handler.Status(v.V)
 				if log.WithError(err).
-					Debug("getting action status", "saga", name, "action", action.Id) {
-					return false
+					Error("getting action status", "saga", name, "action", action.Id) {
+					return err
 				}
 				if s == StateSuccess {
 					(*statuses)[actI] = StateSuccess
 					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					return true
+					if len(story.Actions) <= actI+1 {
+						return nil
+					}
+					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
+					(*statuses)[actI+1] = StatePending
+					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
+					err = story.Actions[actI+1].task.Create(
+						uuid.Must(uuid.NewV7()),
+						v,
+					) // Seems wrong to create a uuid here
+					log.WithError(err).
+						Debug("start next action", "saga", name, "action", action.Id)
+					return err
 				}
 				if s != StatePending {
-					return false
+					return fmt.Errorf("invalid status expected=pending got=%s", s.String())
 				}
 				err = action.Handler.Execute(v.V)
 				if log.WithError(err).
 					Debug("executing action", "saga", name, "action", action.Id) {
-					return false
+					return err
 				}
 				s, err = action.Handler.Status(v.V)
 				if log.WithError(err).
 					Debug("getting action status after execute", "saga", name, "action", action.Id) {
-					return false
+					return err
 				}
 				(*statuses)[actI] = s
 				if s != StateSuccess {
 					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					return false
+					return fmt.Errorf("invalid status expected=success got=%s", s.String())
 				}
 				if len(story.Actions) <= actI+1 {
 					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					return true
+					return nil
 				}
 				(*statuses)[actI+1] = StatePending
 				out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-				err = story.Actions[actI+1].task.Create(fmt.Sprintf(
-					"%s_%s_%s",
-					story.Name,
-					story.Actions[actI+1].Id,
-					uuid.Must(uuid.NewV7()).String(),
-				),
-					time.Now(),
-					tasks.NoInterval,
-					v)
-				return !log.WithError(err).
+				err = story.Actions[actI+1].task.Create(uuid.Must(uuid.NewV7()), v)
+				log.WithError(err).
 					Debug("start next action", "saga", name, "action", action.Id)
+				return err
 			},
-			action.Timeout,
-			false,
 			5,
 			ctxTask,
 		)
@@ -448,7 +499,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 				}
 		}
 	*/
-	go cons.Run()
+	//go cons.Run()
 	out.story = story
 	/*
 		selectChan := make(chan struct{}, 0)
@@ -486,12 +537,11 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 func (s *saga[BT, T]) Status(id uuid.UUID) (State, error) {
 	st, ok := s.states.Get(bcts.TinyString(id.String()))
 	if !ok {
-		return StateInvalid, errors.New("saga id is invalid")
+		return StateInvalid, ErrExecutionNotFound
 	}
 	if (*st)[0] == StateInvalid {
 		return StateInvalid, errors.New("first saga status was invalid")
 	}
-	log.Info("has valid status", "statuses", st, "id", id.String())
 	for i, s := range *st {
 		if s == StateSuccess {
 			continue
@@ -501,14 +551,15 @@ func (s *saga[BT, T]) Status(id uuid.UUID) (State, error) {
 		}
 		return s, nil
 	}
-	return StateSuccess, nil //This path only happens if all statuses are success
+	return StateSuccess, nil // This path only happens if all statuses are success
 }
+
 func (s *saga[BT, T]) ExecuteFirst(v T) (id uuid.UUID, err error) {
 	id, err = uuid.NewV7()
 	if err != nil {
 		return uuid.Nil, err
 	}
-	for _, ok := s.states.Get(bcts.TinyString(id.String())); ok; _, ok = s.states.Get(bcts.TinyString(id.String())) { //This is veryVeryUnlikely
+	for _, ok := s.states.Get(bcts.TinyString(id.String())); ok; _, ok = s.states.Get(bcts.TinyString(id.String())) { // This is veryVeryUnlikely
 		id, err = uuid.NewV7()
 		if err != nil {
 			return uuid.Nil, err
@@ -521,25 +572,13 @@ func (s *saga[BT, T]) ExecuteFirst(v T) (id uuid.UUID, err error) {
 		ID: id,
 		V:  v,
 	}
-	log.Info("executing first", "sv", sv, "states", st)
-	err = s.story.Actions[0].task.Create(
-		fmt.Sprintf(
-			"%s_%s_%s",
-			s.story.Name,
-			s.story.Actions[0].Id,
-			id.String(),
-		),
-		time.Now(),
-		tasks.NoInterval,
-		&sv,
-	)
+	err = s.story.Actions[0].task.Create(id, &sv)
 	/*
 		b := s.story.Arcs[0]
 		a := b.Actions[0]
 		a.Handler = e
 		err = b.actions.Create("first_saga_task", time.Now(), tasks.NoInterval, &a)
-	*/
-	if err != nil {
+	*/if err != nil {
 		return uuid.Nil, err
 	}
 	return id, nil
@@ -559,7 +598,10 @@ func (s *saga[BT, T]) Close() {
 	s.close()
 }
 
-var ErrRetryable = errors.New("error occured but can be retried")
-var ErrPreconditionsNotMet = errors.New("preconfitions not met for action")
-var ErrNotEnoughActions = errors.New("a story need more than one arc")
-var ErrBaseArcNeedsExactlyOneAction = errors.New("base arc can only and needs one action")
+var (
+	ErrRetryable                    = errors.New("error occured but can be retried")
+	ErrNotEnoughActions             = errors.New("a story need more than one arc")
+	ErrExecutionNotFound            = errors.New("saga id is invalid")
+	ErrPreconditionsNotMet          = errors.New("preconfitions not met for action")
+	ErrBaseArcNeedsExactlyOneAction = errors.New("base arc can only and needs one action")
+)

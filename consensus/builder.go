@@ -8,7 +8,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofrs/uuid"
-	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/discovery"
 	"github.com/iidesho/gober/sync"
@@ -73,7 +72,7 @@ func Data(c *fiber.Ctx, code int, d any) error {
 func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Consensus, err error) {
 	cons := consensus{
 		server: producer.server,
-		reqs:   sync.NewMap[sync.Stack[topic, *topic]](),
+		reqs:   sync.NewMapBCTS[sync.Stack[topic, *topic]](),
 
 		timeout: consTimeout,
 		topic:   t,
@@ -81,7 +80,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 	producer.serv.API().Get(fmt.Sprintf("/%s/status", t), func(c *fiber.Ctx) error {
 		return Data(c, http.StatusOK, cons.disc.Servers())
 	})
-	//Get satus of a consent i know about
+	// Get satus of a consent i know about
 	producer.serv.API().Get(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
 		v, ok := cons.reqs.Get(bcts.TinyString(c.Params("id")[0:]))
 		if !ok {
@@ -93,7 +92,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 		}
 		return Data(c, http.StatusOK, v)
 	})
-	//Request consent from me
+	// Request consent from me
 	producer.serv.API().Post(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
 		id := c.Params("id")[0:]
 		reqs, isNew := cons.reqs.GetOrInit(bcts.TinyString(id), sync.NewStack[topic, *topic])
@@ -135,7 +134,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 			Consenter: producer.id,
 		})
 	})
-	//Has gotten updated conseed info and informs conceed winner(me)
+	// Has gotten updated conseed info and informs conceed winner(me)
 	producer.serv.API().Patch(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
 		id := c.Params("id")[0:]
 		reqs, ok := cons.reqs.Get(bcts.TinyString(id))
@@ -163,11 +162,11 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 			)
 		}
 		if containsConsent(data.Id, v.Consents) < 0 {
-			v.Consents = append(v.Consents, data) //This feels wrong //Is not thread safe
+			v.Consents = append(v.Consents, data) // This feels wrong //Is not thread safe
 		}
 		return Data(c, http.StatusOK, v)
 	})
-	//Conseed to me or inform me of a conseed
+	// Conseed to me or inform me of a conseed
 	producer.serv.API().Delete(fmt.Sprintf("/%s/:id/consent", t), func(c *fiber.Ctx) error {
 		id := c.Params("id")[0:]
 		reqs, ok := cons.reqs.Get(bcts.TinyString(id))
@@ -194,7 +193,7 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 				map[string]string{"status": "could not unmashal data", "error": err.Error()},
 			)
 		}
-		if producer.id == v.Requester { //Conseeding to me
+		if producer.id == v.Requester { // Conseeding to me
 			if data.Conseeding == nil {
 				return Data(
 					c,
@@ -209,12 +208,12 @@ func (producer builder) AddTopic(t string, consTimeout time.Duration) (out Conse
 					map[string]string{"status": "conseeded too late"},
 				)
 			}
-			v.Conseeding = nil //This seems wrong
-			//Should probably remove contender
+			v.Conseeding = nil // This seems wrong
+			// Should probably remove contender
 
-		} else if v.Requester == data.Requester { //Informing me that you have conseeded
+		} else if v.Requester == data.Requester { // Informing me that you have conseeded
 			reqs.Pop()
-			//cons.reqs.Delete(id)
+			// cons.reqs.Delete(id)
 		}
 		return nil
 	})
