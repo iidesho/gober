@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	//	"strings"
@@ -39,6 +40,7 @@ type consensus struct {
 	ctx         context.Context
 	consents    map[uuid.UUID]acknowledgements
 	distributor chan<- message
+	aborted     chan<- uuid.UUID
 	mutex       *sync.RWMutex
 	connected   []server
 	completed   []uuid.UUID // Will grow infinetely, should trim old completed
@@ -125,10 +127,10 @@ func New(
 	discoverer discovery.Discoverer,
 	topic string,
 	ctx context.Context,
-) (Consensus, error) {
+) (Consensus, <-chan uuid.UUID, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s := serv.Base().Group(topic)
 	/*
@@ -149,8 +151,10 @@ func New(
 
 	selfBytes, err := bcts.Write(bcts.String(discoverer.Self()))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
+	aborted := make(chan uuid.UUID, MESSAGE_BUFFER_SIZE)
 	distributor := make(chan message, MESSAGE_BUFFER_SIZE)
 	c := consensus{
 		id:          id,
@@ -160,6 +164,7 @@ func New(
 		distributor: distributor,
 		discoverer:  discoverer,
 		selfBytes:   selfBytes,
+		aborted:     aborted,
 		ctx:         ctx,
 	}
 	go func(distributor chan message, ctx context.Context) {
@@ -216,6 +221,7 @@ func New(
 					// sbragi.Info("found server", "server", s)
 				}
 			case <-ctx.Done():
+				close(c.aborted)
 				return
 			}
 		}
@@ -230,7 +236,7 @@ func New(
 			c.reader(r, w, ctx)
 		},
 	)
-	return &c, nil
+	return &c, aborted, nil
 }
 
 func (c consensus) Connected() []string {
@@ -247,19 +253,36 @@ func (c consensus) Consents() map[string]string {
 	defer c.mutex.RUnlock()
 	m := map[string]string{}
 	for k, v := range c.consents {
-		m[k.String()] = v.requester.String()
+		m[k.String()] = strings.Join(
+			itr.NewIterator(v.acknowledgers.Slice()).
+				TransformToString(func(s uuid.UUID) (string, error) { return s.String(), nil }).
+				FilterOk().
+				Collect(),
+			" ",
+		)
 	}
 	return m
 }
 
 func (c *consensus) Request(id uuid.UUID) {
 	c.mutex.RLock()
+	if itr.NewIterator(c.completed).Contains(func(v uuid.UUID) bool { return v == id }) {
+		sbragi.Warning("cannot request completed")
+		c.mutex.RUnlock()
+		return
+	}
 	_, ok := c.consents[id]
 	c.mutex.RUnlock()
 	if ok {
 		return // Request exists anc we should error?
 	}
 	c.mutex.Lock()
+	if itr.NewIterator(c.completed).Contains(func(v uuid.UUID) bool { return v == id }) {
+		sbragi.Warning("cannot request completed")
+		// This should be impossible in the time to aquire a write lock
+		c.mutex.Unlock()
+		return
+	}
 	_, ok = c.consents[id]
 	if ok {
 		c.mutex.Unlock()
@@ -328,16 +351,18 @@ func (c *consensus) Completed(id uuid.UUID) {
 	}
 	c.mutex.Lock()
 	if itr.NewIterator(c.completed).Contains(func(v uuid.UUID) bool { return v == id }) {
-		c.mutex.RUnlock()
+		c.mutex.Unlock()
 		// should log
 		return
 	}
 	accs, ok = c.consents[id]
 	if !ok {
 		sbragi.Warning("consent does not exist")
+		c.mutex.Unlock()
 		return
 	}
 	if accs.requester != c.id {
+		c.mutex.Unlock()
 		return // Should error
 	}
 	c.completed = append(c.completed, id)
@@ -353,6 +378,11 @@ func (c *consensus) Completed(id uuid.UUID) {
 
 func (c *consensus) Abort(id uuid.UUID) {
 	c.mutex.RLock()
+	if itr.NewIterator(c.completed).Contains(func(v uuid.UUID) bool { return v == id }) {
+		sbragi.Warning("cannot abort completed")
+		c.mutex.RUnlock()
+		return
+	}
 	accs, ok := c.consents[id]
 	c.mutex.RUnlock()
 	if !ok {
@@ -363,12 +393,19 @@ func (c *consensus) Abort(id uuid.UUID) {
 		return // Should error
 	}
 	c.mutex.Lock()
+	if itr.NewIterator(c.completed).Contains(func(v uuid.UUID) bool { return v == id }) {
+		sbragi.Warning("cannot abort completed")
+		c.mutex.Unlock()
+		return
+	}
 	accs, ok = c.consents[id]
 	if !ok {
 		sbragi.Warning("consent does not exist")
+		c.mutex.Unlock()
 		return
 	}
 	if accs.requester != c.id {
+		c.mutex.Unlock()
 		return // Should error
 	}
 	delete(c.consents, id)
@@ -379,6 +416,7 @@ func (c *consensus) Abort(id uuid.UUID) {
 		// sender:    c.id,
 		consID: id,
 	}
+	c.aborted <- id
 }
 
 func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ctx context.Context) {
@@ -449,6 +487,11 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 		rid.String(),
 	)
 	defer func() {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+		}
 		c.mutex.Lock()
 		defer c.mutex.Unlock()
 		c.connected = itr.NewIterator(c.connected).
@@ -462,6 +505,9 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 		for k, v := range c.consents {
 			if v.requester == rid {
 				delete(c.consents, k)
+				sbragi.Info("aborting", "id", k.String(), "consents", v.acknowledgers.Slice())
+				c.aborted <- k
+				sbragi.Info("aborted", "id", k.String(), "consents", v.acknowledgers.Slice())
 				continue
 			}
 			v.acknowledgers.DeleteWhere(func(v uuid.UUID) bool { return v == rid })
@@ -532,9 +578,12 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				accs.acknowledgers.AddUnique(rid, func(v1, v2 uuid.UUID) bool {
 					return v1 == v2
 				})
-				accs.acknowledgers.AddUnique(c.id, func(v1, v2 uuid.UUID) bool {
+				// Should distribute our approval
+				if accs.acknowledgers.AddUnique(c.id, func(v1, v2 uuid.UUID) bool {
 					return v1 == v2
-				})
+				}) {
+					c.distributor <- *d
+				}
 			case decline:
 				sbragi.Trace(
 					"received decline request",
@@ -655,6 +704,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				delete(c.consents, d.consID)
 				sbragi.Debug("deleted", "consents", c.consents)
 				c.mutex.Unlock()
+				c.aborted <- d.consID
 				continue
 			case request:
 				sbragi.Trace(
@@ -690,6 +740,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						requester:     d.requester,
 						acknowledgers: gs.NewSlice[uuid.UUID](),
 					}
+					accs.acknowledgers.Add(d.requester)
 					c.consents[d.consID] = accs
 				}
 				c.mutex.Unlock()

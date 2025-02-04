@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid"
-	"github.com/iidesho/bragi/sbragi"
 	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/consensus/contenious"
 	"github.com/iidesho/gober/discovery"
@@ -33,12 +32,15 @@ func (l *local) Self() string {
 }
 
 var (
-	c      contenious.Consensus
-	c2     contenious.Consensus
-	c3     contenious.Consensus
-	s      webserver.Server
-	ctx    context.Context
-	cancel context.CancelFunc
+	c        contenious.Consensus
+	aborted  <-chan uuid.UUID
+	c2       contenious.Consensus
+	aborted2 <-chan uuid.UUID
+	c3       contenious.Consensus
+	aborted3 <-chan uuid.UUID
+	s        webserver.Server
+	ctx      context.Context
+	cancel   context.CancelFunc
 )
 
 var (
@@ -51,8 +53,8 @@ var (
 func TestInit(t *testing.T) {
 	dl, _ := log.NewLogger(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		AddSource:   true,
-		Level:       sbragi.LevelInfo,
-		ReplaceAttr: sbragi.ReplaceAttr,
+		Level:       log.LevelInfo,
+		ReplaceAttr: log.ReplaceAttr,
 	}))
 	dl.SetDefault()
 	log.Info("Initializing consensus")
@@ -64,7 +66,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := contenious.New(
+	c, aborted, err = contenious.New(
 		serv,
 		token,
 		&d,
@@ -74,7 +76,6 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c = p
 	s = serv
 	go serv.Run()
 	time.Sleep(time.Second)
@@ -102,7 +103,7 @@ func TestInitCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := contenious.New(
+	c2, aborted2, err = contenious.New(
 		serv2,
 		token,
 		New([]string{"localhost:3133", "localhost:3132", "localhost:3134"}),
@@ -116,7 +117,7 @@ func TestInitCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p3, err := contenious.New(
+	c3, aborted3, err = contenious.New(
 		serv3,
 		token,
 		New([]string{"localhost:3134", "localhost:3133", "localhost:3132"}),
@@ -126,8 +127,6 @@ func TestInitCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c2 = p2
-	c3 = p3
 	go serv2.Run()
 	go serv3.Run()
 	time.Sleep(time.Second)
@@ -182,13 +181,27 @@ func TestCompleted(t *testing.T) {
 }
 
 func TestDisconnect(t *testing.T) {
+	c.Request(id2)
+	time.Sleep(time.Second * 5)
+	log.Info(c.Consents()[id2.String()])
+	log.Info(c2.Consents()[id2.String()])
+	log.Info(c3.Consents()[id2.String()])
 	log.Info("cancelling")
 	cancel()
 	log.Info("cancelled")
-	time.Sleep(time.Second)
+	time.Sleep(time.Second * 10)
 	log.Info("shutting down")
 	s.Shutdown()
 	log.Info("shutdown")
+	log.Info(c2.Consents()[id2.String()])
+	log.Info(c3.Consents()[id2.String()])
+	aid3 := <-aborted3
+	log.Info("aid3", "id", aid3)
+	aid2 := <-aborted2
+	log.Info("aid2", "id", aid2)
+	if aid3 != aid2 || aid3 != id2 {
+		t.Fatalf("aid3 != aid2 != id2: %s != %s != %s", aid3, aid2, id2)
+	}
 	time.Sleep(time.Second)
 	c2.Request(id1)
 	c2.Request(id2)
@@ -215,6 +228,11 @@ func TestDisconnect(t *testing.T) {
 
 func TestAbort(t *testing.T) {
 	c2.Abort(id2)
+	aid1 := <-aborted2
+	aid2 := <-aborted3
+	if aid1 != aid2 || aid1 != id2 {
+		t.Fatalf("aid1 != aid2 != id2: %s != %s != %s", aid1, aid2, id2)
+	}
 	time.Sleep(time.Second)
 	c3.Request(id2)
 	i := 0

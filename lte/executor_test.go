@@ -38,14 +38,17 @@ func (l *local) Self() string {
 	return l.nodes[0]
 }
 
-var e lte.Executor[bcts.TinyString, *bcts.TinyString]
+var (
+	e      lte.Executor[bcts.TinyString, *bcts.TinyString]
+	failed <-chan uuid.UUID
+)
 
 var (
 	id1 = uuid.Must(uuid.NewV7())
 	id2 = uuid.Must(uuid.NewV7())
 	id3 = uuid.Must(uuid.NewV7())
 	fc  = atomic.Int32{}
-	wg  = stdSync.WaitGroup{}
+	wg  = &stdSync.WaitGroup{}
 	str = ""
 )
 
@@ -80,24 +83,27 @@ func TestInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	wg.Add(3)
-	e, err = lte.Init(
+	e, failed, err = lte.Init(
 		s,
 		p,
 		"test-string",
 		"v0.0.1",
 		stream.StaticProvider("aPSIX6K3yw6cAWDQHGPjmhuOswuRibjyLLnd91ojdK0="),
-		func(t *bcts.TinyString, ctx context.Context) error {
+		func(ts *bcts.TinyString, ctx context.Context) error {
 			time.Sleep(time.Second)
-			if *t == "t2" {
+			if *ts == "t2" {
 				time.Sleep(time.Millisecond * 500)
 			}
-			fmt.Println(*t)
-			if *t == "t3" && fc.CompareAndSwap(0, 1) {
+			fmt.Println(*ts)
+			if *ts == "t3" && fc.CompareAndSwap(0, 1) {
 				fmt.Println("failing t3")
 				// fc.Add(1)
 				return fmt.Errorf("fail t3")
 			}
-			str = str + string(*t)
+			fmt.Println(str)
+			str = str + string(*ts)
+			fmt.Println(str)
+			fmt.Println("done")
 			wg.Done()
 			return nil
 		},
@@ -119,6 +125,12 @@ func TestLTEAlone(t *testing.T) {
 	e.Create(id1, &t1bc)
 	e.Create(id2, &t2bc)
 	e.Create(id3, &t3bc)
+	failedID := <-failed
+	t.Log("got failed")
+	if failedID != id3 {
+		t.Fatalf("failed ID was not expected id, %s!=%s", failedID, id3)
+	}
+	e.Retry(failedID, &t3bc)
 	wg.Wait()
 	t.Log(str)
 	time.Sleep(time.Second * 10)

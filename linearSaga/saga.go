@@ -105,33 +105,27 @@ func (s *states) ReadBytes(r io.Reader) error {
 }
 
 type Handler[BT any, T bcts.ReadWriter[BT]] interface {
-	Status(T) (State, error)
-	Execute(T) error
-	Reduce(T) error
+	Execute(T) (State, error)
+	Reduce(T) (State, error)
 }
 
 type handlerBuilder[BT any, T bcts.ReadWriter[BT]] struct {
-	status  func(T) (State, error)
-	execute func(T) error
-	reduce  func(T) error
+	execute func(T) (State, error)
+	reduce  func(T) (State, error)
 }
 
 type DumHandler[BT any, T bcts.ReadWriter[BT]] struct {
-	StatusFunc  func(T) (State, error)
-	ExecuteFunc func(T) error
-	ReduceFunc  func(T) error
+	ExecuteFunc func(T) (State, error)
+	ReduceFunc  func(T) (State, error)
 }
 
 type emptyHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
-	Status(status func(v T) (State, error)) statusHandlerBuilder[BT, T]
+	Execute(execute func(v T) (State, error)) executeHandlerBuilder[BT, T]
 }
-type statusHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
-	Execute(execute func(v T) error) statusExecuteHandlerBuilder[BT, T]
+type executeHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
+	Reduce(reduce func(v T) (State, error)) executeReduceHandlerBuilder[BT, T]
 }
-type statusExecuteHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
-	Reduce(reduce func(v T) error) statusExecuteReduceHandlerBuilder[BT, T]
-}
-type statusExecuteReduceHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
+type executeReduceHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
 	Build() Handler[BT, T]
 }
 
@@ -139,50 +133,40 @@ func NewHandlerBuilder[BT any, T bcts.ReadWriter[BT]]() emptyHandlerBuilder[BT, 
 	return handlerBuilder[BT, T]{}
 }
 
-func (h handlerBuilder[BT, T]) Status(status func(v T) (State, error)) statusHandlerBuilder[BT, T] {
-	h.status = status
-	return h
-}
-
-func (h handlerBuilder[BT, T]) Execute(execute func(v T) error) statusExecuteHandlerBuilder[BT, T] {
+func (h handlerBuilder[BT, T]) Execute(
+	execute func(v T) (State, error),
+) executeHandlerBuilder[BT, T] {
 	h.execute = execute
 	return h
 }
 
 func (h handlerBuilder[BT, T]) Reduce(
-	reduce func(v T) error,
-) statusExecuteReduceHandlerBuilder[BT, T] {
+	reduce func(v T) (State, error),
+) executeReduceHandlerBuilder[BT, T] {
 	h.reduce = reduce
 	return h
 }
 
 func (h handlerBuilder[BT, T]) Build() Handler[BT, T] {
 	return DumHandler[BT, T]{
-		StatusFunc:  h.status,
 		ExecuteFunc: h.execute,
 		ReduceFunc:  h.reduce,
 	}
 }
 
-func (h DumHandler[BT, T]) Status(v T) (State, error) {
-	return h.StatusFunc(v)
-}
-
-func (h DumHandler[BT, T]) Execute(v T) error {
+func (h DumHandler[BT, T]) Execute(v T) (State, error) {
 	return h.ExecuteFunc(v)
 }
 
-func (h DumHandler[BT, T]) Reduce(v T) error {
+func (h DumHandler[BT, T]) Reduce(v T) (State, error) {
 	return h.ReduceFunc(v)
 }
 
 func NewDumHandler[BT any, T bcts.ReadWriter[BT]](
-	status func(T) (State, error),
-	execute func(T) error,
-	reduce func(T) error,
+	execute func(T) (State, error),
+	reduce func(T) (State, error),
 ) Handler[BT, T] {
 	return DumHandler[BT, T]{
-		StatusFunc:  status,
 		ExecuteFunc: execute,
 		ReduceFunc:  reduce,
 	}
@@ -376,45 +360,22 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 				if (*statuses)[actI] == StateSuccess {
 					return nil
 				}
-				s, err := action.Handler.Status(v.V)
-				if log.WithError(err).
-					Error("getting action status", "saga", name, "action", action.Id) {
-					return err
-				}
-				if s == StateSuccess {
-					(*statuses)[actI] = StateSuccess
-					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					if len(story.Actions) <= actI+1 {
-						return nil
+				/*
+					s, err := action.Handler.Status(v.V)
+					if log.WithError(err).
+						Error("getting action status", "saga", name, "action", action.Id) {
+						return err
 					}
-					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					(*statuses)[actI+1] = StatePending
-					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					err = story.Actions[actI+1].task.Create(
-						uuid.Must(uuid.NewV7()),
-						v,
-					) // Seems wrong to create a uuid here
-					log.WithError(err).
-						Debug("start next action", "saga", name, "action", action.Id)
-					return err
-				}
-				if s != StatePending {
-					return fmt.Errorf("invalid status expected=pending got=%s", s.String())
-				}
-				err = action.Handler.Execute(v.V)
+				*/
+				status, err := action.Handler.Execute(v.V)
 				if log.WithError(err).
 					Debug("executing action", "saga", name, "action", action.Id) {
 					return err
 				}
-				s, err = action.Handler.Status(v.V)
-				if log.WithError(err).
-					Debug("getting action status after execute", "saga", name, "action", action.Id) {
-					return err
-				}
-				(*statuses)[actI] = s
-				if s != StateSuccess {
+				(*statuses)[actI] = status
+				if status != StateSuccess {
 					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					return fmt.Errorf("invalid status expected=success got=%s", s.String())
+					return fmt.Errorf("invalid status expected=success got=%s", status.String())
 				}
 				if len(story.Actions) <= actI+1 {
 					out.states.Set(bcts.TinyString(v.ID.String()), statuses)

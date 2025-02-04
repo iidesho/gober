@@ -25,6 +25,7 @@ var log = sbragi.WithLocalScope(sbragi.LevelError)
 type Executor[BT, T any] interface {
 	Create(uuid.UUID, T) error
 	Tasks() (tasks []status)
+	Retry(uuid.UUID, T) error
 }
 
 type executor[BT any, T bcts.ReadWriter[BT]] struct {
@@ -35,9 +36,10 @@ type executor[BT any, T bcts.ReadWriter[BT]] struct {
 	dataType    string
 	version     string
 	// statuses    eventmap.EventMap[status, *status]
-	failCount map[uuid.UUID]int16
-	tasks     []status
-	taskLock  sync.Mutex
+	failed chan<- uuid.UUID
+	// failCount map[uuid.UUID]int16
+	tasks    []status
+	taskLock sync.Mutex
 }
 
 type (
@@ -138,6 +140,28 @@ func (t *tm[BT, T]) ReadBytes(r io.Reader) error {
 	return err
 }
 
+func InitNoFail[BT any, T bcts.ReadWriter[BT]](
+	s stream.Stream,
+	consBuilder contenious.Consensus,
+	dataTypeName, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	execute func(T, context.Context) error,
+	workers int,
+	ctx context.Context,
+) (ed Executor[BT, T], err error) {
+	return iInit(
+		s,
+		consBuilder,
+		dataTypeName,
+		dataTypeVersion,
+		p,
+		execute,
+		workers,
+		nil,
+		ctx,
+	)
+}
+
 func Init[BT any, T bcts.ReadWriter[BT]](
 	s stream.Stream,
 	consBuilder contenious.Consensus,
@@ -145,6 +169,35 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	p stream.CryptoKeyProvider,
 	execute func(T, context.Context) error,
 	workers int,
+	ctx context.Context,
+) (ed Executor[BT, T], failed <-chan uuid.UUID, err error) {
+	failedC := make(chan uuid.UUID, 1024)
+	ed, err = iInit(
+		s,
+		consBuilder,
+		dataTypeName,
+		dataTypeVersion,
+		p,
+		execute,
+		workers,
+		failedC,
+		ctx,
+	)
+	if err != nil {
+		close(failedC)
+		return nil, nil, err
+	}
+	return ed, failedC, nil
+}
+
+func iInit[BT any, T bcts.ReadWriter[BT]](
+	s stream.Stream,
+	consBuilder contenious.Consensus,
+	dataTypeName, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	execute func(T, context.Context) error,
+	workers int,
+	failedC chan<- uuid.UUID,
 	ctx context.Context,
 ) (ed Executor[BT, T], err error) {
 	/*
@@ -159,9 +212,10 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		dataType:    dataTypeName,
 		version:     dataTypeVersion,
 		consBuilder: consBuilder,
+		failed:      failedC,
 		taskLock:    sync.Mutex{},
-		failCount:   map[uuid.UUID]int16{},
-		ctx:         ctx,
+		// failCount:   map[uuid.UUID]int16{},
+		ctx: ctx,
 	}
 	es, err := consumer.New[tm[BT, T]](s, p, ctx)
 	if err != nil {
@@ -239,11 +293,17 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 								status: StatusFailed,
 							},
 						})).Error("writing panic event", "id", e.Data.Status.id.String())
+						t.consBuilder.Abort(e.Data.Status.id)
 						/*
 							t.statuses.Set(e.Data.Status.Id, &status{
 								executor: executorIDS,
 								status:   StatusFailed,
 							})
+						*/
+						/*
+							if t.failed != nil {
+								t.failed <- e.Data.Status.id
+							}
 						*/
 						return
 					}
@@ -302,12 +362,17 @@ func (t *executor[BT, T]) handler(
 			} else {
 				t.tasks = append(t.tasks, e.Data.Status)
 			}
-			t.failCount[e.Data.Status.id]++
-			if t.failCount[e.Data.Status.id] > 10 { // Should be configured
-				t.taskLock.Unlock()
-				continue
+			if t.failed != nil {
+				t.failed <- e.Data.Status.id
 			}
-			t.taskLock.Unlock()
+			/*
+				t.failCount[e.Data.Status.id]++
+				if t.failCount[e.Data.Status.id] > 10 { // Should be configured
+					t.taskLock.Unlock()
+					continue
+				}
+				t.taskLock.Unlock()
+			*/
 		case StatusWorking:
 			t.taskLock.Lock()
 			i := itr.NewIterator(t.tasks).
@@ -390,6 +455,9 @@ func (t *executor[BT, T]) Create(
 	return t.create(id, dt)
 }
 
+// USE consBuilder and watch aborted / failed tasks...
+// NOTE to self
+
 func (t *executor[BT, T]) create(id uuid.UUID, dt T) (err error) {
 	return t.writeEvent(tm[BT, T]{
 		Task: dt,
@@ -413,6 +481,13 @@ func (t *executor[BT, T]) create(id uuid.UUID, dt T) (err error) {
 		log.Trace("got event status", "id", id)
 		return ws.Error
 	*/
+}
+
+func (t *executor[BT, T]) Retry(
+	id uuid.UUID,
+	dt T,
+) (err error) {
+	return t.create(id, dt)
 }
 
 func (t *executor[BT, T]) Tasks() (tasks []status) {
