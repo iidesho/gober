@@ -1,6 +1,6 @@
 package itr
 
-func Max(seq iterator[int]) int {
+func Max(seq Iterator[int]) int {
 	c := 0
 	for v := range seq {
 		if v > c {
@@ -10,7 +10,7 @@ func Max(seq iterator[int]) int {
 	return c
 }
 
-func Min(seq iterator[int]) int {
+func Min(seq Iterator[int]) int {
 	c := 0
 	for i, v := range seq.Enumerate() {
 		if i == 0 {
@@ -24,7 +24,7 @@ func Min(seq iterator[int]) int {
 	return c
 }
 
-func Sum(seq iterator[int]) int {
+func Sum(seq Iterator[int]) int {
 	c := 0
 	for v := range seq {
 		c = c + v

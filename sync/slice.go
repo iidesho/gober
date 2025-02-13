@@ -18,6 +18,8 @@ type Slice[T any] interface {
 	Delete(i int) T
 	DeleteWhere(where func(v T) bool)
 	Clear()
+	ReadItr() itr.Iterator[T]
+	WriteItr() itr.Iterator[*T]
 }
 
 func NewSlice[T any]() *slice[T] {
@@ -139,6 +141,30 @@ func (s *slice[T]) DeleteWhere(where func(v T) bool) {
 		}).Collect()
 	// s.data = append(s.data[:i], s.data[i:]...)
 	s.dloc = s.dloc[:len(s.data)] // All locks should be unlocked at this point
+}
+
+func (s *slice[T]) ReadItr() itr.Iterator[T] {
+	s.rwLock.RLock()
+	return func(yield func(T) bool) {
+		defer s.rwLock.RUnlock()
+		for _, i := range s.data {
+			if !yield(i) {
+				break
+			}
+		}
+	}
+}
+
+func (s *slice[T]) WriteItr() itr.Iterator[*T] {
+	s.rwLock.Lock()
+	return func(yield func(*T) bool) {
+		defer s.rwLock.Unlock()
+		for i := range s.data {
+			if !yield(&s.data[i]) {
+				break
+			}
+		}
+	}
 }
 
 func (s *slice[T]) Clear() {

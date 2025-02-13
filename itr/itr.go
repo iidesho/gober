@@ -12,9 +12,9 @@ import (
 var log = sbragi.WithLocalScope(sbragi.LevelError)
 
 type (
-	iterator[V any]    iter.Seq[V]
-	errIterator[V any] iter.Seq[okerr[V]]
-	enuIterator[V any] iter.Seq2[int, V]
+	Iterator[V any]    iter.Seq[V]
+	ErrIterator[V any] iter.Seq[okerr[V]]
+	EnuIterator[V any] iter.Seq2[int, V]
 )
 
 type okerr[T any] struct {
@@ -22,11 +22,11 @@ type okerr[T any] struct {
 	err error
 }
 
-func FromSeq1[V any](seq iter.Seq[V]) iterator[V] {
-	return iterator[V](seq)
+func FromSeq1[V any](seq iter.Seq[V]) Iterator[V] {
+	return Iterator[V](seq)
 }
 
-func NewIterator[V any](arr []V) iterator[V] {
+func NewIterator[V any](arr []V) Iterator[V] {
 	return func(yield func(V) bool) {
 		for _, v := range arr {
 			if !yield(v) {
@@ -36,7 +36,7 @@ func NewIterator[V any](arr []V) iterator[V] {
 	}
 }
 
-func NewMapKeysIterator[K comparable, V any](arr map[K]V) iterator[K] {
+func NewMapKeysIterator[K comparable, V any](arr map[K]V) Iterator[K] {
 	return func(yield func(K) bool) {
 		for v := range arr {
 			if !yield(v) {
@@ -46,7 +46,7 @@ func NewMapKeysIterator[K comparable, V any](arr map[K]V) iterator[K] {
 	}
 }
 
-func NewMapValuesIterator[K comparable, V any](arr map[K]V) iterator[V] {
+func NewMapValuesIterator[K comparable, V any](arr map[K]V) Iterator[V] {
 	return func(yield func(V) bool) {
 		for _, v := range arr {
 			if !yield(v) {
@@ -56,14 +56,21 @@ func NewMapValuesIterator[K comparable, V any](arr map[K]V) iterator[V] {
 	}
 }
 
-func NewGenerator[V any](g func() V) iterator[V] {
+func NewGenerator[V any](g func() (V, bool)) Iterator[V] {
 	return func(yield func(V) bool) {
-		for yield(g()) {
+		for {
+			v, ok := g()
+			if !ok {
+				break
+			}
+			if !yield(v) {
+				break
+			}
 		}
 	}
 }
 
-func (seq iterator[V]) Filter(keep func(s V) bool) iterator[V] {
+func (seq Iterator[V]) Filter(keep func(s V) bool) Iterator[V] {
 	return func(yield func(V) bool) {
 		for v := range seq {
 			if !keep(v) {
@@ -77,7 +84,7 @@ func (seq iterator[V]) Filter(keep func(s V) bool) iterator[V] {
 	}
 }
 
-func (seq errIterator[V]) Filter(keep func(s V) bool) errIterator[V] {
+func (seq ErrIterator[V]) Filter(keep func(s V) bool) ErrIterator[V] {
 	return func(yield func(okerr[V]) bool) {
 		for v := range seq {
 			if v.err == nil {
@@ -93,7 +100,7 @@ func (seq errIterator[V]) Filter(keep func(s V) bool) errIterator[V] {
 	}
 }
 
-func (seq errIterator[V]) FilterOk() iterator[V] {
+func (seq ErrIterator[V]) FilterOk() Iterator[V] {
 	return func(yield func(V) bool) {
 		for v := range seq {
 			if v.err != nil {
@@ -107,7 +114,7 @@ func (seq errIterator[V]) FilterOk() iterator[V] {
 	}
 }
 
-func (seq errIterator[V]) FilterErr() iterator[error] {
+func (seq ErrIterator[V]) FilterErr() Iterator[error] {
 	return func(yield func(error) bool) {
 		for v := range seq {
 			if v.err == nil {
@@ -121,14 +128,14 @@ func (seq errIterator[V]) FilterErr() iterator[error] {
 	}
 }
 
-func (seq iterator[V]) Last() V {
+func (seq Iterator[V]) Last() V {
 	var v V
 	for v = range seq {
 	}
 	return v
 }
 
-func (seq errIterator[V]) Last() V {
+func (seq ErrIterator[V]) Last() V {
 	var v V
 	for o := range seq {
 		if o.err != nil {
@@ -149,14 +156,14 @@ func (seq iterator[V]) Pop() (vo V) {
 }
 */
 
-func (seq iterator[V]) First() (v V) {
+func (seq Iterator[V]) First() (v V) {
 	for v := range seq {
 		return v
 	}
 	return
 }
 
-func (seq errIterator[V]) First() (v V) {
+func (seq ErrIterator[V]) First() (v V) {
 	for o := range seq {
 		if o.err != nil {
 			continue
@@ -174,7 +181,7 @@ func (seq errIterator[V]) First() (v V) {
 	return // If no ok value exists we return Zero type
 }
 
-func (seq iterator[V]) Count() int {
+func (seq Iterator[V]) Count() int {
 	c := 0
 	for range seq {
 		c++
@@ -182,7 +189,7 @@ func (seq iterator[V]) Count() int {
 	return c
 }
 
-func (seq errIterator[V]) Count() int {
+func (seq ErrIterator[V]) Count() int {
 	c := 0
 	for range seq {
 		c++
@@ -202,7 +209,7 @@ func (seq iterator[int]) Max() int {
 }
 */
 
-func (seq iterator[V]) Collect() []V {
+func (seq Iterator[V]) Collect() []V {
 	s := []V{}
 	for v := range seq {
 		s = append(s, v)
@@ -210,7 +217,7 @@ func (seq iterator[V]) Collect() []V {
 	return s
 }
 
-func (seq errIterator[V]) CollectOk(log sbragi.ErrorLogger, lvl slog.Level) []V {
+func (seq ErrIterator[V]) CollectOk(log sbragi.ErrorLogger, lvl slog.Level) []V {
 	s := []V{}
 	for o := range seq {
 		if o.err != nil {
@@ -222,7 +229,7 @@ func (seq errIterator[V]) CollectOk(log sbragi.ErrorLogger, lvl slog.Level) []V 
 	return s
 }
 
-func (seq errIterator[V]) CollectErr() []error {
+func (seq ErrIterator[V]) CollectErr() []error {
 	s := []error{}
 	for o := range seq {
 		if o.err == nil {
@@ -247,7 +254,7 @@ func (seq iterator[V]) CollectAll() []error {
 }
 */
 
-func (seq iterator[V]) CollectMap(key func(v V) string) map[string]V {
+func (seq Iterator[V]) CollectMap(key func(v V) string) map[string]V {
 	s := map[string]V{}
 	for v := range seq {
 		s[key(v)] = v
@@ -255,7 +262,7 @@ func (seq iterator[V]) CollectMap(key func(v V) string) map[string]V {
 	return s
 }
 
-func (seq iterator[V]) Contains(eq func(v V) bool) bool {
+func (seq Iterator[V]) Contains(eq func(v V) bool) bool {
 	contains := false
 	for v := range seq {
 		if eq(v) {
@@ -266,7 +273,7 @@ func (seq iterator[V]) Contains(eq func(v V) bool) bool {
 	return contains
 }
 
-func (seq enuIterator[V]) Contains(eq func(v V) bool) int {
+func (seq EnuIterator[V]) Contains(eq func(v V) bool) int {
 	for i, v := range seq {
 		if eq(v) {
 			return i
@@ -275,11 +282,11 @@ func (seq enuIterator[V]) Contains(eq func(v V) bool) int {
 	return -1
 }
 
-func (seq errIterator[V]) Contains(eq func(v V) bool) bool {
+func (seq ErrIterator[V]) Contains(eq func(v V) bool) bool {
 	return seq.FilterOk().Contains(eq)
 }
 
-func (seq iterator[V]) Unique() iterator[V] {
+func (seq Iterator[V]) Unique() Iterator[V] {
 	seen := []V{}
 	return func(yield func(V) bool) {
 		for v := range seq {
@@ -296,7 +303,7 @@ func (seq iterator[V]) Unique() iterator[V] {
 	}
 }
 
-func (seq iterator[V]) Deduplicate(eq func(v1, v2 V) bool) iterator[V] {
+func (seq Iterator[V]) Deduplicate(eq func(v1, v2 V) bool) Iterator[V] {
 	seen := []V{}
 	return func(yield func(V) bool) {
 		for v := range seq {
@@ -313,7 +320,7 @@ func (seq iterator[V]) Deduplicate(eq func(v1, v2 V) bool) iterator[V] {
 	}
 }
 
-func (seq errIterator[V]) Deduplicate(eq func(v1, v2 V) bool) errIterator[V] {
+func (seq ErrIterator[V]) Deduplicate(eq func(v1, v2 V) bool) ErrIterator[V] {
 	seen := []V{}
 	return func(yield func(okerr[V]) bool) {
 		for o := range seq {
@@ -336,7 +343,7 @@ func (seq errIterator[V]) Deduplicate(eq func(v1, v2 V) bool) errIterator[V] {
 	}
 }
 
-func (seq iterator[V]) EQ(seq2 iterator[V], eq func(v1, v2 V) bool) bool {
+func (seq Iterator[V]) EQ(seq2 Iterator[V], eq func(v1, v2 V) bool) bool {
 	c1 := seq.Collect()
 	c2 := seq2.Collect()
 	if len(c1) != len(c2) {
@@ -350,7 +357,7 @@ func (seq iterator[V]) EQ(seq2 iterator[V], eq func(v1, v2 V) bool) bool {
 	return true
 }
 
-func (seq iterator[V]) Sort(swap func(v1, v2 V) bool) iterator[V] {
+func (seq Iterator[V]) Sort(swap func(v1, v2 V) bool) Iterator[V] {
 	// Sholid keep the errors and not create a new iterator
 	s := seq.Collect()
 	sort.SliceStable(s, func(i, j int) bool {
@@ -359,7 +366,7 @@ func (seq iterator[V]) Sort(swap func(v1, v2 V) bool) iterator[V] {
 	return NewIterator(s)
 }
 
-func (seq iterator[V]) Transform(trans func(s V) (V, error)) errIterator[V] {
+func (seq Iterator[V]) Transform(trans func(s V) (V, error)) ErrIterator[V] {
 	return func(yield func(okerr[V]) bool) {
 		for v := range seq {
 
@@ -373,7 +380,7 @@ func (seq iterator[V]) Transform(trans func(s V) (V, error)) errIterator[V] {
 	}
 }
 
-func (seq errIterator[V]) Transform(trans func(s V) (V, error)) errIterator[V] {
+func (seq ErrIterator[V]) Transform(trans func(s V) (V, error)) ErrIterator[V] {
 	return func(yield func(okerr[V]) bool) {
 		for o := range seq {
 			if o.err == nil {
@@ -387,7 +394,7 @@ func (seq errIterator[V]) Transform(trans func(s V) (V, error)) errIterator[V] {
 	}
 }
 
-func (seq iterator[V]) TransformToInt(trans func(s V) (int, error)) errIterator[int] {
+func (seq Iterator[V]) TransformToInt(trans func(s V) (int, error)) ErrIterator[int] {
 	return func(yield func(okerr[int]) bool) {
 		for v := range seq {
 			var ou okerr[int]
@@ -400,7 +407,7 @@ func (seq iterator[V]) TransformToInt(trans func(s V) (int, error)) errIterator[
 	}
 }
 
-func (seq errIterator[V]) TransformToInt(trans func(s V) (int, error)) errIterator[int] {
+func (seq ErrIterator[V]) TransformToInt(trans func(s V) (int, error)) ErrIterator[int] {
 	return func(yield func(okerr[int]) bool) {
 		for oi := range seq {
 			var ou okerr[int]
@@ -417,7 +424,7 @@ func (seq errIterator[V]) TransformToInt(trans func(s V) (int, error)) errIterat
 	}
 }
 
-func (seq iterator[V]) TransformToString(trans func(s V) (string, error)) errIterator[string] {
+func (seq Iterator[V]) TransformToString(trans func(s V) (string, error)) ErrIterator[string] {
 	return func(yield func(okerr[string]) bool) {
 		for v := range seq {
 			var ou okerr[string]
@@ -430,7 +437,7 @@ func (seq iterator[V]) TransformToString(trans func(s V) (string, error)) errIte
 	}
 }
 
-func (seq errIterator[V]) TransformToString(trans func(s V) (string, error)) errIterator[string] {
+func (seq ErrIterator[V]) TransformToString(trans func(s V) (string, error)) ErrIterator[string] {
 	return func(yield func(okerr[string]) bool) {
 		for oi := range seq {
 			var ou okerr[string]
@@ -457,7 +464,7 @@ func keys[T any](m map[string]T) []string {
 	return out
 }
 
-func (seq iterator[V]) Enumerate() enuIterator[V] {
+func (seq Iterator[V]) Enumerate() EnuIterator[V] {
 	i := -1
 	return func(yield func(int, V) bool) {
 		for v := range seq {
@@ -469,10 +476,10 @@ func (seq iterator[V]) Enumerate() enuIterator[V] {
 	}
 }
 
-func (seq errIterator[V]) EnumerateOk() enuIterator[V] {
+func (seq ErrIterator[V]) EnumerateOk() EnuIterator[V] {
 	return seq.FilterOk().Enumerate()
 }
 
-func (seq errIterator[V]) EnumerateErr() enuIterator[error] {
+func (seq ErrIterator[V]) EnumerateErr() EnuIterator[error] {
 	return seq.FilterErr().Enumerate()
 }
