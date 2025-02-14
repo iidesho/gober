@@ -692,7 +692,6 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				top.acknowledgers.AddUnique(c.id, func(v1, v2 NodeID) bool { return v1 == v2 })
 				top.decliners.DeleteWhere(func(v NodeID) bool { return v == c.id })
 
-				c.mutex.Lock()
 				if top.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 && top.acknowledgers.Contains(top.requester) >= 0 {
 					delete(c.requests, k)
 					c.approved[k] = top.requester
@@ -700,7 +699,6 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						c.approvedC <- k
 					}
 				}
-				c.mutex.Unlock()
 
 				c.distributor <- message{
 					t:         approve,
