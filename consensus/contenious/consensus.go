@@ -10,8 +10,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-
-	//	"strings"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -35,18 +33,23 @@ type Consensus interface {
 	Completed(ConsID)
 }
 
-type NodeID uuid.UUID
-type ConsID uuid.UUID
+type (
+	NodeID uuid.UUID
+	ConsID uuid.UUID
+)
 
 func (id NodeID) String() string {
 	return uuid.UUID(id).String()
 }
+
 func (id ConsID) String() string {
 	return uuid.UUID(id).String()
 }
+
 func (id NodeID) Bytes() []byte {
 	return uuid.UUID(id).Bytes()
 }
+
 func (id ConsID) Bytes() []byte {
 	return uuid.UUID(id).Bytes()
 }
@@ -157,10 +160,10 @@ func New(
 	discoverer discovery.Discoverer,
 	topic string,
 	ctx context.Context,
-) (Consensus, <-chan ConsID, error) {
+) (Consensus, <-chan ConsID, <-chan ConsID, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	s := serv.Base().Group(topic)
 	/*
@@ -181,7 +184,7 @@ func New(
 
 	selfBytes, err := bcts.Write(bcts.String(discoverer.Self()))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	aborted := make(chan ConsID, MESSAGE_BUFFER_SIZE)
@@ -191,6 +194,7 @@ func New(
 		id:          NodeID(id),
 		connected:   []server{},                 // sync.NewSlice[server](),
 		requests:    map[ConsID]gs.Slice[req]{}, // sync.NewMap[consID, gs.Slice[req]{}](),
+		approved:    map[ConsID]NodeID{},
 		mutex:       &sync.RWMutex{},
 		distributor: distributor,
 		discoverer:  discoverer,
@@ -268,7 +272,7 @@ func New(
 			c.reader(r, w, ctx)
 		},
 	)
-	return &c, aborted, nil
+	return &c, aborted, approved, nil
 }
 
 func (c consensus) Connected() []string {
@@ -330,7 +334,7 @@ func (c *consensus) Request(id ConsID) {
 	}
 	reqs, ok := c.requests[id]
 	c.mutex.RUnlock()
-	if ok && itr.NewIterator(reqs.Slice()).
+	if ok && reqs.ReadItr().
 		Filter(func(s req) bool {
 			return s.acknowledgers.Contains(s.requester) >= 0
 		}).
@@ -351,7 +355,7 @@ func (c *consensus) Request(id ConsID) {
 		return
 	}
 	reqs, ok = c.requests[id]
-	if ok && itr.NewIterator(reqs.Slice()).
+	if ok && reqs.ReadItr().
 		Filter(func(s req) bool {
 			return s.acknowledgers.Contains(s.requester) >= 0
 		}).
@@ -455,13 +459,14 @@ func (c *consensus) Completed(id ConsID) {
 		return
 	}
 	requester, ok = c.approved[id]
-	c.mutex.Unlock()
 	if !ok {
 		sbragi.Warning("consent does not exist")
+		c.mutex.Unlock()
 		return
 	}
 	if requester != c.id {
 		sbragi.Warning("we didn't win request") // should error
+		c.mutex.Unlock()
 		return
 	}
 	c.completed = append(c.completed, id)
@@ -595,57 +600,439 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 			// sender:    c.id,
 			consID: cons,
 		}
-		c.mutex.RUnlock()
+	}
+	c.mutex.RUnlock()
+	/*
+		if !c.connected.AddUnique(server{
+			id:       rid,
+			hostname: string(rName),
+			w:        w,
+		}, func(v1, v2 server) bool {
+			return v1.id == v2.id
+		}) {
+			sbragi.Info("rejected double connection to server", "name", rName, "id", rid.String())
+			return
+		}
+	*/
+	sbragi.Debug(
+		"connected to server",
+		"self",
+		c.discoverer.Self(),
+		"name",
+		rName,
+		"id",
+		rid.String(),
+	)
+	defer func() {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+		}
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.connected = itr.NewIterator(c.connected).
+			Filter(func(s server) bool { return s.id != rid }).
+			Collect()
 		/*
-			if !c.connected.AddUnique(server{
-				id:       rid,
-				hostname: string(rName),
-				w:        w,
-			}, func(v1, v2 server) bool {
-				return v1.id == v2.id
-			}) {
-				sbragi.Info("rejected double connection to server", "name", rName, "id", rid.String())
-				return
-			}
+			c.connected.DeleteWhere(func(v server) bool {
+				return v.id == rid
+			})
 		*/
-		sbragi.Debug(
-			"connected to server",
-			"self",
-			c.discoverer.Self(),
-			"name",
-			rName,
-			"id",
-			rid.String(),
-		)
-		defer func() {
-			select {
-			case <-c.ctx.Done():
-				return
-			default:
+		for k, v := range c.approved {
+			if v == rid {
+				delete(c.approved, k)
+				sbragi.Info("aborting", "id", k.String())
+				c.aborted <- k
+				sbragi.Info("aborted", "id", k.String())
+				continue
 			}
-			c.mutex.Lock()
-			defer c.mutex.Unlock()
-			c.connected = itr.NewIterator(c.connected).
-				Filter(func(s server) bool { return s.id != rid }).
-				Collect()
-			/*
-				c.connected.DeleteWhere(func(v server) bool {
-					return v.id == rid
-				})
-			*/
-			for k, v := range c.approved {
-				if v == rid {
-					delete(c.approved, k)
-					sbragi.Info("aborting", "id", k.String())
-					c.aborted <- k
-					sbragi.Info("aborted", "id", k.String())
-					continue
+		}
+		for k, reqs := range c.requests {
+			for _, req := range reqs.Slice() {
+				req.acknowledgers.DeleteWhere(func(v NodeID) bool { return v == rid })
+				req.decliners.DeleteWhere(func(v NodeID) bool { return v == rid })
+			}
+			hasack := false
+			reqs.DeleteWhere(func(v req) bool {
+				if v.requester == rid {
+					if v.acknowledgers.Contains(c.id) >= 0 && v.acknowledgers.Contains(rid) >= 0 {
+						hasack = true
+					}
+					return true
+				}
+				return false
+			})
+			if reqs.Len() == 0 {
+				delete(c.requests, k)
+				go c.Request(k)
+				continue
+			}
+			if reqs.ReadItr().
+				Filter(func(s req) bool {
+					return s.acknowledgers.Contains(s.requester) >= 0
+				}).Count() == 0 {
+				go c.Request(k)
+				continue
+			}
+			if hasack { // if we are not aknowledger of their requests, we can skip next step
+				// always decline current approved one before approve another one
+				c.distributor <- message{
+					t:         decline,
+					requester: rid,
+					// sender:    c.id,
+					consID: k,
 				}
 			}
-			for k, reqs := range c.requests {
-				for _, req := range reqs.Slice() {
-					req.acknowledgers.DeleteWhere(func(v NodeID) bool { return v == rid })
-					req.decliners.DeleteWhere(func(v NodeID) bool { return v == rid })
+			if reqs.ReadItr().Contains(func(v req) bool {
+				return v.acknowledgers.ReadItr().Contains(func(v NodeID) bool {
+					return v == c.id
+				})
+			}) {
+				continue
+			}
+
+			// get highest voted candidate and approve it
+			n := 0
+			top := req{}
+			for r := range reqs.ReadItr() {
+				if r.acknowledgers.Len() > n {
+					n = r.acknowledgers.Len()
+					top = r
+				}
+			}
+			top.acknowledgers.AddUnique(c.id, func(v1, v2 NodeID) bool { return v1 == v2 })
+			top.decliners.DeleteWhere(func(v NodeID) bool { return v == c.id })
+
+			if top.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 &&
+				top.acknowledgers.Contains(top.requester) >= 0 {
+				delete(c.requests, k)
+				c.approved[k] = top.requester
+				if top.requester == c.id {
+					c.approvedC <- k
+				}
+			}
+
+			c.distributor <- message{
+				t:         approve,
+				requester: top.requester,
+				// sender:    c.id,
+				consID: k,
+			}
+
+		}
+	}()
+
+	// Create a reader function that takes in a channel to a distributor routine and the ID and Name of the resver and lastly the reader. Then thes routine should read until completion.
+	// The distributor routine will close the writer on write error.
+	// Reader functeon will defer cleanup of the connetion
+	// Requests for consensus will be sent to the distributor
+	// The distributor can also periodically call the discovery function to find new or remove old nodes. Select on ctx, time and distributor channel
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.ctx.Done():
+			return
+		case m, ok := <-r:
+			if !ok {
+				return
+			}
+			d, err := bcts.Read[message](m)
+			if sbragi.WithError(err).
+				Error("could not read data from consensus producer") {
+				continue
+			}
+			switch d.t {
+			case approve:
+				sbragi.Trace(
+					"received approve request",
+					"self",
+					c.id.String(),
+					"sender",
+					rid,
+					"id",
+					d.consID,
+				)
+				/*
+					accs, _ := c.consents.GetOrInit(d.consID, func() acknowledgements {
+						return acknowledgements{
+							requester:     d.requester,
+							acknowledgers: sync.NewSlice[uuid.UUID](),
+						}
+					})
+				*/
+				c.mutex.RLock()
+				if itr.NewIterator(c.completed).
+					Contains(func(v ConsID) bool { return v == d.consID }) {
+					c.mutex.RUnlock()
+					continue
+				}
+				_, ok := c.approved[d.consID]
+				if ok {
+					c.mutex.RUnlock()
+					continue
+				}
+				reqs, ok := c.requests[d.consID]
+				c.mutex.RUnlock()
+
+				if ok {
+					if d.requester == c.id && reqs.ReadItr().
+						Filter(func(s req) bool {
+							return s.requester == d.requester
+						}).Count() == 0 {
+						continue // we have already given up this request
+					}
+
+					if reqs.ReadItr().
+						Filter(func(s req) bool {
+							return s.acknowledgers.Contains(rid) >= 0
+						}).Count() > 0 {
+						continue // they have approved some request
+					}
+				}
+				c.mutex.Lock()
+				if itr.NewIterator(c.completed).
+					Contains(func(v ConsID) bool { return v == d.consID }) {
+					c.mutex.Unlock()
+					continue
+				}
+				_, ok = c.approved[d.consID]
+				if ok {
+					c.mutex.Unlock()
+					continue
+				}
+				reqs, ok = c.requests[d.consID]
+				if d.requester == c.id && (!ok || reqs.ReadItr().
+					Filter(func(s req) bool {
+						return s.requester == d.requester
+					}).Count() == 0) {
+					c.mutex.Unlock()
+					continue // we have already given up this request
+				}
+
+				if ok && reqs.ReadItr().
+					Filter(func(s req) bool {
+						return s.acknowledgers.Contains(rid) >= 0
+					}).Count() > 0 {
+					c.mutex.Unlock()
+					sbragi.Fatal(
+						"recieved second approval",
+						"cons",
+						d.consID,
+						"from",
+						rid,
+					)
+					continue // they have approved some request
+				}
+				if ok {
+					exist := false
+					approve := false
+					for req := range itr.NewIterator(reqs.Slice()).
+						Filter(func(s req) bool {
+							if s.requester == d.requester {
+								exist = true
+								return true
+							}
+							return false
+						}) {
+						req.acknowledgers.AddUnique(
+							rid,
+							func(v1, v2 NodeID) bool { return v1 == v2 },
+						)
+						if req.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 &&
+							req.acknowledgers.Contains(req.requester) >= 0 {
+							approve = true
+							break
+						}
+						req.decliners.DeleteWhere(func(v NodeID) bool { return v == rid })
+					}
+					if approve { // if more than half approved, move request to approved list
+						c.approved[d.consID] = d.requester
+						delete(c.requests, d.consID)
+						c.mutex.Unlock()
+						if d.requester == c.id {
+							c.approvedC <- d.consID
+						}
+						continue
+					}
+					if !exist {
+						newreq := req{
+							requester:     d.requester,
+							acknowledgers: gs.NewSlice[NodeID](),
+							decliners:     gs.NewSlice[NodeID](),
+						}
+						newreq.acknowledgers.Add(rid)
+						reqs.Add(newreq)
+					}
+				} else {
+					// Should distribute our approval when it is the first time we get this request
+					c.distributor <- *d
+
+					if len(c.discoverer.Servers()) <= 3 { // there will be more than half approval
+						c.approved[d.consID] = d.requester
+						c.mutex.Unlock()
+						continue
+					}
+					newreq := req{
+						requester:     d.requester,
+						acknowledgers: gs.NewSlice[NodeID](),
+						decliners:     gs.NewSlice[NodeID](),
+					}
+					newreq.acknowledgers.Add(rid)
+					newreq.acknowledgers.Add(c.id)
+
+					c.requests[d.consID] = gs.NewSlice[req]()
+					c.requests[d.consID].Add(newreq)
+				}
+				c.mutex.Unlock()
+			case decline:
+				//
+				sbragi.Trace(
+					"received decline request",
+					"self",
+					c.id.String(),
+					"sender",
+					rid,
+					"id",
+					d.consID,
+				)
+				c.mutex.RLock()
+				if itr.NewIterator(c.completed).
+					Contains(func(v ConsID) bool { return v == d.consID }) {
+					c.mutex.RUnlock()
+					continue
+				}
+				_, ok := c.approved[d.consID]
+				if ok {
+					c.mutex.RUnlock()
+					continue
+				}
+				reqs, ok := c.requests[d.consID]
+				c.mutex.RUnlock()
+				if d.requester == c.id && reqs.ReadItr().
+					Filter(func(s req) bool {
+						return s.requester == d.requester
+					}).Count() == 0 {
+					continue // we have already given up this request
+				}
+
+				c.mutex.Lock()
+				if itr.NewIterator(c.completed).
+					Contains(func(v ConsID) bool { return v == d.consID }) {
+					c.mutex.Unlock()
+					continue
+				}
+				_, ok = c.approved[d.consID]
+				if ok {
+					c.mutex.Unlock()
+					continue
+				}
+				reqs, ok = c.requests[d.consID]
+				if d.requester == c.id && (!ok || reqs.ReadItr().
+					Filter(func(s req) bool {
+						return s.requester == d.requester
+					}).Count() == 0) {
+					c.mutex.Unlock()
+					continue // we have already given up this request
+				}
+				if ok {
+					exist := false
+					givingup := false
+					for req := range itr.NewIterator(reqs.Slice()).
+						Filter(func(s req) bool {
+							if s.requester == d.requester {
+								exist = true
+								return true
+							}
+							return false
+						}) {
+						req.decliners.AddUnique(
+							rid,
+							func(v1, v2 NodeID) bool { return v1 == v2 },
+						)
+						if req.requester == c.id &&
+							req.decliners.Len() > (len(c.discoverer.Servers())-1)/2 {
+							// we can only give up by ourselves
+							givingup = true
+							break
+						}
+						req.acknowledgers.DeleteWhere(func(v NodeID) bool { return v == rid })
+					}
+					if givingup { // if more than half declined, we will give up
+						delete(c.requests, d.consID)
+						c.mutex.Unlock()
+						c.distributor <- message{
+							t:         giveup,
+							requester: c.id,
+							// sender:    c.id,
+							consID: d.consID,
+						}
+						continue
+					}
+					if !exist {
+						newreq := req{
+							requester:     d.requester,
+							acknowledgers: gs.NewSlice[NodeID](),
+							decliners:     gs.NewSlice[NodeID](),
+						}
+						newreq.decliners.Add(rid)
+						reqs.Add(newreq)
+					}
+				} else {
+					// shouldn't be our request then, since we checked before
+					newreq := req{
+						requester:     d.requester,
+						acknowledgers: gs.NewSlice[NodeID](),
+						decliners:     gs.NewSlice[NodeID](),
+					}
+					newreq.decliners.Add(rid)
+
+					c.requests[d.consID] = gs.NewSlice[req]()
+					c.requests[d.consID].Add(newreq)
+				}
+				c.mutex.Unlock()
+			case giveup:
+				// check if completed & approved
+				// check if I have ack him, if so I need to decline him and approve another
+				// delete him from request
+				// if request empty or (no valid exist) I need to request
+				sbragi.Trace(
+					"received giveup request",
+					"self",
+					c.id.String(),
+					"sender",
+					rid,
+					"id",
+					d.consID,
+				)
+				if rid != d.requester {
+					// log error
+					sbragi.Warning(
+						"sender is not requester",
+						"sender",
+						rid,
+						"requester",
+						d.requester,
+					)
+					continue
+				}
+				c.mutex.RLock()
+				if itr.NewIterator(c.completed).
+					Contains(func(v ConsID) bool { return v == d.consID }) {
+					c.mutex.RUnlock()
+					continue
+				}
+				_, ok := c.approved[d.consID]
+				if ok {
+					c.mutex.RUnlock()
+					continue
+				}
+				reqs, ok := c.requests[d.consID]
+				c.mutex.RUnlock()
+				if !ok {
+					// should log
+					continue
 				}
 				hasack := false
 				reqs.DeleteWhere(func(v req) bool {
@@ -658,15 +1045,15 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					return false
 				})
 				if reqs.Len() == 0 {
-					delete(c.requests, k)
-					c.Request(k)
+					delete(c.requests, d.consID)
+					c.Request(d.consID)
 					continue
 				}
 				if itr.NewIterator(reqs.Slice()).
 					Filter(func(s req) bool {
 						return s.acknowledgers.Contains(s.requester) >= 0
 					}).Count() == 0 {
-					c.Request(k)
+					c.Request(d.consID)
 					continue
 				}
 				if !hasack { // if we are not aknowledger of their requests, we can skip next step
@@ -677,7 +1064,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					t:         decline,
 					requester: rid,
 					// sender:    c.id,
-					consID: k,
+					consID: d.consID,
 				}
 
 				// get highest voted candidate and approve it
@@ -692,589 +1079,233 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				top.acknowledgers.AddUnique(c.id, func(v1, v2 NodeID) bool { return v1 == v2 })
 				top.decliners.DeleteWhere(func(v NodeID) bool { return v == c.id })
 
-				if top.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 && top.acknowledgers.Contains(top.requester) >= 0 {
-					delete(c.requests, k)
-					c.approved[k] = top.requester
+				c.mutex.Lock()
+				if top.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 &&
+					top.acknowledgers.Contains(top.requester) >= 0 {
+					delete(c.requests, d.consID)
+					c.approved[d.consID] = top.requester
 					if top.requester == c.id {
-						c.approvedC <- k
+						c.approvedC <- d.consID
 					}
 				}
+				c.mutex.Unlock()
 
 				c.distributor <- message{
 					t:         approve,
 					requester: top.requester,
 					// sender:    c.id,
-					consID: k,
+					consID: d.consID,
 				}
 
-			}
-		}()
-
-		// Create a reader function that takes in a channel to a distributor routine and the ID and Name of the resver and lastly the reader. Then thes routine should read until completion.
-		// The distributor routine will close the writer on write error.
-		// Reader functeon will defer cleanup of the connetion
-		// Requests for consensus will be sent to the distributor
-		// The distributor can also periodically call the discovery function to find new or remove old nodes. Select on ctx, time and distributor channel
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-c.ctx.Done():
-				return
-			case m, ok := <-r:
-				if !ok {
-					return
-				}
-				d, err := bcts.Read[message](m)
-				if sbragi.WithError(err).
-					Error("could not read data from consensus producer") {
-					continue
-				}
-				switch d.t {
-				case approve:
-					sbragi.Trace(
-						"received approve request",
-						"self",
-						c.id.String(),
-						"sender",
-						rid,
-						"id",
-						d.consID,
-					)
-					/*
-						accs, _ := c.consents.GetOrInit(d.consID, func() acknowledgements {
-							return acknowledgements{
-								requester:     d.requester,
-								acknowledgers: sync.NewSlice[uuid.UUID](),
-							}
-						})
-					*/
-					c.mutex.RLock()
-					if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == d.consID }) {
-						c.mutex.RUnlock()
-						continue
-					}
-					_, ok := c.approved[d.consID]
-					if ok {
-						c.mutex.RUnlock()
-						continue
-					}
-					reqs, ok := c.requests[d.consID]
-					c.mutex.RUnlock()
-
-					if d.requester == c.id && reqs.ReadItr().
-						Filter(func(s req) bool {
-							return s.requester == d.requester
-						}).Count() == 0 {
-						continue // we have already given up this request
-					}
-
-					if reqs.ReadItr().
-						Filter(func(s req) bool {
-							return s.acknowledgers.Contains(rid) >= 0
-						}).Count() > 0 {
-						continue // they have approved some request
-					}
-					c.mutex.Lock()
-					if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == d.consID }) {
-						c.mutex.Unlock()
-						continue
-					}
-					_, ok = c.approved[d.consID]
-					if ok {
-						c.mutex.Unlock()
-						continue
-					}
-					reqs, ok = c.requests[d.consID]
-					if d.requester == c.id && (!ok || reqs.ReadItr().
-						Filter(func(s req) bool {
-							return s.requester == d.requester
-						}).Count() == 0) {
-						c.mutex.Unlock()
-						continue // we have already given up this request
-					}
-
-					if ok && reqs.ReadItr().
-						Filter(func(s req) bool {
-							return s.acknowledgers.Contains(rid) >= 0
-						}).Count() > 0 {
-						c.mutex.Unlock()
-						sbragi.Warning(
-							"recieved second approval",
-							"cons",
-							d.consID,
-							"from",
-							rid,
-						)
-						continue // they have approved some request
-					}
-					if ok {
-						exist := false
-						approve := false
-						for req := range itr.NewIterator(reqs.Slice()).
-							Filter(func(s req) bool {
-								if s.requester == d.requester {
-									exist = true
-									return true
-								}
-								return false
-							}) {
-							req.acknowledgers.AddUnique(rid, func(v1, v2 NodeID) bool { return v1 == v2 })
-							if req.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 && req.acknowledgers.Contains(req.requester) >= 0 {
-								approve = true
-								break
-							}
-							req.decliners.DeleteWhere(func(v NodeID) bool { return v == rid })
-						}
-						if approve { // if more than half approved, move request to approved list
-							c.approved[d.consID] = d.requester
-							delete(c.requests, d.consID)
-							c.mutex.Unlock()
-							if d.requester == c.id {
-								c.approvedC <- d.consID
-							}
-							continue
-						}
-						if !exist {
-							newreq := req{
-								requester:     d.requester,
-								acknowledgers: gs.NewSlice[NodeID](),
-								decliners:     gs.NewSlice[NodeID](),
-							}
-							newreq.acknowledgers.Add(rid)
-							reqs.Add(newreq)
-						}
-					} else {
-						// Should distribute our approval when it is the first time we get this request
-						c.distributor <- *d
-
-						if len(c.discoverer.Servers()) <= 3 { // there will be more than half approval
-							c.approved[d.consID] = d.requester
-							c.mutex.Unlock()
-							continue
-						}
-						newreq := req{
-							requester:     d.requester,
-							acknowledgers: gs.NewSlice[NodeID](),
-							decliners:     gs.NewSlice[NodeID](),
-						}
-						newreq.acknowledgers.Add(rid)
-						newreq.acknowledgers.Add(c.id)
-
-						c.requests[d.consID] = gs.NewSlice[req]()
-						c.requests[d.consID].Add(newreq)
-					}
-					c.mutex.Unlock()
-				case decline:
-					//
-					sbragi.Trace(
-						"received decline request",
-						"self",
-						c.id.String(),
-						"sender",
-						rid,
-						"id",
-						d.consID,
-					)
-					c.mutex.RLock()
-					if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == d.consID }) {
-						c.mutex.RUnlock()
-						continue
-					}
-					_, ok := c.approved[d.consID]
-					if ok {
-						c.mutex.RUnlock()
-						continue
-					}
-					reqs, ok := c.requests[d.consID]
-					c.mutex.RUnlock()
-					if d.requester == c.id && reqs.ReadItr().
-						Filter(func(s req) bool {
-							return s.requester == d.requester
-						}).Count() == 0 {
-						continue // we have already given up this request
-					}
-
-					c.mutex.Lock()
-					if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == d.consID }) {
-						c.mutex.Unlock()
-						continue
-					}
-					_, ok = c.approved[d.consID]
-					if ok {
-						c.mutex.Unlock()
-						continue
-					}
-					reqs, ok = c.requests[d.consID]
-					if d.requester == c.id && (!ok || reqs.ReadItr().
-						Filter(func(s req) bool {
-							return s.requester == d.requester
-						}).Count() == 0) {
-						c.mutex.Unlock()
-						continue // we have already given up this request
-					}
-					if ok {
-						exist := false
-						givingup := false
-						for req := range itr.NewIterator(reqs.Slice()).
-							Filter(func(s req) bool {
-								if s.requester == d.requester {
-									exist = true
-									return true
-								}
-								return false
-							}) {
-							req.decliners.AddUnique(rid, func(v1, v2 NodeID) bool { return v1 == v2 })
-							if req.requester == c.id && req.decliners.Len() > (len(c.discoverer.Servers())-1)/2 {
-								// we can only give up by ourselves
-								givingup = true
-								break
-							}
-							req.acknowledgers.DeleteWhere(func(v NodeID) bool { return v == rid })
-						}
-						if givingup { // if more than half declined, we will give up
-							delete(c.requests, d.consID)
-							c.mutex.Unlock()
-							c.distributor <- message{
-								t:         giveup,
-								requester: c.id,
-								// sender:    c.id,
-								consID: d.consID,
-							}
-							continue
-						}
-						if !exist {
-							newreq := req{
-								requester:     d.requester,
-								acknowledgers: gs.NewSlice[NodeID](),
-								decliners:     gs.NewSlice[NodeID](),
-							}
-							newreq.decliners.Add(rid)
-							reqs.Add(newreq)
-						}
-					} else {
-						// shouldn't be our request then, since we checked before
-						newreq := req{
-							requester:     d.requester,
-							acknowledgers: gs.NewSlice[NodeID](),
-							decliners:     gs.NewSlice[NodeID](),
-						}
-						newreq.decliners.Add(rid)
-
-						c.requests[d.consID] = gs.NewSlice[req]()
-						c.requests[d.consID].Add(newreq)
-					}
-					c.mutex.Unlock()
-				case giveup:
-					// check if completed & approved
-					// check if I have ack him, if so I need to decline him and approve another
-					// delete him from request
-					// if request empty or (no valid exist) I need to request
-					sbragi.Trace(
-						"received giveup request",
-						"self",
-						c.id.String(),
-						"sender",
-						rid,
-						"id",
-						d.consID,
-					)
-					if rid != d.requester {
-						// log error
-						sbragi.Warning(
-							"sender is not requester",
-							"sender",
-							rid,
-							"requester",
-							d.requester,
-						)
-						continue
-					}
-					c.mutex.RLock()
-					if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == d.consID }) {
-						c.mutex.RUnlock()
-						continue
-					}
-					_, ok := c.approved[d.consID]
-					if ok {
-						c.mutex.RUnlock()
-						continue
-					}
-					reqs, ok := c.requests[d.consID]
-					c.mutex.RUnlock()
-					if !ok {
-						//should log
-						continue
-					}
-					hasack := false
-					reqs.DeleteWhere(func(v req) bool {
-						if v.requester == rid {
-							if v.acknowledgers.Contains(c.id) >= 0 {
-								hasack = true
-							}
-							return true
-						}
-						return false
-					})
-					if reqs.Len() == 0 {
-						delete(c.requests, d.consID)
-						c.Request(d.consID)
-						continue
-					}
-					if itr.NewIterator(reqs.Slice()).
-						Filter(func(s req) bool {
-							return s.acknowledgers.Contains(s.requester) >= 0
-						}).Count() == 0 {
-						c.Request(d.consID)
-						continue
-					}
-					if !hasack { // if we are not aknowledger of their requests, we can skip next step
-						continue
-					}
-					// always decline current approved one before approve another one
-					c.distributor <- message{
-						t:         decline,
-						requester: rid,
-						// sender:    c.id,
-						consID: d.consID,
-					}
-
-					// get highest voted candidate and approve it
-					n := 0
-					top := req{}
-					for r := range reqs.ReadItr() {
-						if r.acknowledgers.Len() > n {
-							n = r.acknowledgers.Len()
-							top = r
-						}
-					}
-					top.acknowledgers.AddUnique(c.id, func(v1, v2 NodeID) bool { return v1 == v2 })
-					top.decliners.DeleteWhere(func(v NodeID) bool { return v == c.id })
-
-					c.mutex.Lock()
-					if top.acknowledgers.Len() > (len(c.discoverer.Servers())-1)/2 && top.acknowledgers.Contains(top.requester) >= 0 {
-						delete(c.requests, d.consID)
-						c.approved[d.consID] = top.requester
-						if top.requester == c.id {
-							c.approvedC <- d.consID
-						}
-					}
-					c.mutex.Unlock()
-
-					c.distributor <- message{
-						t:         approve,
-						requester: top.requester,
-						// sender:    c.id,
-						consID: d.consID,
-					}
-
-				case failed:
-					sbragi.Trace(
-						"received failed request",
-						"self",
-						c.id.String(),
-						"sender",
-						rid,
-						"id",
-						d.consID,
-					)
-					if rid != d.requester {
-						// log error
-						sbragi.Warning(
-							"sender is not requester",
-							"sender",
-							rid,
-							"requester",
-							d.requester,
-						)
-						continue
-					}
-					c.mutex.RLock()
-					node, ok := c.approved[d.consID]
-					if !ok {
-						sbragi.Warning(
-							"failed non existing consensus",
-							"id",
-							d.consID,
-						)
-						c.mutex.RUnlock()
-						continue
-					}
-					if node != d.requester {
-						// log error
-						sbragi.Warning(
-							"requester is not the one we approved",
-							"requester",
-							d.requester,
-							"appoved",
-							node,
-						)
-						c.mutex.RUnlock()
-						continue
-					}
-					c.mutex.RUnlock()
-					c.mutex.Lock()
-					node, ok = c.approved[d.consID]
-					if !ok {
-						sbragi.Warning(
-							"failed non existing consensus",
-							"id",
-							d.consID,
-						)
-						c.mutex.Unlock()
-						continue
-					}
-					if node != d.requester {
-						// log error
-						sbragi.Warning(
-							"requester is not the one we approved",
-							"requester",
-							d.requester,
-							"appoved",
-							node,
-						)
-						c.mutex.Unlock()
-						continue
-					}
-					delete(c.approved, d.consID)
-					sbragi.Debug("deleted", "consents", c.requests)
-					c.mutex.Unlock()
-					c.aborted <- d.consID
-					continue
-				case request:
-					sbragi.Trace(
-						"received request request",
-						"self",
-						c.id.String(),
-						"sender",
-						rid,
-						"id",
-						d.consID,
-					)
-					if rid != d.requester {
-						// log error
-						sbragi.Warning(
-							"sender is not requester",
-							"sender",
-							rid,
-							"requester",
-							d.requester,
-						)
-						continue
-					}
-					// check if we have approved other -> decline them
-					// approve them, check if more than half approval -> move to approved
-					// Doing it lacy without read checking
-					c.mutex.Lock()
-					if itr.NewIterator(c.completed).
-						Contains(func(v ConsID) bool { return v == d.consID }) {
-						c.mutex.Unlock()
-						continue
-					}
-					if _, ok := c.approved[d.consID]; ok {
-						c.mutex.Unlock()
-						continue
-					}
-					reqs, ok := c.requests[d.consID]
-
-					if ok && reqs.ReadItr().Filter(func(s req) bool {
-						return s.requester != rid && s.acknowledgers.Contains(c.id) >= 0
-					}).Count() > 0 {
-						// decline
-
-						c.mutex.Unlock()
-						d.t = decline
-						c.distributor <- *d
-						continue
-					}
-
-					// approve
-					if !ok {
-						c.requests[d.consID] = gs.NewSlice[req]()
-						reqs = c.requests[d.consID]
-					}
-					ok = false
-					acks := 2
-					for r := range reqs.WriteItr().Filter(func(s *req) bool { return s.requester == rid }) {
-						r.acknowledgers.AddUnique(rid, func(v1, v2 NodeID) bool { return v1 == v2 })
-						r.acknowledgers.AddUnique(c.id, func(v1, v2 NodeID) bool { return v1 == v2 })
-						ok = true
-						acks = r.acknowledgers.Len()
-					}
-					if acks > (len(c.discoverer.Servers())-1)/2 { // no need to check requester in acknowlegers here
-						delete(c.requests, d.consID)
-						c.approved[d.consID] = rid
-					}
-					if !ok {
-						newreq := req{
-							requester:     rid,
-							acknowledgers: gs.NewSlice[NodeID](),
-							decliners:     gs.NewSlice[NodeID](),
-						}
-						newreq.acknowledgers.Add(rid)
-						newreq.acknowledgers.Add(c.id)
-						reqs.Add(newreq)
-					}
-
-					c.mutex.Unlock()
-					d.t = approve
-					c.distributor <- *d
-				case completed:
-					sbragi.Trace(
-						"received completed request",
-						"self",
-						c.id.String(),
-						"sender",
-						rid,
-						"id",
-						d.consID,
-					)
-					if rid != d.requester {
-						// log error
-						sbragi.Warning(
-							"sender is not requester",
-							"sender",
-							rid,
-							"requester",
-							d.requester,
-						)
-						continue
-					}
-					// Doing it lacy without read checking
-					c.mutex.Lock()
-					_, ok := c.approved[d.consID]
-					if ok {
-						delete(c.approved, d.consID)
-						c.completed = append(c.completed, d.consID)
-						c.mutex.Unlock()
-						continue
-					}
-					sbragi.Warning(
-						"consent not found in approved list",
-						"consent",
-						d.consID,
-						"node",
-						c.id,
-					)
-					_, ok = c.requests[d.consID]
-					if ok {
-						delete(c.requests, d.consID)
-						c.completed = append(c.completed, d.consID)
-						c.mutex.Unlock()
-						continue
-					}
-					sbragi.Warning(
-						"consent not found in approved list nor request list",
-						"consent",
-						d.consID,
-						"node",
-						c.id,
-					)
-					c.mutex.Unlock()
-				default:
+			case failed:
+				sbragi.Trace(
+					"received failed request",
+					"self",
+					c.id.String(),
+					"sender",
+					rid,
+					"id",
+					d.consID,
+				)
+				if rid != d.requester {
 					// log error
-					sbragi.Warning("unsupported message type", "type", d.t)
+					sbragi.Warning(
+						"sender is not requester",
+						"sender",
+						rid,
+						"requester",
+						d.requester,
+					)
+					continue
 				}
+				c.mutex.RLock()
+				node, ok := c.approved[d.consID]
+				if !ok {
+					sbragi.Warning(
+						"failed non existing consensus",
+						"id",
+						d.consID,
+					)
+					c.mutex.RUnlock()
+					continue
+				}
+				if node != d.requester {
+					// log error
+					sbragi.Warning(
+						"requester is not the one we approved",
+						"requester",
+						d.requester,
+						"appoved",
+						node,
+					)
+					c.mutex.RUnlock()
+					continue
+				}
+				c.mutex.RUnlock()
+				c.mutex.Lock()
+				node, ok = c.approved[d.consID]
+				if !ok {
+					sbragi.Warning(
+						"failed non existing consensus",
+						"id",
+						d.consID,
+					)
+					c.mutex.Unlock()
+					continue
+				}
+				if node != d.requester {
+					// log error
+					sbragi.Warning(
+						"requester is not the one we approved",
+						"requester",
+						d.requester,
+						"appoved",
+						node,
+					)
+					c.mutex.Unlock()
+					continue
+				}
+				delete(c.approved, d.consID)
+				sbragi.Debug("deleted", "consents", c.requests)
+				c.mutex.Unlock()
+				c.aborted <- d.consID
+				continue
+			case request:
+				sbragi.Trace(
+					"received request request",
+					"self",
+					c.id.String(),
+					"sender",
+					rid,
+					"id",
+					d.consID,
+				)
+				if rid != d.requester {
+					// log error
+					sbragi.Warning(
+						"sender is not requester",
+						"sender",
+						rid,
+						"requester",
+						d.requester,
+					)
+					continue
+				}
+				// check if we have approved other -> decline them
+				// approve them, check if more than half approval -> move to approved
+				// Doing it lacy without read checking
+				c.mutex.Lock()
+				if itr.NewIterator(c.completed).
+					Contains(func(v ConsID) bool { return v == d.consID }) {
+					c.mutex.Unlock()
+					continue
+				}
+				if _, ok := c.approved[d.consID]; ok {
+					c.mutex.Unlock()
+					continue
+				}
+				reqs, ok := c.requests[d.consID]
+
+				if ok && reqs.ReadItr().Filter(func(s req) bool {
+					return s.requester != rid && s.acknowledgers.Contains(c.id) >= 0
+				}).Count() > 0 {
+					// decline
+
+					c.mutex.Unlock()
+					d.t = decline
+					c.distributor <- *d
+					continue
+				}
+
+				// approve
+				if !ok {
+					c.requests[d.consID] = gs.NewSlice[req]()
+					reqs = c.requests[d.consID]
+				}
+				ok = false
+				acks := 2
+				for r := range reqs.WriteItr().Filter(func(s *req) bool { return s.requester == rid }) {
+					r.acknowledgers.AddUnique(rid, func(v1, v2 NodeID) bool { return v1 == v2 })
+					r.acknowledgers.AddUnique(
+						c.id,
+						func(v1, v2 NodeID) bool { return v1 == v2 },
+					)
+					ok = true
+					acks = r.acknowledgers.Len()
+				}
+				if acks > (len(c.discoverer.Servers())-1)/2 { // no need to check requester in acknowlegers here
+					delete(c.requests, d.consID)
+					c.approved[d.consID] = rid
+				}
+				if !ok {
+					newreq := req{
+						requester:     rid,
+						acknowledgers: gs.NewSlice[NodeID](),
+						decliners:     gs.NewSlice[NodeID](),
+					}
+					newreq.acknowledgers.Add(rid)
+					newreq.acknowledgers.Add(c.id)
+					reqs.Add(newreq)
+				}
+
+				c.mutex.Unlock()
+				d.t = approve
+				c.distributor <- *d
+			case completed:
+				sbragi.Trace(
+					"received completed request",
+					"self",
+					c.id.String(),
+					"sender",
+					rid,
+					"id",
+					d.consID,
+				)
+				if rid != d.requester {
+					// log error
+					sbragi.Warning(
+						"sender is not requester",
+						"sender",
+						rid,
+						"requester",
+						d.requester,
+					)
+					continue
+				}
+				// Doing it lacy without read checking
+				c.mutex.Lock()
+				_, ok := c.approved[d.consID]
+				if ok {
+					delete(c.approved, d.consID)
+					c.completed = append(c.completed, d.consID)
+					c.mutex.Unlock()
+					continue
+				}
+				sbragi.Warning(
+					"consent not found in approved list",
+					"consent",
+					d.consID,
+					"node",
+					c.id,
+				)
+				_, ok = c.requests[d.consID]
+				if ok {
+					delete(c.requests, d.consID)
+					c.completed = append(c.completed, d.consID)
+					c.mutex.Unlock()
+					continue
+				}
+				sbragi.Warning(
+					"consent not found in approved list nor request list",
+					"consent",
+					d.consID,
+					"node",
+					c.id,
+				)
+				c.mutex.Unlock()
+			default:
+				// log error
+				sbragi.Warning("unsupported message type", "type", d.t)
 			}
 		}
 	}

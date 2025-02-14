@@ -32,15 +32,18 @@ func (l *local) Self() string {
 }
 
 var (
-	c        contenious.Consensus
-	aborted  <-chan contenious.ConsID
-	c2       contenious.Consensus
-	aborted2 <-chan contenious.ConsID
-	c3       contenious.Consensus
-	aborted3 <-chan contenious.ConsID
-	s        webserver.Server
-	ctx      context.Context
-	cancel   context.CancelFunc
+	c         contenious.Consensus
+	aborted   <-chan contenious.ConsID
+	approved  <-chan contenious.ConsID
+	c2        contenious.Consensus
+	aborted2  <-chan contenious.ConsID
+	approved2 <-chan contenious.ConsID
+	c3        contenious.Consensus
+	aborted3  <-chan contenious.ConsID
+	approved3 <-chan contenious.ConsID
+	s         webserver.Server
+	ctx       context.Context
+	cancel    context.CancelFunc
 )
 
 var (
@@ -66,7 +69,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, aborted, err = contenious.New(
+	c, aborted, approved, err = contenious.New(
 		serv,
 		token,
 		&d,
@@ -83,13 +86,13 @@ func TestInit(t *testing.T) {
 
 func TestConsensusAlone(t *testing.T) {
 	c.Request(id3)
-	i := 0
-	for !c.Status(id3) {
-		if i > 100 {
-			t.Fatal("did not win request")
+	select {
+	case id := <-approved:
+		if id != id3 {
+			t.Fatal("approved id is not id3")
 		}
-		i++
-		time.Sleep(time.Millisecond * 100)
+	case <-time.Tick(time.Second * 10):
+		t.Fatal("did not win request")
 	}
 }
 
@@ -103,7 +106,7 @@ func TestInitCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c2, aborted2, err = contenious.New(
+	c2, aborted2, approved2, err = contenious.New(
 		serv2,
 		token,
 		New([]string{"localhost:3133", "localhost:3132", "localhost:3134"}),
@@ -117,7 +120,7 @@ func TestInitCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c3, aborted3, err = contenious.New(
+	c3, aborted3, approved3, err = contenious.New(
 		serv3,
 		token,
 		New([]string{"localhost:3134", "localhost:3133", "localhost:3132"}),
@@ -133,34 +136,41 @@ func TestInitCluster(t *testing.T) {
 }
 
 func TestConsensus(t *testing.T) {
+	t.Log("requesting id1")
 	c.Request(id1)
-	i := 0
-	for !c.Status(id1) {
-		if i > 100 {
+	t.Log("requeted id1")
+	t.Log(c.Consents())
+	t.Log(c.Connected())
+	t.Log(c2.Consents())
+	t.Log(c2.Connected())
+	t.Log(c3.Consents())
+	t.Log(c3.Connected())
+	select {
+	case id := <-approved:
+		if id != id1 {
 			t.Log(c.Consents())
 			t.Log(c.Connected())
 			t.Log(c2.Consents())
 			t.Log(c2.Connected())
 			t.Log(c3.Consents())
 			t.Log(c3.Connected())
-			t.Fatal("did not win request")
+			t.Fatal("approved id is not id1")
 		}
-		i++
-		time.Sleep(time.Millisecond * 100)
+	case <-time.Tick(time.Second * 10):
+		t.Fatal("did not win request")
 	}
 }
 
 func TestHasConsentRequest(t *testing.T) {
 	c2.Request(id1)
-	i := 0
-	for !c2.Status(id1) {
-		if i > 10 {
-			return
+	select {
+	case id := <-approved2:
+		if id == id1 {
+			t.Fatal("did win previously won id1")
 		}
-		i++
-		time.Sleep(time.Millisecond * 100)
+		t.Fatal("did win random id")
+	case <-time.Tick(time.Second * 1):
 	}
-	t.Fatal("did win request that had winner")
 }
 
 func TestCompleted(t *testing.T) {
@@ -169,15 +179,14 @@ func TestCompleted(t *testing.T) {
 	c.Abort(id1)
 	time.Sleep(time.Second)
 	c2.Request(id1)
-	i := 0
-	for !c2.Status(id1) {
-		if i > 10 {
-			return
+	select {
+	case id := <-approved2:
+		if id == id1 {
+			t.Fatal("did win previously completed id1")
 		}
-		i++
-		time.Sleep(time.Millisecond * 100)
+		t.Fatal("did win random id")
+	case <-time.Tick(time.Second * 1):
 	}
-	t.Fatal("did win request that had winner")
 }
 
 func TestDisconnect(t *testing.T) {
@@ -205,24 +214,20 @@ func TestDisconnect(t *testing.T) {
 	time.Sleep(time.Second)
 	c2.Request(id1)
 	c2.Request(id2)
-	i := 0
-	for ; i < 10; i++ {
-		if c2.Status(id1) {
-			t.Fatal("did win request that had winner")
+	select {
+	case id := <-approved2:
+		if id == id1 {
+			t.Fatal("did win previously completed id1")
 		}
-		time.Sleep(time.Millisecond * 100)
-	}
-	i = 0
-	for !c2.Status(id2) {
-		if i > 10 {
-			t.Log(c2.Consents())
-			t.Log(c2.Connected())
-			t.Log(c3.Consents())
-			t.Log(c3.Connected())
-			t.Fatal("did not win request")
+		if id != id2 {
+			t.Fatal("did win random id")
 		}
-		i++
-		time.Sleep(time.Millisecond * 100)
+	case <-time.Tick(time.Second * 1):
+		t.Log(c2.Consents())
+		t.Log(c2.Connected())
+		t.Log(c3.Consents())
+		t.Log(c3.Connected())
+		t.Fatal("did not win request")
 	}
 }
 
@@ -235,18 +240,18 @@ func TestAbort(t *testing.T) {
 	}
 	time.Sleep(time.Second)
 	c3.Request(id2)
-	i := 0
 	t.Log(c3.Consents())
-	for !c3.Status(id2) {
-		if i > 10 {
-			t.Log(c2.Consents())
-			t.Log(c2.Connected())
-			t.Log(c3.Consents())
-			t.Log(c3.Connected())
-			t.Fatal("did not win request")
+	select {
+	case id := <-approved3:
+		if id != id2 {
+			t.Fatal("did win random id")
 		}
-		i++
-		time.Sleep(time.Millisecond * 100)
+	case <-time.Tick(time.Second * 1):
+		t.Log(c2.Consents())
+		t.Log(c2.Connected())
+		t.Log(c3.Consents())
+		t.Log(c3.Connected())
+		t.Fatal("did not win request")
 	}
 	t.Log(c2.Consents())
 	t.Log(c3.Consents())
