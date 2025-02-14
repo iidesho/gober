@@ -33,20 +33,20 @@ func (l *local) Self() string {
 
 var (
 	c        contenious.Consensus
-	aborted  <-chan uuid.UUID
+	aborted  <-chan contenious.ConsID
 	c2       contenious.Consensus
-	aborted2 <-chan uuid.UUID
+	aborted2 <-chan contenious.ConsID
 	c3       contenious.Consensus
-	aborted3 <-chan uuid.UUID
+	aborted3 <-chan contenious.ConsID
 	s        webserver.Server
 	ctx      context.Context
 	cancel   context.CancelFunc
 )
 
 var (
-	id1 = uuid.Must(uuid.NewV7())
-	id2 = uuid.Must(uuid.NewV7())
-	id3 = uuid.Must(uuid.NewV7())
+	id1 = contenious.ConsID(uuid.Must(uuid.NewV7()))
+	id2 = contenious.ConsID(uuid.Must(uuid.NewV7()))
+	id3 = contenious.ConsID(uuid.Must(uuid.NewV7()))
 	d   = local{nodes: []string{"localhost:3132"}}
 )
 
