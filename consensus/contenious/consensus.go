@@ -1046,14 +1046,14 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				})
 				if reqs.Len() == 0 {
 					delete(c.requests, d.consID)
-					c.Request(d.consID)
+					go c.Request(d.consID)
 					continue
 				}
 				if itr.NewIterator(reqs.Slice()).
 					Filter(func(s req) bool {
 						return s.acknowledgers.Contains(s.requester) >= 0
 					}).Count() == 0 {
-					c.Request(d.consID)
+					go c.Request(d.consID)
 					continue
 				}
 				if !hasack { // if we are not aknowledger of their requests, we can skip next step
