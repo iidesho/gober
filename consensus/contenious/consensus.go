@@ -830,6 +830,9 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 							c.approved[d.consID] = d.requester
 							delete(c.requests, d.consID)
 							c.mutex.Unlock()
+							if d.requester == c.id {
+								c.approvedC <- d.consID
+							}
 							continue
 						}
 						if !exist {
@@ -1218,7 +1221,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					c.distributor <- *d
 				case completed:
 					sbragi.Trace(
-						"received request request",
+						"received completed request",
 						"self",
 						c.id.String(),
 						"sender",
