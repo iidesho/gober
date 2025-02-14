@@ -1017,19 +1017,18 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					)
 					continue
 				}
-				c.mutex.RLock()
+				c.mutex.Lock()
 				if itr.NewIterator(c.completed).
 					Contains(func(v ConsID) bool { return v == d.consID }) {
-					c.mutex.RUnlock()
+					c.mutex.Unlock()
 					continue
 				}
 				_, ok := c.approved[d.consID]
 				if ok {
-					c.mutex.RUnlock()
+					c.mutex.Unlock()
 					continue
 				}
 				reqs, ok := c.requests[d.consID]
-				c.mutex.RUnlock()
 				if !ok {
 					// should log
 					continue
@@ -1047,6 +1046,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				if reqs.Len() == 0 {
 					delete(c.requests, d.consID)
 					go c.Request(d.consID)
+					c.mutex.Unlock()
 					continue
 				}
 				if itr.NewIterator(reqs.Slice()).
@@ -1054,8 +1054,10 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						return s.acknowledgers.Contains(s.requester) >= 0
 					}).Count() == 0 {
 					go c.Request(d.consID)
+					c.mutex.Unlock()
 					continue
 				}
+				c.mutex.Unlock()
 				if !hasack { // if we are not aknowledger of their requests, we can skip next step
 					continue
 				}
