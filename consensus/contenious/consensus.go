@@ -39,19 +39,27 @@ type (
 )
 
 func (id NodeID) String() string {
-	return uuid.UUID(id).String()
+	return id.UUID().String()
 }
 
 func (id ConsID) String() string {
-	return uuid.UUID(id).String()
+	return id.UUID().String()
 }
 
 func (id NodeID) Bytes() []byte {
-	return uuid.UUID(id).Bytes()
+	return id.UUID().Bytes()
 }
 
 func (id ConsID) Bytes() []byte {
-	return uuid.UUID(id).Bytes()
+	return id.UUID().Bytes()
+}
+
+func (id NodeID) UUID() uuid.UUID {
+	return uuid.UUID(id)
+}
+
+func (id ConsID) UUID() uuid.UUID {
+	return uuid.UUID(id)
 }
 
 type consensus struct {

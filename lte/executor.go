@@ -29,14 +29,14 @@ type Executor[BT, T any] interface {
 }
 
 type executor[BT any, T bcts.ReadWriter[BT]] struct {
-	ctx         context.Context
-	es          consumer.Consumer[tm[BT, T], *tm[BT, T]]
-	provider    stream.CryptoKeyProvider
-	consBuilder contenious.Consensus
-	dataType    string
-	version     string
+	ctx       context.Context
+	es        consumer.Consumer[tm[BT, T], *tm[BT, T]]
+	provider  stream.CryptoKeyProvider
+	consensus contenious.Consensus
+	dataType  string
+	version   string
 	// statuses    eventmap.EventMap[status, *status]
-	failed chan<- uuid.UUID
+	// failed chan<- uuid.UUID
 	// failCount map[uuid.UUID]int16
 	tasks    []status
 	taskLock sync.Mutex
@@ -140,64 +140,13 @@ func (t *tm[BT, T]) ReadBytes(r io.Reader) error {
 	return err
 }
 
-func InitNoFail[BT any, T bcts.ReadWriter[BT]](
-	s stream.Stream,
-	consBuilder contenious.Consensus,
-	dataTypeName, dataTypeVersion string,
-	p stream.CryptoKeyProvider,
-	execute func(T, context.Context) error,
-	workers int,
-	ctx context.Context,
-) (ed Executor[BT, T], err error) {
-	return iInit(
-		s,
-		consBuilder,
-		dataTypeName,
-		dataTypeVersion,
-		p,
-		execute,
-		workers,
-		nil,
-		ctx,
-	)
-}
-
 func Init[BT any, T bcts.ReadWriter[BT]](
 	s stream.Stream,
-	consBuilder contenious.Consensus,
+	consnsus contenious.Consensus,
 	dataTypeName, dataTypeVersion string,
 	p stream.CryptoKeyProvider,
 	execute func(T, context.Context) error,
 	workers int,
-	ctx context.Context,
-) (ed Executor[BT, T], failed <-chan uuid.UUID, err error) {
-	failedC := make(chan uuid.UUID, 1024)
-	ed, err = iInit(
-		s,
-		consBuilder,
-		dataTypeName,
-		dataTypeVersion,
-		p,
-		execute,
-		workers,
-		failedC,
-		ctx,
-	)
-	if err != nil {
-		close(failedC)
-		return nil, nil, err
-	}
-	return ed, failedC, nil
-}
-
-func iInit[BT any, T bcts.ReadWriter[BT]](
-	s stream.Stream,
-	consBuilder contenious.Consensus,
-	dataTypeName, dataTypeVersion string,
-	p stream.CryptoKeyProvider,
-	execute func(T, context.Context) error,
-	workers int,
-	failedC chan<- uuid.UUID,
 	ctx context.Context,
 ) (ed Executor[BT, T], err error) {
 	/*
@@ -209,11 +158,10 @@ func iInit[BT any, T bcts.ReadWriter[BT]](
 	*/
 	dataTypeName = dataTypeName + "_execution"
 	t := executor[BT, T]{
-		dataType:    dataTypeName,
-		version:     dataTypeVersion,
-		consBuilder: consBuilder,
-		failed:      failedC,
-		taskLock:    sync.Mutex{},
+		dataType:  dataTypeName,
+		version:   dataTypeVersion,
+		consensus: consnsus,
+		taskLock:  sync.Mutex{},
 		// failCount:   map[uuid.UUID]int16{},
 		ctx: ctx,
 	}
@@ -286,14 +234,14 @@ func iInit[BT any, T bcts.ReadWriter[BT]](
 					if log. // Should not escalate
 						WithError(err).
 						Warning("there was an error while executing task. not finishing") {
+						t.consensus.Abort(contenious.ConsID(e.Data.Status.id))
 						sbragi.WithError(t.writeEvent(tm[BT, T]{
 							Task: e.Data.Task,
 							Status: status{
 								id:     e.Data.Status.id,
 								status: StatusFailed,
 							},
-						})).Error("writing panic event", "id", e.Data.Status.id.String())
-						t.consBuilder.Abort(e.Data.Status.id)
+						})).Error("writing failed event", "id", e.Data.Status.id.String())
 						/*
 							t.statuses.Set(e.Data.Status.Id, &status{
 								executor: executorIDS,
@@ -362,16 +310,17 @@ func (t *executor[BT, T]) handler(
 			} else {
 				t.tasks = append(t.tasks, e.Data.Status)
 			}
-			if t.failed != nil {
-				t.failed <- e.Data.Status.id
-			}
 			/*
-				t.failCount[e.Data.Status.id]++
-				if t.failCount[e.Data.Status.id] > 10 { // Should be configured
-					t.taskLock.Unlock()
-					continue
+				if t.failed != nil {
+					t.failed <- e.Data.Status.id
 				}
-				t.taskLock.Unlock()
+				/*
+					t.failCount[e.Data.Status.id]++
+					if t.failCount[e.Data.Status.id] > 10 { // Should be configured
+						t.taskLock.Unlock()
+						continue
+					}
+					t.taskLock.Unlock()
 			*/
 		case StatusWorking:
 			t.taskLock.Lock()
@@ -392,6 +341,8 @@ func (t *executor[BT, T]) handler(
 			}
 		*/
 		// Could be valuable to keep the task collection here
+		//This is just temporary, it will change when Barry is done...
+		t.consensus.Request(contenious.ConsID(e.Data.Status.id))
 		log.Info(
 			"won event",
 			"name",

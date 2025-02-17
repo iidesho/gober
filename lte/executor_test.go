@@ -44,12 +44,18 @@ var (
 )
 
 var (
-	id1 = uuid.Must(uuid.NewV7())
-	id2 = uuid.Must(uuid.NewV7())
-	id3 = uuid.Must(uuid.NewV7())
-	fc  = atomic.Int32{}
-	wg  = &stdSync.WaitGroup{}
-	str = ""
+	id1  = uuid.Must(uuid.NewV7())
+	id2  = uuid.Must(uuid.NewV7())
+	id3  = uuid.Must(uuid.NewV7())
+	fc   = atomic.Int32{}
+	wg   = &stdSync.WaitGroup{}
+	str  = ""
+	t1   = "t1"
+	t1bc = bcts.TinyString(t1)
+	t2   = "t2"
+	t2bc = bcts.TinyString(t2)
+	t3   = "t3"
+	t3bc = bcts.TinyString(t3)
 )
 
 func TestInit(t *testing.T) {
@@ -68,7 +74,8 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := contenious.New(
+	var p contenious.Consensus
+	p, failed, err = contenious.New(
 		serv,
 		token,
 		&local{nodes: []string{"localhost:3132"}},
@@ -83,7 +90,7 @@ func TestInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	wg.Add(3)
-	e, failed, err = lte.Init(
+	e, err = lte.Init(
 		s,
 		p,
 		"test-string",
@@ -96,7 +103,7 @@ func TestInit(t *testing.T) {
 			}
 			fmt.Println(*ts)
 			if *ts == "t3" && fc.CompareAndSwap(0, 1) {
-				fmt.Println("failing t3")
+				fmt.Println("failing t3", id3.String())
 				// fc.Add(1)
 				return fmt.Errorf("fail t3")
 			}
@@ -111,17 +118,27 @@ func TestInit(t *testing.T) {
 		ctx,
 	)
 
+	/*
+		go func() {
+			for f := range failed {
+				t.Log("failed", "id", f.String())
+				switch f {
+				case id1:
+					e.Retry(f, &t1bc)
+				case id2:
+					e.Retry(f, &t2bc)
+				case id3:
+					e.Retry(f, &t3bc)
+				}
+			}
+		}()
+	*/
+
 	go serv.Run()
 	time.Sleep(time.Second)
 }
 
 func TestLTEAlone(t *testing.T) {
-	t1 := "t1"
-	t1bc := bcts.TinyString(t1)
-	t2 := "t2"
-	t2bc := bcts.TinyString(t2)
-	t3 := "t3"
-	t3bc := bcts.TinyString(t3)
 	e.Create(id1, &t1bc)
 	e.Create(id2, &t2bc)
 	e.Create(id3, &t3bc)
@@ -133,7 +150,7 @@ func TestLTEAlone(t *testing.T) {
 	e.Retry(failedID, &t3bc)
 	wg.Wait()
 	t.Log(str)
-	time.Sleep(time.Second * 10)
+	// time.Sleep(time.Second * 10)
 	if str != "t1t2t3" {
 		t.Fail()
 	}

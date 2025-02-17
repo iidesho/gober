@@ -3,9 +3,9 @@ package saga_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
@@ -42,25 +42,28 @@ type act1 struct {
 	State saga.State
 }
 
-func (a *act1) Execute(s *bcts.TinyString) error {
+func (a *act1) Execute(s *bcts.TinyString) (saga.State, error) {
+	log.Info("executing act1")
 	defer wg.Done()
 	log.Info(a.Inner, "s", s)
 	*s = bcts.TinyString(fmt.Sprint(*s, "-", a.Inner))
 	a.State = saga.StateSuccess
-	return nil
+	return a.State, nil
 }
 
-func (a act1) Reduce(*bcts.TinyString) error {
-	return nil
+func (a act1) Reduce(*bcts.TinyString) (saga.State, error) {
+	return saga.StateSuccess, nil
 }
 
-func (a act1) Status(s *bcts.TinyString) (saga.State, error) {
+/*
+func (a act1) Status(s *bcts.TinyString)  {
 	sbragi.Info("act1 status", "data", *s, "contains", strings.Contains(string(*s), "init"))
 	if !strings.Contains(string(*s), "init") {
 		return saga.StateInvalid, nil
 	}
 	return a.State, nil
 }
+*/
 
 type act2 struct {
 	Pre    string `json:"pre"`
@@ -69,23 +72,23 @@ type act2 struct {
 	State  saga.State
 }
 
-func (a *act2) Execute(*bcts.TinyString) error {
+func (a *act2) Execute(*bcts.TinyString) (saga.State, error) {
+	log.Info("executing act2")
+	if a.State == saga.StateSuccess {
+		return a.State, nil
+	}
 	if !a.Failed {
 		a.Failed = true
-		return saga.ErrRetryable
+		return saga.StateFailed, saga.ErrRetryable
 	}
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
 	a.State = saga.StateSuccess
-	return nil
-}
-
-func (a act2) Reduce(*bcts.TinyString) error {
-	return nil
-}
-
-func (a act2) Status(*bcts.TinyString) (saga.State, error) {
 	return a.State, nil
+}
+
+func (a act2) Reduce(*bcts.TinyString) (saga.State, error) {
+	return saga.StateSuccess, nil
 }
 
 var a1 = act1{
@@ -168,6 +171,7 @@ func TestInit(t *testing.T) {
 	}
 	s = edt
 	go serv.Run()
+	time.Sleep(time.Second)
 }
 
 var id uuid.UUID

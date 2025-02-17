@@ -10,7 +10,7 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
-	"github.com/iidesho/gober/consensus/contenious"
+	consensus "github.com/iidesho/gober/consensus/contenious"
 	"github.com/iidesho/gober/discovery/local"
 	"github.com/iidesho/gober/lte"
 	"github.com/iidesho/gober/stream"
@@ -35,6 +35,7 @@ type transactionCheck struct {
 type saga[BT any, T bcts.ReadWriter[BT]] struct {
 	close  func()
 	states *sync.MapBCTS[states, *states]
+	conses sync.Map[uuid.UUID, sagaValue[BT, T]]
 	story  Story[BT, T]
 }
 
@@ -45,6 +46,7 @@ const (
 	StatePending
 	StateWorking
 	StateSuccess
+	StateRetryable
 	StateFailed
 )
 
@@ -174,7 +176,8 @@ func NewDumHandler[BT any, T bcts.ReadWriter[BT]](
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
 	// task    tasks.Tasks[sagaValue[BT, T], *sagaValue[BT, T]]
-	task    lte.Executor[sagaValue[BT, T], *sagaValue[BT, T]]
+	task lte.Executor[sagaValue[BT, T], *sagaValue[BT, T]]
+	// failed  <-chan uuid.UUID
 	Handler Handler[BT, T]
 	/*
 		Status  func(T) (State, error)
@@ -271,12 +274,17 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 */
 
 type sagaValue[BT any, T bcts.ReadWriter[BT]] struct {
-	V  T         `json:"v"`
-	ID uuid.UUID `json:"id"`
+	V      T         `json:"v"`
+	ID     uuid.UUID `json:"id"`
+	ConsID uuid.UUID `json:"cons_id"`
 }
 
 func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
 	err := bcts.ReadStaticBytes(r, s.ID[:])
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadStaticBytes(r, s.ConsID[:])
 	if err != nil {
 		return err
 	}
@@ -286,6 +294,10 @@ func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
 
 func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
 	err := bcts.WriteStaticBytes(w, s.ID[:])
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteStaticBytes(w, s.ConsID[:])
 	if err != nil {
 		return err
 	}
@@ -299,32 +311,38 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	story Story[BT, T],
 	p stream.CryptoKeyProvider,
 	ctx context.Context,
-) (out *saga[BT, T], err error) {
+) (*saga[BT, T], error) {
 	if len(story.Actions) <= 1 {
-		err = ErrNotEnoughActions
-		return
+		err := ErrNotEnoughActions
+		return nil, err
 	}
 	ctxTask, cancel := context.WithCancel(ctx)
 	token := sync.NewObj[string]()
 	token.Set("someTestToken")
 	// cons, err := consensus.Init(3134, token, local.New())
-	cons, err := contenious.New(
-		serv,
-		token,
-		local.New(),
-		fmt.Sprintf("%s_saga", name),
-		ctx,
-	)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	out = &saga[BT, T]{
+	out := &saga[BT, T]{
 		close:  cancel,
 		states: sync.NewMapBCTS[states](),
+		conses: sync.NewMap[uuid.UUID, sagaValue[BT, T]](),
 	}
 	for actI, action := range story.Actions {
 		actionId := fmt.Sprintf("%s_%s", name, action.Id)
+		// should be moved into LTE...
+		cons, aborted, complete, err := consensus.New(
+			serv,
+			token,
+			local.New(),
+			actionId,
+			ctxTask,
+		)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		go func() {
+			for range complete {
+			}
+		}()
 		story.Actions[actI].task, err = lte.Init(
 			pers,
 			cons,
@@ -370,6 +388,14 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 				status, err := action.Handler.Execute(v.V)
 				if log.WithError(err).
 					Debug("executing action", "saga", name, "action", action.Id) {
+					if errors.Is(err, ErrRetryable) {
+						// TODO: This shoulc contain exponential backoff
+						log.Info("sleeping 15 seconds before retrying retryable saga task")
+						time.Sleep(time.Second * 15)
+						err = story.Actions[actI].task.Retry(v.ID, v)
+						log.WithError(err).
+							Debug("start next action", "saga", name, "action", action.Id)
+					}
 					return err
 				}
 				(*statuses)[actI] = status
@@ -393,9 +419,20 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		)
 		if err != nil {
 			cancel()
-			return
+			return nil, err
 		}
-
+		go func() {
+			for {
+				select {
+				case <-ctxTask.Done():
+					return
+				case id := <-aborted:
+					if data, ok := out.conses.Get(id.UUID()); ok {
+						log.Error("task aborted", "data", data) // notice
+					}
+				}
+			}
+		}()
 	}
 	/*
 		for li, l := range story.Arcs {
@@ -492,7 +529,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 			}
 		}()
 	*/
-	return
+	return out, nil
 }
 
 func (s *saga[BT, T]) Status(id uuid.UUID) (State, error) {
