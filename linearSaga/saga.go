@@ -4,304 +4,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	consensus "github.com/iidesho/gober/consensus/contenious"
+	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/discovery/local"
-	"github.com/iidesho/gober/lte"
+	"github.com/iidesho/gober/itr"
 	"github.com/iidesho/gober/stream"
-	"github.com/iidesho/gober/sync"
+	"github.com/iidesho/gober/stream/consumer"
+	"github.com/iidesho/gober/stream/event"
+	"github.com/iidesho/gober/stream/event/store"
+	gsync "github.com/iidesho/gober/sync"
 	"github.com/iidesho/gober/webserver"
-	// jsoniter "github.com/json-iterator/go"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelDebug)
-
-type Saga[BT any, T bcts.ReadWriter[BT]] interface {
+type Saga[BT, T any] interface {
 	ExecuteFirst(T) (uuid.UUID, error)
 	Status(uuid.UUID) (State, error)
 	Close()
 }
 
-type transactionCheck struct {
-	completeChan chan struct{}
-	transaction  uint64
-}
-
-type saga[BT any, T bcts.ReadWriter[BT]] struct {
-	close  func()
-	states *sync.MapBCTS[states, *states]
-	conses sync.Map[uuid.UUID, sagaValue[BT, T]]
-	story  Story[BT, T]
-}
-
-type State uint8
-
-const (
-	StateInvalid State = iota
-	StatePending
-	StateWorking
-	StateSuccess
-	StateRetryable
-	StateFailed
-)
-
-func (s State) String() string {
-	switch s {
-	case StatePending:
-		return "pending"
-	case StateWorking:
-		return "working"
-	case StateSuccess:
-		return "success"
-	case StateFailed:
-		return "failed"
-	default:
-		return "invalid"
-	}
-}
-
-func (s State) WriteBytes(w io.Writer) error {
-	log.Info("writing", "s", s)
-	return bcts.WriteUInt8(w, s)
-}
-
-func (s *State) ReadBytes(r io.Reader) error {
-	return bcts.ReadUInt8(r, s)
-}
-
-type states []State
-
-func (s states) WriteBytes(w io.Writer) error {
-	err := bcts.WriteUInt32(w, uint32(len(s)))
-	if err != nil {
-		return err
-	}
-	for _, s := range s {
-		err = s.WriteBytes(w)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *states) ReadBytes(r io.Reader) error {
-	var l uint32
-	err := bcts.ReadUInt32(r, &l)
-	if err != nil {
-		return err
-	}
-	*s = make(states, l)
-	for i := range l {
-		err = (*s)[i].ReadBytes(r)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-type Handler[BT any, T bcts.ReadWriter[BT]] interface {
-	Execute(T) (State, error)
-	Reduce(T) (State, error)
-}
-
-type handlerBuilder[BT any, T bcts.ReadWriter[BT]] struct {
-	execute func(T) (State, error)
-	reduce  func(T) (State, error)
-}
-
-type DumHandler[BT any, T bcts.ReadWriter[BT]] struct {
-	ExecuteFunc func(T) (State, error)
-	ReduceFunc  func(T) (State, error)
-}
-
-type emptyHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
-	Execute(execute func(v T) (State, error)) executeHandlerBuilder[BT, T]
-}
-type executeHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
-	Reduce(reduce func(v T) (State, error)) executeReduceHandlerBuilder[BT, T]
-}
-type executeReduceHandlerBuilder[BT any, T bcts.ReadWriter[BT]] interface {
-	Build() Handler[BT, T]
-}
-
-func NewHandlerBuilder[BT any, T bcts.ReadWriter[BT]]() emptyHandlerBuilder[BT, T] {
-	return handlerBuilder[BT, T]{}
-}
-
-func (h handlerBuilder[BT, T]) Execute(
-	execute func(v T) (State, error),
-) executeHandlerBuilder[BT, T] {
-	h.execute = execute
-	return h
-}
-
-func (h handlerBuilder[BT, T]) Reduce(
-	reduce func(v T) (State, error),
-) executeReduceHandlerBuilder[BT, T] {
-	h.reduce = reduce
-	return h
-}
-
-func (h handlerBuilder[BT, T]) Build() Handler[BT, T] {
-	return DumHandler[BT, T]{
-		ExecuteFunc: h.execute,
-		ReduceFunc:  h.reduce,
-	}
-}
-
-func (h DumHandler[BT, T]) Execute(v T) (State, error) {
-	return h.ExecuteFunc(v)
-}
-
-func (h DumHandler[BT, T]) Reduce(v T) (State, error) {
-	return h.ReduceFunc(v)
-}
-
-func NewDumHandler[BT any, T bcts.ReadWriter[BT]](
-	execute func(T) (State, error),
-	reduce func(T) (State, error),
-) Handler[BT, T] {
-	return DumHandler[BT, T]{
-		ExecuteFunc: execute,
-		ReduceFunc:  reduce,
-	}
-}
-
-type Action[BT any, T bcts.ReadWriter[BT]] struct {
-	// task    tasks.Tasks[sagaValue[BT, T], *sagaValue[BT, T]]
-	task lte.Executor[sagaValue[BT, T], *sagaValue[BT, T]]
-	// failed  <-chan uuid.UUID
-	Handler Handler[BT, T]
-	/*
-		Status  func(T) (State, error)
-		Execute func(T) error
-		Reduce  func(T) error
-	*/
-	Id      string `json:"id"`
-	Type    string `json:"type"`
-	Timeout time.Duration
-}
-
-type Story[BT any, T bcts.ReadWriter[BT]] struct {
-	Name    string
-	Actions []Action[BT, T]
-}
-
-/*
-var executors []struct {
-	id string
-	e  Action
-	t  reflect.Type
-	v  reflect.Value
-}
-*/
-
-func (a *Action[BT, T]) ReadBytes(r io.Reader) error {
-	err := bcts.ReadSmallString(r, &a.Id)
-	if err != nil {
-		return err
-	}
-	err = bcts.ReadSmallString(r, &a.Type)
-	if err != nil {
-		return err
-	}
-	err = bcts.ReadInt64(r, &a.Timeout)
-	if err != nil {
-		return err
-	}
-	return nil
-	// return jsoniter.NewDecoder(r).Decode(a)
-}
-
-func (a Action[BT, T]) WriteBytes(w io.Writer) error {
-	err := bcts.WriteSmallString(w, a.Id)
-	if err != nil {
-		return err
-	}
-	err = bcts.WriteSmallString(w, a.Type)
-	if err != nil {
-		return err
-	}
-	err = bcts.WriteInt64(w, a.Timeout)
-	if err != nil {
-		return err
-	}
-	return nil
-	// return jsoniter.NewEncoder(w).Encode(a)
-}
-
-/*
-func (a *Action) UnmarshalJSON(data []byte) error {
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-
-	var tmpHandler map[string]interface{}
-	val := reflect.ValueOf(*a)
-	typ := val.Type()
-	//typ := reflect.TypeOf(*a) //Use this instead of val.Type?
-	for i := 0; i < typ.NumField(); i++ {
-		switch typ.Field(i).Name {
-		case "Id":
-			a.Id = m[typ.Field(i).Tag.Get("json")].(string)
-		case "Type":
-			a.Type = m[typ.Field(i).Tag.Get("json")].(string)
-		case "Handler":
-			tmpHandler = m[typ.Field(i).Tag.Get("json")].(map[string]interface{})
-		}
-	}
-	for _, e := range executors { //I would like a way to not use this global version.
-		if a.Type != e.t.String() {
-			continue
-		}
-		for i := 0; i < e.t.NumField(); i++ {
-			if v, ok := tmpHandler[e.t.Field(i).Tag.Get("json")]; ok {
-				e.v.Field(i).Set(reflect.ValueOf(v))
-			}
-		}
-		a.Handler = e.v.Interface().(Action).Handler
-	}
-	return nil
-}
-*/
-
-type sagaValue[BT any, T bcts.ReadWriter[BT]] struct {
-	V      T         `json:"v"`
-	ID     uuid.UUID `json:"id"`
-	ConsID uuid.UUID `json:"cons_id"`
-}
-
-func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
-	err := bcts.ReadStaticBytes(r, s.ID[:])
-	if err != nil {
-		return err
-	}
-	err = bcts.ReadStaticBytes(r, s.ConsID[:])
-	if err != nil {
-		return err
-	}
-	s.V, err = bcts.ReadReader[BT, T](r)
-	return err
-}
-
-func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
-	err := bcts.WriteStaticBytes(w, s.ID[:])
-	if err != nil {
-		return err
-	}
-	err = bcts.WriteStaticBytes(w, s.ConsID[:])
-	if err != nil {
-		return err
-	}
-	return s.V.WriteBytes(w)
+type executor[BT any, T bcts.ReadWriter[BT]] struct {
+	ctx      context.Context
+	es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
+	provider stream.CryptoKeyProvider
+	sagaName string
+	version  string
+	story    Story[BT, T]
+	statuses gsync.Map[uuid.UUID, status]
+	failed   chan<- uuid.UUID
+	tasks    []status
+	taskLock sync.Mutex
+	close    context.CancelFunc
 }
 
 func Init[BT any, T bcts.ReadWriter[BT]](
@@ -310,296 +49,482 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	dataTypeVersion, name string,
 	story Story[BT, T],
 	p stream.CryptoKeyProvider,
+	workers int,
 	ctx context.Context,
-) (*saga[BT, T], error) {
+) (*executor[BT, T], error) {
 	if len(story.Actions) <= 1 {
 		err := ErrNotEnoughActions
 		return nil, err
 	}
 	ctxTask, cancel := context.WithCancel(ctx)
-	token := sync.NewObj[string]()
+	token := gsync.NewObj[string]()
 	token.Set("someTestToken")
 	// cons, err := consensus.Init(3134, token, local.New())
-	out := &saga[BT, T]{
-		close:  cancel,
-		states: sync.NewMapBCTS[states](),
-		conses: sync.NewMap[uuid.UUID, sagaValue[BT, T]](),
+	dataTypeName := name + "_saga"
+	es, err := consumer.New[sagaValue[BT, T]](pers, p, ctxTask)
+	if err != nil {
+		cancel()
+		return nil, err
 	}
+	events, err := es.Stream(
+		event.AllTypes(),
+		store.STREAM_START,
+		stream.ReadDataType(dataTypeName),
+		ctx,
+	)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	out := &executor[BT, T]{
+		sagaName: dataTypeName,
+		version:  dataTypeVersion,
+		taskLock: sync.Mutex{},
+		story:    story,
+		statuses: gsync.NewMap[uuid.UUID, status](),
+		es:       es,
+		close:    cancel,
+		ctx:      ctxTask,
+	}
+	discovery := local.New()
 	for actI, action := range story.Actions {
-		actionId := fmt.Sprintf("%s_%s", name, action.Id)
-		// should be moved into LTE...
-		cons, aborted, complete, err := consensus.New(
+		cons, aborted, completed, err := consensus.New(
 			serv,
 			token,
-			local.New(),
-			actionId,
+			discovery,
+			fmt.Sprintf("saga_%s_%s", name, action.Id),
 			ctxTask,
 		)
 		if err != nil {
-			cancel()
 			return nil, err
 		}
-		go func() {
-			for range complete {
-			}
-		}()
-		story.Actions[actI].task, err = lte.Init(
-			pers,
-			cons,
-			// cons.AddTopic,
-			actionId,
-			dataTypeVersion,
-			p,
-			func(v *sagaValue[BT, T], ctx context.Context) error {
-				select {
-				case <-ctx.Done():
-					return fmt.Errorf("context done")
-				default:
-				}
-				log.Info(
-					"executing",
-					"aid",
-					actionId,
-					"id",
-					action.Id,
-					"sid",
-					v.ID.String(),
-					"v",
-					*v.V,
-				)
-				statuses, ok := out.states.Get(bcts.TinyString(v.ID.String()))
-				if !ok {
-					sbragi.Fatal(
-						"tried getting states for undefined saga, behaviour is undefined",
-						"id",
-						v.ID.String(),
-					)
-				}
-				if (*statuses)[actI] == StateSuccess {
-					return nil
-				}
-				/*
-					s, err := action.Handler.Status(v.V)
-					if log.WithError(err).
-						Error("getting action status", "saga", name, "action", action.Id) {
-						return err
-					}
-				*/
-				status, err := action.Handler.Execute(v.V)
-				if log.WithError(err).
-					Debug("executing action", "saga", name, "action", action.Id) {
-					if errors.Is(err, ErrRetryable) {
-						// TODO: This shoulc contain exponential backoff
-						log.Info("sleeping 15 seconds before retrying retryable saga task")
-						time.Sleep(time.Second * 15)
-						err = story.Actions[actI].task.Retry(v.ID, v)
-						log.WithError(err).
-							Debug("start next action", "saga", name, "action", action.Id)
-					}
-					return err
-				}
-				(*statuses)[actI] = status
-				if status != StateSuccess {
-					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					return fmt.Errorf("invalid status expected=success got=%s", status.String())
-				}
-				if len(story.Actions) <= actI+1 {
-					out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-					return nil
-				}
-				(*statuses)[actI+1] = StatePending
-				out.states.Set(bcts.TinyString(v.ID.String()), statuses)
-				err = story.Actions[actI+1].task.Create(uuid.Must(uuid.NewV7()), v)
-				log.WithError(err).
-					Debug("start next action", "saga", name, "action", action.Id)
-				return err
-			},
-			5,
-			ctxTask,
-		)
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		go func() {
-			for {
-				select {
-				case <-ctxTask.Done():
-					return
-				case id := <-aborted:
-					if data, ok := out.conses.Get(id.UUID()); ok {
-						log.Error("task aborted", "data", data) // notice
-					}
-				}
-			}
-		}()
+		story.Actions[actI].cons = cons
+		story.Actions[actI].aborted = aborted
+		story.Actions[actI].completed = completed
 	}
-	/*
-		for li, l := range story.Arcs {
-			var actions tasks.Tasks[Action, *Action]
-			actions, err = tasks.Init(
-				pers,
-				cons.AddTopic,
-				fmt.Sprintf("%s_%d_%s", name, li, ""),
-				dataTypeVersion,
-				p,
-				func(a *Action, ctx context.Context) bool {
-					select {
-					case <-ctx.Done():
-						return false
-					default:
-					}
-					log.Info("executing", "id", a.Id)
-					for i := range story.Arcs[li].Actions {
-						if story.Arcs[li].Actions[i].Id == a.Id {
-							a = &story.Arcs[li].Actions[i]
-							break
+	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
+	exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
+	for range workers {
+		go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+			for e := range events {
+				func() {
+					startTime := time.Now()
+					defer func() {
+						r := recover()
+						if r != nil {
+							log.WithError(
+								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
+							).Error("panic while executing")
+							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+								v: e.Data.v,
+								status: status{
+									stepDone:  e.Data.status.stepDone,
+									retryFrom: "",
+									duration:  time.Since(startTime),
+									state:     StatePaniced,
+									id:        e.Data.status.id,
+								},
+							})).Error("writing panic event", "id", e.Data.status.id.String())
+							return
 						}
+					}()
+					log.Info("selected task", "id", e.Data.status.id, "event", e)
+					actionI := findStep(story.Actions, e.Data.status.stepDone) + 1
+					if actionI >= len(story.Actions) {
+						sbragi.Fatal(
+							"this should never happen...",
+							"saga",
+							name,
+							"actionLen",
+							len(story.Actions),
+							"gotI",
+							actionI,
+						)
+						return
 					}
-					s, err := a.Handler.Status()
-					if log.WithError(err).Debug("getting action status", "saga", name, "action", a.Id) {
-						return false
-					}
-					if s != StatePending {
-						return false
-					}
-					err = a.Handler.Execute()
-					return !log.WithError(err).Debug("executing action", "saga", name, "action", a.Id)
-				},
-				l.Timeout,
-				false,
-				5,
-				ctxTask,
-			)
-			if err != nil {
-				cancel()
-				return
-			}
-			/*
-				for ai, a := range l.Actions {
-					ra := reflect.ValueOf(a)
-					story.Arcs[li].Actions[ai].Type = ra.Type().String()
-					executorExists := false
-					for _, e := range executors { //I would like a way to not use this global version.
-						if ra.Type() == e.v.Type() {
-							executorExists = true
-							break
+					if e.Data.status.state == StateFailed &&
+						e.Data.status.retryFrom != story.Actions[actionI].Id {
+						state, err := story.Actions[actionI].Handler.Reduce(e.Data.v)
+						if log. // Should not escalate
+							WithError(err).
+							Warning("there was an error while reducing saga parp") {
+							// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
+							story.Actions[actionI].cons.Completed(
+								consensus.ConsID(e.Data.status.id),
+							)
+							prevStepID := ""
+							if actionI != 0 {
+								prevStepID = story.Actions[actionI-1].Id
+							}
+							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+								v: e.Data.v,
+								status: status{
+									stepDone:  prevStepID,
+									retryFrom: e.Data.status.retryFrom,
+									duration:  time.Since(startTime),
+									state:     state,
+									id:        e.Data.status.id,
+								},
+							})).Error("writing failed event", "id", e.Data.status.id.String())
+							return
 						}
+					} else {
+						/*
+							Ignoring this state for now
+							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+								V:        e.Data.V,
+								StepDone: e.Data.StepDone,
+								State:    StateWorking,
+								ID:       e.Data.ID,
+							})).Error("writing panic event", "id", e.Data.ID.String())
+						*/
+						state, err := story.Actions[actionI].Handler.Execute(e.Data.v)
+						if log. // Should not escalate
+							WithError(err).
+							Warning("there was an error while executing task. not finishing") {
+							// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
+							retryFrom := ""
+							var retryError retryableError
+							if errors.As(err, &retryError) {
+								retryFrom = retryError.from
+							}
+							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+								v: e.Data.v,
+								status: status{
+									stepDone:  e.Data.status.stepDone,
+									retryFrom: retryFrom,
+									duration:  time.Since(startTime),
+									state:     StateFailed,
+									id:        e.Data.status.id,
+								},
+							})).Error("writing failed event", "id", e.Data.status.id.String())
+							return
+						}
+						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+							v: e.Data.v,
+							status: status{
+								stepDone: story.Actions[actionI].Id,
+								duration: time.Since(startTime),
+								state:    state,
+								id:       e.Data.status.id,
+							},
+						})).Error("writing panic event", "id", e.Data.status.id.String())
+						log.Info("executed task", "event", e)
 					}
-					if !executorExists {
-						executors = append(executors, struct {
-							id string
-							e  Action
-							t  reflect.Type
-							v  reflect.Value
-						}{id: fmt.Sprintf("%s_%d_%s", name, li, a.Id), e: a, v: ra, t: ra.Type()})
-					}
-				}
-		}
-	*/
-	//go cons.Run()
-	out.story = story
-	/*
-		selectChan := make(chan struct{}, 0)
-		taskChan := make(chan taskChanData, 0)
-		go func() {
-			for range selectChan {
-				t, _, e := out.story.Arcs[0].actions.Select()
-				if errors.Is(e, tasks.NothingToSelectError) {
-					time.Sleep(500 * time.Millisecond)
-					continue
-				}
-				taskChan <- taskChanData{
-					task: t,
-					err:  e,
-				}
+				}()
 			}
-		}()
-		go func() {
-			defer close(selectChan)
-			for {
-				selectChan <- struct{}{}
-				select {
-				case <-ctx.Done():
-					return
-				case selected := <-taskChan:
-					fmt.Println("Sel:", selected)
-					selected.task.Data.Body.Execute()
-				}
-			}
-		}()
-	*/
+		}(exec)
+	}
+
+	go out.handler(events, exec)
+
 	return out, nil
 }
 
-func (s *saga[BT, T]) Status(id uuid.UUID) (State, error) {
-	st, ok := s.states.Get(bcts.TinyString(id.String()))
-	if !ok {
-		return StateInvalid, ErrExecutionNotFound
+/*
+func Init[BT any, T bcts.ReadWriter[BT]](
+	s stream.Stream,
+	consnsus consensus.Consensus,
+	dataTypeName, dataTypeVersion string,
+	p stream.CryptoKeyProvider,
+	execute func(T, context.Context) error,
+	workers int,
+	ctx context.Context,
+) (ed Executor[BT, T], err error) {
+	dataTypeName = dataTypeName + "_execution"
+	t := executor[BT, T]{
+		dataType:  dataTypeName,
+		version:   dataTypeVersion,
+		consensus: consnsus,
+		taskLock:  sync.Mutex{},
+		statuses:  gsync.NewMap[uuid.UUID, status](),
+		ctx:       ctx,
 	}
-	if (*st)[0] == StateInvalid {
-		return StateInvalid, errors.New("first saga status was invalid")
+	es, err := consumer.New[sagaValue[BT, T]](s, p, ctx)
+	if err != nil {
+		return
 	}
-	for i, s := range *st {
-		if s == StateSuccess {
+	t.es = es
+	events, err := es.Stream(
+		event.AllTypes(),
+		store.STREAM_START,
+		stream.ReadDataType(dataTypeName),
+		ctx,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
+	exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
+	for i := 0; i < workers; i++ {
+		go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+			for e := range events {
+				func() {
+					defer func() {
+						r := recover()
+						if r != nil {
+							log.WithError(
+								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
+							).Error("panic while executing")
+							sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
+								Task: e.Data.Task,
+								Status: status{
+									id:    e.Data.Status.id,
+									state: StatePaniced,
+								},
+							})).Error("writing panic event", "id", e.Data.Status.id.String())
+							return
+						}
+					}()
+					log.Info("selected task", "id", e.Data.Status.id, "event", e)
+					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
+					sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
+						Task: e.Data.Task,
+						Status: status{
+							id:    e.Data.Status.id,
+							state: StateWorking,
+						},
+					})).Error("writing panic event", "id", e.Data.Status.id.String())
+					err := execute(e.Data.Task, e.CTX)
+					if log. // Should not escalate
+						WithError(err).
+						Warning("there was an error while executing task. not finishing") {
+						t.consensus.Abort(consensus.ConsID(e.Data.Status.id))
+						sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
+							Task: e.Data.Task,
+							Status: status{
+								id:    e.Data.Status.id,
+								state: StateFailed,
+							},
+						})).Error("writing failed event", "id", e.Data.Status.id.String())
+						return
+					}
+					sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
+						Task: e.Data.Task,
+						Status: status{
+							id:    e.Data.Status.id,
+							state: StateSuccess,
+						},
+					})).Error("writing panic event", "id", e.Data.Status.id.String())
+					log.Trace("executed task", "event", e)
+				}()
+			}
+		}(exec)
+	}
+	go t.handler(events, exec)
+
+	ed = &t
+	return
+}
+*/
+
+func (t *executor[BT, T]) handler(
+	events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
+	execChan chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
+) {
+	for e := range events {
+		log.Info(
+			"read event",
+			"event",
+			e,
+			"data",
+			e.Data,
+			"id",
+			e.Data.status.id,
+			"state",
+			e.Data.status.state,
+		)
+		e.Acc()
+		var actionI int
+		switch e.Data.status.state {
+		case StatePending:
+			fallthrough
+		case StateSuccess:
+			t.taskLock.Lock()
+			i := itr.NewIterator(t.tasks).
+				Enumerate().
+				Contains(func(v status) bool { return v.id == e.Data.status.id })
+			if i >= 0 {
+				t.tasks[i].state = e.Data.status.state
+			} else {
+				t.tasks = append(t.tasks, e.Data.status)
+			}
+			t.taskLock.Unlock()
+			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
+			log.Info("success / pending found")
+		case StatePaniced:
+			fallthrough
+		case StateFailed:
+			t.taskLock.Lock()
+			i := itr.NewIterator(t.tasks).
+				Enumerate().
+				Contains(func(v status) bool { return v.id == e.Data.status.id })
+			if i >= 0 {
+				t.tasks[i].state = e.Data.status.state
+			} else {
+				t.tasks = append(t.tasks, e.Data.status)
+			}
+			t.taskLock.Unlock()
+			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
+			log.Info("failed / paniced found")
+		case StateWorking:
+			t.taskLock.Lock()
+			i := itr.NewIterator(t.tasks).
+				Enumerate().
+				Contains(func(v status) bool { return v.id == e.Data.status.id })
+			if i >= 0 {
+				t.tasks[i].state = e.Data.status.state
+			} else {
+				t.tasks = append(t.tasks, e.Data.status)
+			}
+			t.taskLock.Unlock()
+			log.Info("working found")
 			continue
 		}
-		if s == StateInvalid {
-			return (*st)[i-1], nil
+		if actionI >= len(t.story.Actions) {
+			/*
+				sbragi.Fatal(
+					"this should never happen...",
+					"saga",
+					t.sagaName,
+					"actionLen",
+					len(t.story.Actions),
+					"gotI",
+					actionI,
+				)
+			*/
+			log.Info("skipping as action id is too high")
+			continue
 		}
-		return s, nil
+		// This is just temporary, it will change when Barry is done...
+		t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.id))
+		log.Info(
+			"won event",
+			"name",
+			t.es.Name(),
+			"id",
+			e.Data.status.id,
+		)
+		go func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+			log.Info("time to do work, writing to exec chan")
+			select {
+			case execChan <- e:
+				log.Info(
+					"wrote to exec chan",
+					"name",
+					t.es.Name(),
+					"id",
+					e.Data.status.id,
+				)
+			case <-t.ctx.Done():
+				log.Trace("service context timed out")
+				return
+			case <-e.CTX.Done():
+				log.Trace("event context timed out")
+				return
+			}
+		}(e)
 	}
-	return StateSuccess, nil // This path only happens if all statuses are success
 }
 
-func (s *saga[BT, T]) ExecuteFirst(v T) (id uuid.UUID, err error) {
+func (t *executor[BT, T]) event(
+	eventType event.Type,
+	data *sagaValue[BT, T],
+) (e event.Event[sagaValue[BT, T], *sagaValue[BT, T]]) {
+	e = event.Event[sagaValue[BT, T], *sagaValue[BT, T]]{
+		Type: eventType,
+		Data: data,
+		Metadata: event.Metadata{
+			Version:  t.version,
+			DataType: t.sagaName,
+			Key:      crypto.SimpleHash(data.status.id.String()),
+		},
+	}
+	return
+}
+
+func (t *executor[BT, T]) writeEvent(tt sagaValue[BT, T]) error {
+	we := event.NewWriteEvent(t.event(event.Created, &tt))
+	t.es.Write() <- we
+	ws := <-we.Done()
+	return ws.Error
+}
+
+func (t *executor[BT, T]) ExecuteFirst(
+	dt T,
+) (id uuid.UUID, err error) {
 	id, err = uuid.NewV7()
 	if err != nil {
 		return uuid.Nil, err
 	}
-	for _, ok := s.states.Get(bcts.TinyString(id.String())); ok; _, ok = s.states.Get(bcts.TinyString(id.String())) { // This is veryVeryUnlikely
-		id, err = uuid.NewV7()
-		if err != nil {
-			return uuid.Nil, err
-		}
-	}
-	st := make(states, len(s.story.Actions))
-	st[0] = StatePending
-	s.states.Set(bcts.TinyString(id.String()), &st)
-	sv := sagaValue[BT, T]{
-		ID: id,
-		V:  v,
-	}
-	err = s.story.Actions[0].task.Create(id, &sv)
-	/*
-		b := s.story.Arcs[0]
-		a := b.Actions[0]
-		a.Handler = e
-		err = b.actions.Create("first_saga_task", time.Now(), tasks.NoInterval, &a)
-	*/if err != nil {
-		return uuid.Nil, err
-	}
-	return id, nil
-	/*
-		for _, a := range story.Actions {
-			ra := reflect.ValueOf(a)
-			a.Type = ra.Type().String()
-			err = s.actions.Create(a, t)
-			if err != nil {
-				return
-			}
-		}
-	*/
+	return id, t.writeEvent(sagaValue[BT, T]{
+		v: dt,
+		status: status{
+			state: StatePending,
+			id:    id,
+		},
+	})
 }
 
-func (s *saga[BT, T]) Close() {
-	s.close()
+func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {
+	st := itr.NewIterator(t.tasks).
+		Filter(func(v status) bool { return v.id == id }).First()
+	if st.id == uuid.Nil {
+		return StateInvalid, ErrExecutionNotFound
+	}
+	if st.state == StateInvalid {
+		return StateInvalid, errors.New("saga status was invalid")
+	}
+	return st.state, nil
+}
+
+func (t *executor[BT, T]) Close() {
+	t.close()
+}
+
+/*
+func (t *executor[BT, T]) Tasks() (tasks []status) {
+	t.taskLock.Lock()
+	defer t.taskLock.Unlock()
+	tasks = make([]status, len(t.tasks))
+	copy(tasks, t.tasks)
+	return
+}
+*/
+
+func findStep[BT any, T bcts.ReadWriter[BT]](actions []Action[BT, T], id string) int {
+	if id == "" {
+		return -1
+	}
+	for i, a := range actions {
+		if a.Id == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func RetryableError(from string, err error) retryableError {
+	return retryableError{
+		err:  err,
+		from: from,
+	}
+}
+
+type retryableError struct {
+	err  error
+	from string
+}
+
+func (r retryableError) Error() string {
+	return fmt.Sprintf("RetryableError[%s]: %v", r.from, r.err)
 }
 
 var (
-	ErrRetryable                    = errors.New("error occured but can be retried")
+	// ErrRetryable                    = errors.New("error occured but can be retried")
 	ErrNotEnoughActions             = errors.New("a story need more than one arc")
 	ErrExecutionNotFound            = errors.New("saga id is invalid")
-	ErrPreconditionsNotMet          = errors.New("preconfitions not met for action")
+	ErrPreconditionsNosagaValueet   = errors.New("preconfitions not met for action")
 	ErrBaseArcNeedsExactlyOneAction = errors.New("base arc can only and needs one action")
 )

@@ -3,6 +3,7 @@ package saga_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -73,13 +74,13 @@ type act2 struct {
 }
 
 func (a *act2) Execute(*bcts.TinyString) (saga.State, error) {
-	log.Info("executing act2")
+	log.Info("executing act2", "pre", a.Pre, "post", a.Post)
 	if a.State == saga.StateSuccess {
 		return a.State, nil
 	}
 	if !a.Failed {
 		a.Failed = true
-		return saga.StateFailed, saga.ErrRetryable
+		return saga.StateFailed, saga.RetryableError("action_2", nil)
 	}
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
@@ -103,6 +104,8 @@ var a2 = act2{
 }
 
 var a2D = act2{
+	Pre:   "pre",
+	Post:  "done",
 	State: saga.StateSuccess,
 }
 
@@ -164,7 +167,16 @@ func TestInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
-	edt, err := saga.Init(store, serv, "1.0.0", STREAM_NAME, stry, cryptKeyProvider, ctxGlobal)
+	edt, err := saga.Init(
+		store,
+		serv,
+		"1.0.0",
+		STREAM_NAME,
+		stry,
+		cryptKeyProvider,
+		runtime.NumCPU(),
+		ctxGlobal,
+	)
 	if err != nil {
 		t.Error(err)
 		return
@@ -221,6 +233,7 @@ func BenchmarkSaga(b *testing.B) {
 		fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N),
 		stry,
 		cryptKeyProvider,
+		runtime.NumCPU(),
 		ctx,
 	)
 	if err != nil {
