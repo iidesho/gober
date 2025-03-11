@@ -188,10 +188,12 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							WithError(err).
 							Warning("there was an error while executing task. not finishing") {
 							// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
+							state := StateFailed
 							retryFrom := ""
 							var retryError retryableError
 							if errors.As(err, &retryError) {
 								retryFrom = retryError.from
+								state = StateRetryable
 							}
 							id, err := uuid.NewV7()
 							sbragi.WithError(err).Fatal("could not generage UUID")
@@ -201,7 +203,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 									stepDone:  e.Data.status.stepDone,
 									retryFrom: retryFrom,
 									duration:  time.Since(startTime),
-									state:     StateFailed,
+									state:     state,
 									id:        e.Data.status.id,
 									revertID:  id,
 								},
@@ -410,13 +412,25 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			if e.Data.status.stepDone == "" {
-				log.Info("skipping rollbark as there was no completed steps")
+				log.Info("rollback completed as there is no more completed steps")
 				continue
 			}
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
 			if actionI >= len(t.story.Actions) {
 				log.Fatal(
 					"this should never happen...",
+					"saga",
+					t.sagaName,
+					"actionLen",
+					len(t.story.Actions),
+					"gotI",
+					actionI,
+				)
+				continue
+			}
+			if actionI-1 == len(t.story.Actions) {
+				log.Fatal(
+					"we should never roll back a successfull saga",
 					"saga",
 					t.sagaName,
 					"actionLen",
@@ -436,6 +450,59 @@ func (t *executor[BT, T]) handler(
 				e.Data.status.id,
 			)
 			log.Info("failed / paniced found")
+		case StateRetryable:
+			t.taskLock.Lock()
+			i := itr.NewIterator(t.tasks).
+				Enumerate().
+				Contains(func(v status) bool { return v.id == e.Data.status.id })
+			if i >= 0 {
+				t.tasks[i] = e.Data.status
+			} else {
+				t.tasks = append(t.tasks, e.Data.status)
+			}
+			t.taskLock.Unlock()
+			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
+			if actionI >= len(t.story.Actions) {
+				log.Fatal(
+					"this should never happen...",
+					"saga",
+					t.sagaName,
+					"actionLen",
+					len(t.story.Actions),
+					"gotI",
+					actionI,
+				)
+				continue
+			}
+			if actionI-1 == len(t.story.Actions) {
+				log.Fatal(
+					"we should never roll back a successfull saga",
+					"saga",
+					t.sagaName,
+					"actionLen",
+					len(t.story.Actions),
+					"gotI",
+					actionI,
+				)
+				continue
+			}
+			if t.story.Actions[actionI+1].Id == e.Data.status.retryFrom {
+				// This is just temporary, it will change when Barry is done...
+				t.story.Actions[actionI].cons.Request(
+					consensus.ConsID(e.Data.status.id),
+				) // this might / will have issues as we are not aborting these while reverting
+			} else {
+				// This is just temporary, it will change when Barry is done...
+				t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.revertID))
+			}
+			log.Info(
+				"won event",
+				"name",
+				t.es.Name(),
+				"id",
+				e.Data.status.id,
+			)
+			log.Info("retryable found")
 		case StateWorking:
 			t.taskLock.Lock()
 			i := itr.NewIterator(t.tasks).
