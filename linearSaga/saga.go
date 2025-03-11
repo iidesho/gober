@@ -115,6 +115,8 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							log.WithError(
 								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
 							).Error("panic while executing")
+							id, err := uuid.NewV7()
+							sbragi.WithError(err).Fatal("could not generage UUID")
 							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
 								v: e.Data.v,
 								status: status{
@@ -123,6 +125,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 									duration:  time.Since(startTime),
 									state:     StatePaniced,
 									id:        e.Data.status.id,
+									revertID:  id,
 								},
 							})).Error("writing panic event", "id", e.Data.status.id.String())
 							return
@@ -150,7 +153,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							Warning("there was an error while reducing saga parp") {
 							// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 							story.Actions[actionI].cons.Completed(
-								consensus.ConsID(e.Data.status.id),
+								consensus.ConsID(e.Data.status.revertID),
 							)
 							prevStepID := ""
 							if actionI != 0 {
@@ -188,6 +191,8 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							if errors.As(err, &retryError) {
 								retryFrom = retryError.from
 							}
+							id, err := uuid.NewV7()
+							sbragi.WithError(err).Fatal("could not generage UUID")
 							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
 								v: e.Data.v,
 								status: status{
@@ -196,9 +201,18 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 									duration:  time.Since(startTime),
 									state:     StateFailed,
 									id:        e.Data.status.id,
+									revertID:  id,
 								},
 							})).Error("writing failed event", "id", e.Data.status.id.String())
 							return
+						}
+						var rid uuid.UUID
+						if state != StateSuccess {
+							if state != StateFailed && state != StatePaniced && state != StateRetryable {
+								sbragi.Fatal("Invalid saga state", "state", state, "value", e.Data)
+							}
+							rid, err = uuid.NewV7()
+							sbragi.WithError(err).Fatal("could not generage UUID")
 						}
 						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
 							v: e.Data.v,
@@ -207,6 +221,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 								duration: time.Since(startTime),
 								state:    state,
 								id:       e.Data.status.id,
+								revertID: rid,
 							},
 						})).Error("writing panic event", "id", e.Data.status.id.String())
 						log.Info("executed task", "event", e)

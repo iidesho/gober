@@ -77,12 +77,17 @@ type status struct {
 	retryFrom string
 	duration  time.Duration
 	state     State
+	revertID  uuid.UUID
 	id        uuid.UUID
 }
 
 func (s status) WriteBytes(w io.Writer) error {
 	log.Info("writing", "s", s)
 	err := bcts.WriteStaticBytes(w, s.id[:])
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteStaticBytes(w, s.revertID[:])
 	if err != nil {
 		return err
 	}
@@ -107,6 +112,10 @@ func (s status) WriteBytes(w io.Writer) error {
 
 func (s *status) ReadBytes(r io.Reader) error {
 	err := bcts.ReadStaticBytes(r, s.id[:])
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadStaticBytes(r, s.revertID[:])
 	if err != nil {
 		return err
 	}
