@@ -491,7 +491,14 @@ func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {
 	if st.state == StateInvalid {
 		return StateInvalid, errors.New("saga status was invalid")
 	}
-	return st.state, nil
+	if st.state != StateSuccess || st.stepDone == t.story.Actions[len(t.story.Actions)-1].Id {
+		return st.state, nil
+	}
+	i := findStep(t.story.Actions, st.stepDone) + 1
+	if i >= len(t.story.Actions) {
+		return StateInvalid, errors.New("story step location is invalid")
+	}
+	return StatePending, nil
 }
 
 func (t *executor[BT, T]) Close() {
