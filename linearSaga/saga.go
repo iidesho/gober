@@ -134,7 +134,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 					log.Info("selected task", "id", e.Data.status.id, "event", e)
 					actionI := findStep(story.Actions, e.Data.status.stepDone) + 1
 					if actionI >= len(story.Actions) {
-						sbragi.Fatal(
+						log.Fatal(
 							"this should never happen...",
 							"saga",
 							name,
@@ -384,7 +384,7 @@ func (t *executor[BT, T]) handler(
 						actionI,
 					)
 				*/
-				log.Info("skipping as action id is too high")
+				log.Info("saga is completed")
 				continue
 			}
 			// This is just temporary, it will change when Barry is done...
@@ -415,18 +415,15 @@ func (t *executor[BT, T]) handler(
 			}
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
 			if actionI >= len(t.story.Actions) {
-				/*
-					sbragi.Fatal(
-						"this should never happen...",
-						"saga",
-						t.sagaName,
-						"actionLen",
-						len(t.story.Actions),
-						"gotI",
-						actionI,
-					)
-				*/
-				log.Info("skipping as action id is too high")
+				log.Fatal(
+					"this should never happen...",
+					"saga",
+					t.sagaName,
+					"actionLen",
+					len(t.story.Actions),
+					"gotI",
+					actionI,
+				)
 				continue
 			}
 			// This is just temporary, it will change when Barry is done...
@@ -451,6 +448,9 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			log.Info("working found")
+			continue
+		default:
+			log.Error("Invalid state found", "state", e.Data.status.state, "status", e.Data.status)
 			continue
 		}
 		if actionI >= len(t.story.Actions) {
