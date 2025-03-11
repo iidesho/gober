@@ -201,6 +201,7 @@ func TestExecuteFirst(t *testing.T) {
 
 func TestTairdown(t *testing.T) {
 	wg.Wait()
+	time.Sleep(time.Second)
 	st, err := s.Status(id)
 	if err != nil {
 		t.Error(err, id)

@@ -172,15 +172,17 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							return
 						}
 					} else {
-						/*
-							Ignoring this state for now
-							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
-								V:        e.Data.V,
-								StepDone: e.Data.StepDone,
-								State:    StateWorking,
-								ID:       e.Data.ID,
-							})).Error("writing panic event", "id", e.Data.ID.String())
-						*/
+						// Ignoring this state for now
+						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+							v: e.Data.v,
+							status: status{
+								stepDone:  e.Data.status.stepDone,
+								retryFrom: e.Data.status.stepDone,
+								state:     StateWorking,
+								id:        e.Data.status.id,
+								revertID:  e.Data.status.revertID,
+							},
+						})).Error("writing panic event", "id", e.Data.status.id.String())
 						state, err := story.Actions[actionI].Handler.Execute(e.Data.v)
 						if log. // Should not escalate
 							WithError(err).
@@ -349,6 +351,8 @@ func (t *executor[BT, T]) handler(
 			e.Data.status.id,
 			"state",
 			e.Data.status.state,
+			"step",
+			findStep(t.story.Actions, e.Data.status.stepDone)+1,
 		)
 		e.Acc()
 		var actionI int
@@ -361,13 +365,37 @@ func (t *executor[BT, T]) handler(
 				Enumerate().
 				Contains(func(v status) bool { return v.id == e.Data.status.id })
 			if i >= 0 {
-				t.tasks[i].state = e.Data.status.state
+				t.tasks[i] = e.Data.status
 			} else {
 				t.tasks = append(t.tasks, e.Data.status)
 			}
 			t.taskLock.Unlock()
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
 			log.Info("success / pending found")
+			if actionI >= len(t.story.Actions) {
+				/*
+					sbragi.Fatal(
+						"this should never happen...",
+						"saga",
+						t.sagaName,
+						"actionLen",
+						len(t.story.Actions),
+						"gotI",
+						actionI,
+					)
+				*/
+				log.Info("skipping as action id is too high")
+				continue
+			}
+			// This is just temporary, it will change when Barry is done...
+			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.id))
+			log.Info(
+				"won event",
+				"name",
+				t.es.Name(),
+				"id",
+				e.Data.status.id,
+			)
 		case StatePaniced:
 			fallthrough
 		case StateFailed:
@@ -376,12 +404,36 @@ func (t *executor[BT, T]) handler(
 				Enumerate().
 				Contains(func(v status) bool { return v.id == e.Data.status.id })
 			if i >= 0 {
-				t.tasks[i].state = e.Data.status.state
+				t.tasks[i] = e.Data.status
 			} else {
 				t.tasks = append(t.tasks, e.Data.status)
 			}
 			t.taskLock.Unlock()
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
+			if actionI >= len(t.story.Actions) {
+				/*
+					sbragi.Fatal(
+						"this should never happen...",
+						"saga",
+						t.sagaName,
+						"actionLen",
+						len(t.story.Actions),
+						"gotI",
+						actionI,
+					)
+				*/
+				log.Info("skipping as action id is too high")
+				continue
+			}
+			// This is just temporary, it will change when Barry is done...
+			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.revertID))
+			log.Info(
+				"won event",
+				"name",
+				t.es.Name(),
+				"id",
+				e.Data.status.id,
+			)
 			log.Info("failed / paniced found")
 		case StateWorking:
 			t.taskLock.Lock()
@@ -389,7 +441,7 @@ func (t *executor[BT, T]) handler(
 				Enumerate().
 				Contains(func(v status) bool { return v.id == e.Data.status.id })
 			if i >= 0 {
-				t.tasks[i].state = e.Data.status.state
+				t.tasks[i] = e.Data.status
 			} else {
 				t.tasks = append(t.tasks, e.Data.status)
 			}
@@ -491,14 +543,15 @@ func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {
 	if st.state == StateInvalid {
 		return StateInvalid, errors.New("saga status was invalid")
 	}
-	if st.state != StateSuccess || st.stepDone == t.story.Actions[len(t.story.Actions)-1].Id {
-		return st.state, nil
+	log.Info("got state", "step", st.stepDone, "state", st.state, "status", st)
+	if st.state == StateSuccess {
+		i := findStep(t.story.Actions, st.stepDone) + 1
+		if i >= len(t.story.Actions) {
+			return StateSuccess, nil
+		}
+		return StatePending, nil
 	}
-	i := findStep(t.story.Actions, st.stepDone) + 1
-	if i >= len(t.story.Actions) {
-		return StateInvalid, errors.New("story step location is invalid")
-	}
-	return StatePending, nil
+	return st.state, nil
 }
 
 func (t *executor[BT, T]) Close() {
