@@ -409,6 +409,10 @@ func (t *executor[BT, T]) handler(
 				t.tasks = append(t.tasks, e.Data.status)
 			}
 			t.taskLock.Unlock()
+			if e.Data.status.stepDone == "" {
+				log.Info("skipping rollbark as there was no completed steps")
+				continue
+			}
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
 			if actionI >= len(t.story.Actions) {
 				/*
