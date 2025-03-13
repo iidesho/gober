@@ -131,7 +131,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							return
 						}
 					}()
-					log.Info("selected task", "id", e.Data.status.id, "event", e)
+					log.Debug("selected task", "id", e.Data.status.id, "event", e)
 					actionI := findStep(story.Actions, e.Data.status.stepDone) + 1
 					if actionI >= len(story.Actions) {
 						log.Fatal(
@@ -228,7 +228,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 								revertID: rid,
 							},
 						})).Error("writing panic event", "id", e.Data.status.id.String())
-						log.Info("executed task", "event", e)
+						log.Trace("executed task", "event", e)
 					}
 				}()
 			}
@@ -343,7 +343,7 @@ func (t *executor[BT, T]) handler(
 	execChan chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
 ) {
 	for e := range events {
-		log.Info(
+		log.Debug(
 			"read event",
 			"event",
 			e,
@@ -373,7 +373,7 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
-			log.Info("success / pending found")
+			log.Trace("success / pending found")
 			if actionI >= len(t.story.Actions) {
 				/*
 					sbragi.Fatal(
@@ -386,12 +386,12 @@ func (t *executor[BT, T]) handler(
 						actionI,
 					)
 				*/
-				log.Info("saga is completed")
+				log.Trace("saga is completed")
 				continue
 			}
 			// This is just temporary, it will change when Barry is done...
 			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.id))
-			log.Info(
+			log.Debug(
 				"won event",
 				"name",
 				t.es.Name(),
@@ -412,7 +412,7 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			if e.Data.status.stepDone == "" {
-				log.Info("rollback completed as there is no more completed steps")
+				log.Trace("rollback completed as there is no more completed steps")
 				continue
 			}
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
@@ -442,14 +442,14 @@ func (t *executor[BT, T]) handler(
 			}
 			// This is just temporary, it will change when Barry is done...
 			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.revertID))
-			log.Info(
+			log.Debug(
 				"won event",
 				"name",
 				t.es.Name(),
 				"id",
 				e.Data.status.id,
 			)
-			log.Info("failed / paniced found")
+			log.Trace("failed / paniced found")
 		case StateRetryable:
 			t.taskLock.Lock()
 			i := itr.NewIterator(t.tasks).
@@ -495,14 +495,14 @@ func (t *executor[BT, T]) handler(
 				// This is just temporary, it will change when Barry is done...
 				t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.revertID))
 			}
-			log.Info(
+			log.Debug(
 				"won event",
 				"name",
 				t.es.Name(),
 				"id",
 				e.Data.status.id,
 			)
-			log.Info("retryable found")
+			log.Trace("retryable found")
 		case StateWorking:
 			t.taskLock.Lock()
 			i := itr.NewIterator(t.tasks).
@@ -514,7 +514,7 @@ func (t *executor[BT, T]) handler(
 				t.tasks = append(t.tasks, e.Data.status)
 			}
 			t.taskLock.Unlock()
-			log.Info("working found")
+			log.Trace("working found")
 			continue
 		default:
 			log.Error("Invalid state found", "state", e.Data.status.state, "status", e.Data.status)
@@ -532,12 +532,12 @@ func (t *executor[BT, T]) handler(
 					actionI,
 				)
 			*/
-			log.Info("skipping as action id is too high")
+			log.Trace("skipping as action id is too high")
 			continue
 		}
 		// This is just temporary, it will change when Barry is done...
 		t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.id))
-		log.Info(
+		log.Debug(
 			"won event",
 			"name",
 			t.es.Name(),
@@ -545,10 +545,10 @@ func (t *executor[BT, T]) handler(
 			e.Data.status.id,
 		)
 		go func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
-			log.Info("time to do work, writing to exec chan")
+			log.Trace("time to do work, writing to exec chan")
 			select {
 			case execChan <- e:
-				log.Info(
+				log.Trace(
 					"wrote to exec chan",
 					"name",
 					t.es.Name(),
