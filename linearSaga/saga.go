@@ -160,16 +160,8 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						consID := e.Data.status.consID
 						if state == StateSuccess && e.Data.status.state == StateRetryable {
 							state = StateRetryable
-							log.Info(
-								"revert status",
-								"cur",
-								story.Actions[actionI].Id,
-								"from",
-								e.Data.status.retryFrom,
-							)
 							if actionI == 0 ||
 								story.Actions[actionI].Id == e.Data.status.retryFrom {
-								log.Info("reverting done")
 								retryFrom = ""
 								state = StatePending
 								id, err := uuid.NewV7()
@@ -377,8 +369,6 @@ func (t *executor[BT, T]) handler(
 			)
 			log.Trace("failed / paniced found")
 		case StateRetryable:
-			log.Info("retryable found, sleeping", "e", e.Data, "state", e.Data.status)
-			time.Sleep(time.Second)
 			t.taskLock.Lock()
 			i := itr.NewIterator(t.tasks).
 				Enumerate().
