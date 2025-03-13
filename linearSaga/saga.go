@@ -346,18 +346,20 @@ func (t *executor[BT, T]) handler(
 				)
 				continue
 			}
-			if actionI-1 == len(t.story.Actions) {
-				log.Fatal(
-					"we should never roll back a successfull saga",
-					"saga",
-					t.sagaName,
-					"actionLen",
-					len(t.story.Actions),
-					"gotI",
-					actionI,
-				)
-				continue
-			}
+			/*
+				if actionI-1 == len(t.story.Actions) {
+					log.Fatal(
+						"we should never roll back a successfull saga",
+						"saga",
+						t.sagaName,
+						"actionLen",
+						len(t.story.Actions),
+						"gotI",
+						actionI,
+					)
+					continue
+				}
+			*/
 			// This is just temporary, it will change when Barry is done...
 			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.consID))
 			log.Debug(
