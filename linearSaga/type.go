@@ -77,17 +77,17 @@ type status struct {
 	retryFrom string
 	duration  time.Duration
 	state     State
-	revertID  uuid.UUID
+	consID    contenious.ConsID
 	id        uuid.UUID
 }
 
 func (s status) WriteBytes(w io.Writer) error {
-	log.Info("writing", "s", s)
+	log.Trace("writing", "s", s)
 	err := bcts.WriteStaticBytes(w, s.id[:])
 	if err != nil {
 		return err
 	}
-	err = bcts.WriteStaticBytes(w, s.revertID[:])
+	err = bcts.WriteStaticBytes(w, s.consID[:])
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (s *status) ReadBytes(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	err = bcts.ReadStaticBytes(r, s.revertID[:])
+	err = bcts.ReadStaticBytes(r, s.consID[:])
 	if err != nil {
 		return err
 	}
@@ -160,6 +160,8 @@ func (s State) String() string {
 		return "success"
 	case StateFailed:
 		return "failed"
+	case StateRetryable:
+		return "retryable"
 	case StatePaniced:
 		return "paniced"
 	default:
@@ -168,7 +170,7 @@ func (s State) String() string {
 }
 
 func (s State) WriteBytes(w io.Writer) error {
-	log.Info("writing", "s", s)
+	log.Trace("writing", "s", s)
 	return bcts.WriteUInt8(w, s)
 }
 
@@ -179,7 +181,7 @@ func (s *State) ReadBytes(r io.Reader) error {
 type states []State
 
 func (s states) WriteBytes(w io.Writer) error {
-	log.Info("writing", "s", s)
+	log.Trace("writing", "s", s)
 	err := bcts.WriteUInt32(w, uint32(len(s)))
 	if err != nil {
 		return err

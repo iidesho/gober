@@ -22,6 +22,8 @@ import (
 	"github.com/iidesho/gober/websocket"
 )
 
+var log = sbragi.WithLocalScope(sbragi.LevelInfo)
+
 const MESSAGE_BUFFER_SIZE = 1024
 
 type Consensus interface {
@@ -219,7 +221,7 @@ func New(
 			select {
 			case m := <-distributor:
 				o, err := bcts.Write(m)
-				if sbragi.WithError(err).Error("marshaling response bytes") {
+				if log.WithError(err).Error("marshaling response bytes") {
 					continue
 				}
 				c.mutex.RLock()
@@ -227,7 +229,7 @@ func New(
 					errC := make(chan error, 1)
 					s.w <- websocket.Write[[]byte]{Data: o, Err: errC}
 					err = <-errC
-					if sbragi.WithError(err).Error("writing response bytes to socket") {
+					if log.WithError(err).Error("writing response bytes to socket") {
 						c.connected = itr.NewIterator(c.connected).
 							Filter(func(v server) bool { return v.id != s.id }).
 							Collect()
@@ -250,13 +252,13 @@ func New(
 						return v.hostname == s
 					})
 				}) {
-					sbragi.Debug("trying to connect", "from", c.discoverer.Self(), "to", s)
+					log.Debug("trying to connect", "from", c.discoverer.Self(), "to", s)
 					u, err := url.Parse(fmt.Sprintf("ws://%s/%s/consent", s, topic))
-					if sbragi.WithError(err).Error("parsing discovered server", "server", s) {
+					if log.WithError(err).Error("parsing discovered server", "server", s) {
 						continue
 					}
 					r, w, err := websocket.Dial[[]byte](u, ctx)
-					if sbragi.WithError(err).
+					if log.WithError(err).
 						Info("connecting to server", "server", s, "url", u.String()) {
 						continue
 					}
@@ -331,12 +333,12 @@ func (c consensus) Consents() map[string]string {
 func (c *consensus) Request(id ConsID) {
 	c.mutex.RLock()
 	if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == id }) {
-		sbragi.Warning("cannot request completed")
+		log.Warning("cannot request completed")
 		c.mutex.RUnlock()
 		return
 	}
 	if itr.NewMapKeysIterator(c.approved).Contains(func(v ConsID) bool { return v == id }) {
-		sbragi.Warning("cannot request approved")
+		log.Warning("cannot request approved")
 		c.mutex.RUnlock()
 		return
 	}
@@ -351,14 +353,14 @@ func (c *consensus) Request(id ConsID) {
 	}
 	c.mutex.Lock()
 	if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == id }) {
-		sbragi.Warning("cannot request completed")
+		log.Warning("cannot request completed")
 		// This should be impossible in the time to aquire a write lock
 		c.mutex.Unlock()
 		return
 	}
 
 	if itr.NewMapKeysIterator(c.approved).Contains(func(v ConsID) bool { return v == id }) {
-		sbragi.Warning("cannot request approved")
+		log.Warning("cannot request approved")
 		c.mutex.Unlock()
 		return
 	}
@@ -426,7 +428,7 @@ func (c consensus) Status(id ConsID) Status {
 	_, ok := c.requests[id]
 	c.mutex.RUnlock()
 	if !ok {
-		sbragi.Trace("consent does not exist")
+		log.Trace("consent does not exist")
 		return StatusInvalid
 	} else {
 		return StatusInProgress
@@ -442,17 +444,17 @@ func (c *consensus) Completed(id ConsID) {
 	}
 	if _, ok := c.requests[id]; ok {
 		c.mutex.RUnlock()
-		sbragi.Warning("consent not approved yet")
+		log.Warning("consent not approved yet")
 		return
 	}
 	requester, ok := c.approved[id]
 	c.mutex.RUnlock()
 	if !ok {
-		sbragi.Warning("consent does not exist")
+		log.Warning("consent does not exist")
 		return
 	}
 	if requester != c.id {
-		sbragi.Warning("we didn't win request") // should error
+		log.Warning("we didn't win request") // should error
 		return
 	}
 	c.mutex.Lock()
@@ -463,17 +465,17 @@ func (c *consensus) Completed(id ConsID) {
 	}
 	if _, ok := c.requests[id]; ok {
 		c.mutex.Unlock()
-		sbragi.Warning("consent not approved yet")
+		log.Warning("consent not approved yet")
 		return
 	}
 	requester, ok = c.approved[id]
 	if !ok {
-		sbragi.Warning("consent does not exist")
+		log.Warning("consent does not exist")
 		c.mutex.Unlock()
 		return
 	}
 	if requester != c.id {
-		sbragi.Warning("we didn't win request") // should error
+		log.Warning("we didn't win request") // should error
 		c.mutex.Unlock()
 		return
 	}
@@ -492,46 +494,46 @@ func (c *consensus) Completed(id ConsID) {
 func (c *consensus) Abort(id ConsID) {
 	c.mutex.RLock()
 	if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == id }) {
-		sbragi.Warning("cannot abort completed")
+		log.Warning("cannot abort completed")
 		c.mutex.RUnlock()
 		return
 	}
 	_, ok := c.requests[id]
 	if ok {
-		sbragi.Warning("cannot abort while election in progress")
+		log.Warning("cannot abort while election in progress")
 		c.mutex.RUnlock()
 		return
 	}
 	requester, ok := c.approved[id]
 	c.mutex.RUnlock()
 	if !ok {
-		sbragi.Warning("consent does not exist")
+		log.Warning("consent does not exist")
 		return
 	}
 	if ok && requester != c.id {
-		sbragi.Warning("we didn't win request") // should error
+		log.Warning("we didn't win request") // should error
 		return
 	}
 	c.mutex.Lock()
 	if itr.NewIterator(c.completed).Contains(func(v ConsID) bool { return v == id }) {
-		sbragi.Warning("cannot abort completed")
+		log.Warning("cannot abort completed")
 		c.mutex.Unlock()
 		return
 	}
 	_, ok = c.requests[id]
 	if ok {
-		sbragi.Warning("cannot abort while election in progress")
+		log.Warning("cannot abort while election in progress")
 		c.mutex.Unlock()
 		return
 	}
 	requester, ok = c.approved[id]
 	if !ok {
-		sbragi.Warning("consent does not exist")
+		log.Warning("consent does not exist")
 		c.mutex.Unlock()
 		return
 	}
 	if ok && requester != c.id {
-		sbragi.Warning("we didn't win request") // should error
+		log.Warning("we didn't win request") // should error
 		c.mutex.Unlock()
 		return
 	}
@@ -557,14 +559,14 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 	dByte := bytes.NewReader(read)
 	var rid NodeID
 	err := bcts.ReadStaticBytes(dByte, rid[:])
-	if sbragi.WithError(err).Error("getting node id from connected server") {
+	if log.WithError(err).Error("getting node id from connected server") {
 		// Shold write error back to connector
 		return
 	}
 	// sbragi.Info("test", "id", rid)
 	var rName bcts.String
 	err = bcts.ReadString(dByte, &rName)
-	if sbragi.WithError(err).
+	if log.WithError(err).
 		Error("getting node name from connected server",
 			"read", len(read), "id", rid.String()) {
 		// Shold write error back to connector
@@ -575,7 +577,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 		return v.id == rid
 	}) {
 		c.mutex.RUnlock()
-		sbragi.Debug("rejected double connection to server", "name", rName, "id", rid.String())
+		log.Debug("rejected double connection to server", "name", rName, "id", rid.String())
 		return
 	}
 	c.mutex.RUnlock()
@@ -584,7 +586,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 		return v.id == rid
 	}) {
 		c.mutex.Unlock()
-		sbragi.Debug("rejected double connection to server", "name", rName, "id", rid.String())
+		log.Debug("rejected double connection to server", "name", rName, "id", rid.String())
 		return
 	}
 	c.connected = append(c.connected, server{
@@ -622,7 +624,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 			return
 		}
 	*/
-	sbragi.Debug(
+	log.Debug(
 		"connected to server",
 		"self",
 		c.discoverer.Self(),
@@ -650,9 +652,9 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 		for k, v := range c.approved {
 			if v == rid {
 				delete(c.approved, k)
-				sbragi.Info("aborting", "id", k.String())
+				log.Info("aborting", "id", k.String())
 				c.aborted <- k
-				sbragi.Info("aborted", "id", k.String())
+				log.Info("aborted", "id", k.String())
 				continue
 			}
 		}
@@ -747,13 +749,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				return
 			}
 			d, err := bcts.Read[message](m)
-			if sbragi.WithError(err).
+			if log.WithError(err).
 				Error("could not read data from consensus producer") {
 				continue
 			}
 			switch d.t {
 			case approve:
-				sbragi.Trace(
+				log.Trace(
 					"received approve request",
 					"self",
 					c.id.String(),
@@ -824,7 +826,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						return s.acknowledgers.Contains(rid) >= 0
 					}).Count() > 0 {
 					c.mutex.Unlock()
-					sbragi.Fatal(
+					log.Fatal(
 						"recieved second approval",
 						"cons",
 						d.consID,
@@ -896,7 +898,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				c.mutex.Unlock()
 			case decline:
 				//
-				sbragi.Trace(
+				log.Trace(
 					"received decline request",
 					"self",
 					c.id.String(),
@@ -1005,7 +1007,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				// check if I have ack him, if so I need to decline him and approve another
 				// delete him from request
 				// if request empty or (no valid exist) I need to request
-				sbragi.Trace(
+				log.Trace(
 					"received giveup request",
 					"self",
 					c.id.String(),
@@ -1016,7 +1018,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				)
 				if rid != d.requester {
 					// log error
-					sbragi.Warning(
+					log.Warning(
 						"sender is not requester",
 						"sender",
 						rid,
@@ -1108,7 +1110,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				}
 
 			case failed:
-				sbragi.Trace(
+				log.Trace(
 					"received failed request",
 					"self",
 					c.id.String(),
@@ -1119,7 +1121,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				)
 				if rid != d.requester {
 					// log error
-					sbragi.Warning(
+					log.Warning(
 						"sender is not requester",
 						"sender",
 						rid,
@@ -1131,7 +1133,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				c.mutex.RLock()
 				node, ok := c.approved[d.consID]
 				if !ok {
-					sbragi.Warning(
+					log.Warning(
 						"failed non existing consensus",
 						"id",
 						d.consID,
@@ -1141,7 +1143,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				}
 				if node != d.requester {
 					// log error
-					sbragi.Warning(
+					log.Warning(
 						"requester is not the one we approved",
 						"requester",
 						d.requester,
@@ -1155,7 +1157,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				c.mutex.Lock()
 				node, ok = c.approved[d.consID]
 				if !ok {
-					sbragi.Warning(
+					log.Warning(
 						"failed non existing consensus",
 						"id",
 						d.consID,
@@ -1165,7 +1167,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				}
 				if node != d.requester {
 					// log error
-					sbragi.Warning(
+					log.Warning(
 						"requester is not the one we approved",
 						"requester",
 						d.requester,
@@ -1176,12 +1178,12 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					continue
 				}
 				delete(c.approved, d.consID)
-				sbragi.Debug("deleted", "consents", c.requests)
+				log.Debug("deleted", "consents", c.requests)
 				c.mutex.Unlock()
 				c.aborted <- d.consID
 				continue
 			case request:
-				sbragi.Trace(
+				log.Trace(
 					"received request request",
 					"self",
 					c.id.String(),
@@ -1192,7 +1194,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				)
 				if rid != d.requester {
 					// log error
-					sbragi.Warning(
+					log.Warning(
 						"sender is not requester",
 						"sender",
 						rid,
@@ -1262,7 +1264,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				d.t = approve
 				c.distributor <- *d
 			case completed:
-				sbragi.Trace(
+				log.Trace(
 					"received completed request",
 					"self",
 					c.id.String(),
@@ -1273,7 +1275,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				)
 				if rid != d.requester {
 					// log error
-					sbragi.Warning(
+					log.Warning(
 						"sender is not requester",
 						"sender",
 						rid,
@@ -1291,7 +1293,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					c.mutex.Unlock()
 					continue
 				}
-				sbragi.Warning(
+				log.Warning(
 					"consent not found in approved list",
 					"consent",
 					d.consID,
@@ -1305,7 +1307,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					c.mutex.Unlock()
 					continue
 				}
-				sbragi.Warning(
+				log.Warning(
 					"consent not found in approved list nor request list",
 					"consent",
 					d.consID,
@@ -1315,7 +1317,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				c.mutex.Unlock()
 			default:
 				// log error
-				sbragi.Warning("unsupported message type", "type", d.t)
+				log.Warning("unsupported message type", "type", d.t)
 			}
 		}
 	}

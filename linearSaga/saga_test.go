@@ -53,6 +53,7 @@ func (a *act1) Execute(s *bcts.TinyString) (saga.State, error) {
 }
 
 func (a act1) Reduce(*bcts.TinyString) (saga.State, error) {
+	log.Info("recucing act 1")
 	return saga.StateSuccess, nil
 }
 
@@ -80,7 +81,7 @@ func (a *act2) Execute(*bcts.TinyString) (saga.State, error) {
 	}
 	if !a.Failed {
 		a.Failed = true
-		return saga.StateFailed, saga.RetryableError("action_2", nil)
+		return saga.StateRetryable, saga.RetryableError("action_2", nil)
 	}
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
@@ -89,6 +90,7 @@ func (a *act2) Execute(*bcts.TinyString) (saga.State, error) {
 }
 
 func (a act2) Reduce(*bcts.TinyString) (saga.State, error) {
+	log.Info("recucing act 2")
 	return saga.StateSuccess, nil
 }
 

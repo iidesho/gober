@@ -125,7 +125,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 									duration:  time.Since(startTime),
 									state:     StatePaniced,
 									id:        e.Data.status.id,
-									revertID:  id,
+									consID:    consensus.ConsID(id),
 								},
 							})).Error("writing panic event", "id", e.Data.status.id.String())
 							return
@@ -145,32 +145,54 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						)
 						return
 					}
-					if e.Data.status.state == StateFailed &&
-						e.Data.status.retryFrom != story.Actions[actionI].Id {
+					if e.Data.status.state == StateRetryable ||
+						e.Data.status.state == StateFailed { // story.Actions[actionI].Id {
+						actionI--
 						state, err := story.Actions[actionI].Handler.Reduce(e.Data.v)
 						if log. // Should not escalate
 							WithError(err).
-							Warning("there was an error while reducing saga parp") {
-							// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
-							story.Actions[actionI].cons.Completed(
-								consensus.ConsID(e.Data.status.revertID),
-							)
-							prevStepID := ""
-							if actionI != 0 {
-								prevStepID = story.Actions[actionI-1].Id
-							}
-							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
-								v: e.Data.v,
-								status: status{
-									stepDone:  prevStepID,
-									retryFrom: e.Data.status.retryFrom,
-									duration:  time.Since(startTime),
-									state:     state,
-									id:        e.Data.status.id,
-								},
-							})).Error("writing failed event", "id", e.Data.status.id.String())
-							return
+							Warning("there was an error while reducing saga part") {
+							state = StateFailed
 						}
+						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
+						story.Actions[actionI].cons.Completed(e.Data.status.consID)
+						retryFrom := e.Data.status.retryFrom
+						consID := e.Data.status.consID
+						if state == StateSuccess && e.Data.status.state == StateRetryable {
+							state = StateRetryable
+							log.Info(
+								"revert status",
+								"cur",
+								story.Actions[actionI].Id,
+								"from",
+								e.Data.status.retryFrom,
+							)
+							if actionI == 0 ||
+								story.Actions[actionI].Id == e.Data.status.retryFrom {
+								log.Info("reverting done")
+								retryFrom = ""
+								state = StatePending
+								id, err := uuid.NewV7()
+								sbragi.WithError(err).Fatal("could not generage UUID")
+								consID = consensus.ConsID(id)
+							}
+						}
+						prevStepID := ""
+						if actionI != 0 {
+							prevStepID = story.Actions[actionI-1].Id
+						}
+						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+							v: e.Data.v,
+							status: status{
+								stepDone:  prevStepID,
+								retryFrom: retryFrom,
+								duration:  time.Since(startTime),
+								state:     state,
+								id:        e.Data.status.id,
+								consID:    consID,
+							},
+						})).Error("writing failed event", "id", e.Data.status.id.String())
+						return
 					} else {
 						// Ignoring this state for now
 						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
@@ -180,7 +202,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 								retryFrom: e.Data.status.stepDone,
 								state:     StateWorking,
 								id:        e.Data.status.id,
-								revertID:  e.Data.status.revertID,
+								consID:    e.Data.status.consID,
 							},
 						})).Error("writing panic event", "id", e.Data.status.id.String())
 						state, err := story.Actions[actionI].Handler.Execute(e.Data.v)
@@ -190,22 +212,24 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 							state := StateFailed
 							retryFrom := ""
+							stepDone := e.Data.status.stepDone
 							var retryError retryableError
 							if errors.As(err, &retryError) {
 								retryFrom = retryError.from
 								state = StateRetryable
+								stepDone = story.Actions[actionI].Id
 							}
 							id, err := uuid.NewV7()
 							sbragi.WithError(err).Fatal("could not generage UUID")
 							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
 								v: e.Data.v,
 								status: status{
-									stepDone:  e.Data.status.stepDone,
+									stepDone:  stepDone,
 									retryFrom: retryFrom,
 									duration:  time.Since(startTime),
 									state:     state,
 									id:        e.Data.status.id,
-									revertID:  id,
+									consID:    consensus.ConsID(id),
 								},
 							})).Error("writing failed event", "id", e.Data.status.id.String())
 							return
@@ -225,7 +249,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 								duration: time.Since(startTime),
 								state:    state,
 								id:       e.Data.status.id,
-								revertID: rid,
+								consID:   consensus.ConsID(rid),
 							},
 						})).Error("writing panic event", "id", e.Data.status.id.String())
 						log.Trace("executed task", "event", e)
@@ -239,104 +263,6 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 
 	return out, nil
 }
-
-/*
-func Init[BT any, T bcts.ReadWriter[BT]](
-	s stream.Stream,
-	consnsus consensus.Consensus,
-	dataTypeName, dataTypeVersion string,
-	p stream.CryptoKeyProvider,
-	execute func(T, context.Context) error,
-	workers int,
-	ctx context.Context,
-) (ed Executor[BT, T], err error) {
-	dataTypeName = dataTypeName + "_execution"
-	t := executor[BT, T]{
-		dataType:  dataTypeName,
-		version:   dataTypeVersion,
-		consensus: consnsus,
-		taskLock:  sync.Mutex{},
-		statuses:  gsync.NewMap[uuid.UUID, status](),
-		ctx:       ctx,
-	}
-	es, err := consumer.New[sagaValue[BT, T]](s, p, ctx)
-	if err != nil {
-		return
-	}
-	t.es = es
-	events, err := es.Stream(
-		event.AllTypes(),
-		store.STREAM_START,
-		stream.ReadDataType(dataTypeName),
-		ctx,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
-	exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
-	for i := 0; i < workers; i++ {
-		go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
-			for e := range events {
-				func() {
-					defer func() {
-						r := recover()
-						if r != nil {
-							log.WithError(
-								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
-							).Error("panic while executing")
-							sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
-								Task: e.Data.Task,
-								Status: status{
-									id:    e.Data.Status.id,
-									state: StatePaniced,
-								},
-							})).Error("writing panic event", "id", e.Data.Status.id.String())
-							return
-						}
-					}()
-					log.Info("selected task", "id", e.Data.Status.id, "event", e)
-					// Should be fixed now; This tsk is the one from tasks not scheduled tasks, thus the id is not the one that is used to store with here.
-					sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
-						Task: e.Data.Task,
-						Status: status{
-							id:    e.Data.Status.id,
-							state: StateWorking,
-						},
-					})).Error("writing panic event", "id", e.Data.Status.id.String())
-					err := execute(e.Data.Task, e.CTX)
-					if log. // Should not escalate
-						WithError(err).
-						Warning("there was an error while executing task. not finishing") {
-						t.consensus.Abort(consensus.ConsID(e.Data.Status.id))
-						sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
-							Task: e.Data.Task,
-							Status: status{
-								id:    e.Data.Status.id,
-								state: StateFailed,
-							},
-						})).Error("writing failed event", "id", e.Data.Status.id.String())
-						return
-					}
-					sbragi.WithError(t.writeEvent(sagaValue[BT, T]{
-						Task: e.Data.Task,
-						Status: status{
-							id:    e.Data.Status.id,
-							state: StateSuccess,
-						},
-					})).Error("writing panic event", "id", e.Data.Status.id.String())
-					log.Trace("executed task", "event", e)
-				}()
-			}
-		}(exec)
-	}
-	go t.handler(events, exec)
-
-	ed = &t
-	return
-}
-*/
 
 func (t *executor[BT, T]) handler(
 	events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
@@ -390,7 +316,7 @@ func (t *executor[BT, T]) handler(
 				continue
 			}
 			// This is just temporary, it will change when Barry is done...
-			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.id))
+			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.consID))
 			log.Debug(
 				"won event",
 				"name",
@@ -441,7 +367,7 @@ func (t *executor[BT, T]) handler(
 				continue
 			}
 			// This is just temporary, it will change when Barry is done...
-			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.revertID))
+			t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.consID))
 			log.Debug(
 				"won event",
 				"name",
@@ -451,6 +377,8 @@ func (t *executor[BT, T]) handler(
 			)
 			log.Trace("failed / paniced found")
 		case StateRetryable:
+			log.Info("retryable found, sleeping", "e", e.Data, "state", e.Data.status)
+			time.Sleep(time.Second)
 			t.taskLock.Lock()
 			i := itr.NewIterator(t.tasks).
 				Enumerate().
@@ -474,7 +402,7 @@ func (t *executor[BT, T]) handler(
 				)
 				continue
 			}
-			if actionI-1 == len(t.story.Actions) {
+			if actionI == len(t.story.Actions)-1 {
 				log.Fatal(
 					"we should never roll back a successfull saga",
 					"saga",
@@ -486,14 +414,19 @@ func (t *executor[BT, T]) handler(
 				)
 				continue
 			}
-			if t.story.Actions[actionI+1].Id == e.Data.status.retryFrom {
-				// This is just temporary, it will change when Barry is done...
-				t.story.Actions[actionI].cons.Request(
-					consensus.ConsID(e.Data.status.id),
-				) // this might / will have issues as we are not aborting these while reverting
+			if actionI == -1 {
+				t.story.Actions[0].cons.Request(e.Data.status.consID)
+				/*
+					} else if t.story.Actions[actionI+1].Id == e.Data.status.retryFrom {
+						// This is just temporary, it will change when Barry is done...
+						t.story.Actions[actionI+1].cons.Request(
+							consensus.ConsID(e.Data.status.consID),
+						) // this might / will have issues as we are not aborting these while reverting
+						e.Data.status.state = StatePending
+				*/
 			} else {
 				// This is just temporary, it will change when Barry is done...
-				t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.revertID))
+				t.story.Actions[actionI].cons.Request(e.Data.status.consID)
 			}
 			log.Debug(
 				"won event",
@@ -517,7 +450,7 @@ func (t *executor[BT, T]) handler(
 			log.Trace("working found")
 			continue
 		default:
-			log.Error("Invalid state found", "state", e.Data.status.state, "status", e.Data.status)
+			log.Fatal("Invalid state found", "state", e.Data.status.state, "status", e.Data.status)
 			continue
 		}
 		if actionI >= len(t.story.Actions) {
@@ -536,7 +469,7 @@ func (t *executor[BT, T]) handler(
 			continue
 		}
 		// This is just temporary, it will change when Barry is done...
-		t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.id))
+		// t.story.Actions[actionI].cons.Request(consensus.ConsID(e.Data.status.consID))
 		log.Debug(
 			"won event",
 			"name",
@@ -599,8 +532,9 @@ func (t *executor[BT, T]) ExecuteFirst(
 	return id, t.writeEvent(sagaValue[BT, T]{
 		v: dt,
 		status: status{
-			state: StatePending,
-			id:    id,
+			state:  StatePending,
+			id:     id,
+			consID: consensus.ConsID(id),
 		},
 	})
 }
