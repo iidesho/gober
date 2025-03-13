@@ -614,7 +614,7 @@ func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {
 	if st.state == StateInvalid {
 		return StateInvalid, errors.New("saga status was invalid")
 	}
-	log.Info("got state", "step", st.stepDone, "state", st.state, "status", st)
+	log.Trace("got state", "step", st.stepDone, "state", st.state, "status", st)
 	if st.state == StateSuccess {
 		i := findStep(t.story.Actions, st.stepDone) + 1
 		if i >= len(t.story.Actions) {
