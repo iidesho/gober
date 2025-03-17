@@ -10,7 +10,7 @@ import (
 	"github.com/iidesho/gober/consensus/contenious"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelDebug)
+var log = sbragi.WithLocalScope(sbragi.LevelInfo)
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
 	Handler   Handler[BT, T]
