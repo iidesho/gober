@@ -14,11 +14,11 @@ var log = sbragi.WithLocalScope(sbragi.LevelDebug)
 
 type Action[BT any, T bcts.ReadWriter[BT]] struct {
 	Handler   Handler[BT, T]
-	Id        string
-	Type      string
 	cons      contenious.Consensus
 	aborted   <-chan contenious.ConsID
 	completed <-chan contenious.ConsID
+	Id        string
+	Type      string
 }
 
 type Story[BT any, T bcts.ReadWriter[BT]] struct {

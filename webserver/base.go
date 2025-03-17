@@ -277,6 +277,7 @@ func (s *server) API() fiber.Router {
 }
 
 func (s *server) Run() {
+	s.r.Server().Logger = sbragi.GetDefaultLogger()
 	sbragi.WithError(s.r.Listen(fmt.Sprintf(":%d", s.Port()))).
 		Fatal("while starting or running webserver")
 }
