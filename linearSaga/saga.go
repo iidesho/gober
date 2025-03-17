@@ -88,7 +88,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	}
 	discovery := local.New()
 	for actI, action := range story.Actions {
-		cons, aborted, completed, err := consensus.New(
+		cons, aborted, approved, err := consensus.New(
 			serv,
 			token,
 			discovery,
@@ -100,7 +100,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		}
 		story.Actions[actI].cons = cons
 		story.Actions[actI].aborted = aborted
-		story.Actions[actI].completed = completed
+		story.Actions[actI].approved = approved
 	}
 	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
 	exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
