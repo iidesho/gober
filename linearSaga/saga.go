@@ -158,17 +158,22 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						story.Actions[actionI].cons.Completed(e.Data.status.consID)
 						retryFrom := e.Data.status.retryFrom
 						consID := e.Data.status.consID
-						if state == StateSuccess && e.Data.status.state == StateRetryable {
-							state = StateRetryable
-							if actionI == 0 ||
-								story.Actions[actionI].Id == e.Data.status.retryFrom {
-								retryFrom = ""
-								state = StatePending
-								id, err := uuid.NewV7()
-								sbragi.WithError(err).Fatal("could not generage UUID")
-								consID = consensus.ConsID(id)
+						if state == StateSuccess {
+							if e.Data.status.state == StateRetryable {
+								state = StateRetryable
+								if actionI == 0 ||
+									story.Actions[actionI].Id == e.Data.status.retryFrom {
+									retryFrom = ""
+									state = StatePending
+									id, err := uuid.NewV7()
+									sbragi.WithError(err).Fatal("could not generage UUID")
+									consID = consensus.ConsID(id)
+								}
+							} else {
+								state = e.Data.status.state
 							}
 						}
+
 						prevStepID := ""
 						if actionI != 0 {
 							prevStepID = story.Actions[actionI-1].Id
