@@ -148,7 +148,8 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 					if actionI >= 0 && // Falesafing the -1 case
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
-						state, err := story.Actions[actionI].Handler.Reduce(e.Data.v)
+						state := StateSuccess
+						err := story.Actions[actionI].Handler.Reduce(e.Data.v)
 						if log. // Should not escalate
 							WithError(err).
 							Warning("there was an error while reducing saga part") {
@@ -203,7 +204,8 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							consID:    e.Data.status.consID,
 						},
 					})).Error("writing panic event", "id", e.Data.status.id.String())
-					state, err := story.Actions[actionI].Handler.Execute(e.Data.v)
+					state := StateSuccess
+					err := story.Actions[actionI].Handler.Execute(e.Data.v)
 					if log. // Should not escalate
 						WithError(err).
 						Warning("there was an error while executing task. not finishing") {

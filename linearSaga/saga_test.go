@@ -43,18 +43,18 @@ type act1 struct {
 	State saga.State
 }
 
-func (a *act1) Execute(s *bcts.TinyString) (saga.State, error) {
+func (a *act1) Execute(s *bcts.TinyString) error {
 	log.Info("executing act1")
 	defer wg.Done()
 	log.Info(a.Inner, "s", s)
 	*s = bcts.TinyString(fmt.Sprint(*s, "-", a.Inner))
 	a.State = saga.StateSuccess
-	return a.State, nil
+	return nil
 }
 
-func (a act1) Reduce(*bcts.TinyString) (saga.State, error) {
+func (a act1) Reduce(*bcts.TinyString) error {
 	log.Info("recucing act 1")
-	return saga.StateSuccess, nil
+	return nil
 }
 
 /*
@@ -74,24 +74,24 @@ type act2 struct {
 	State  saga.State
 }
 
-func (a *act2) Execute(*bcts.TinyString) (saga.State, error) {
+func (a *act2) Execute(*bcts.TinyString) error {
 	log.Info("executing act2", "pre", a.Pre, "post", a.Post)
 	if a.State == saga.StateSuccess {
-		return a.State, nil
+		return nil
 	}
 	if !a.Failed {
 		a.Failed = true
-		return saga.StateRetryable, saga.RetryableError("action_2", nil)
+		return saga.RetryableError("action_2", nil)
 	}
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
 	a.State = saga.StateSuccess
-	return a.State, nil
+	return nil
 }
 
-func (a act2) Reduce(*bcts.TinyString) (saga.State, error) {
+func (a act2) Reduce(*bcts.TinyString) error {
 	log.Info("recucing act 2")
-	return saga.StateSuccess, nil
+	return nil
 }
 
 var a1 = act1{
