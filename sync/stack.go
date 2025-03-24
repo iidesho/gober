@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -56,7 +57,7 @@ func (s *Stack[T, RT]) Peek() (data RT, ok bool) {
 func (s *Stack[T, RT]) WriteBytes(w io.Writer) (err error) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
-	err = bcts.WriteUInt8(w, uint8(0)) //Version
+	err = bcts.WriteUInt8(w, uint8(0)) // Version
 	if err != nil {
 		return
 	}
@@ -76,7 +77,8 @@ func (s *Stack[T, RT]) ReadBytes(r io.Reader) (err error) {
 	if vers != 0 {
 		return fmt.Errorf("invalid slice version, %s=%d, %s=%d", "expected", 0, "got", vers)
 	}
-	err = bcts.ReadSlice(r, &s.data)
+	return errors.New("temp")
+	// err = bcts.ReadSlice(r, &s.data)
 	if err != nil {
 		return
 	}

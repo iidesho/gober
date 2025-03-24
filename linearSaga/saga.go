@@ -334,19 +334,19 @@ func (t *executor[BT, T]) handler(
 				)
 				continue
 			}
-			/*
-				if actionI-1 == len(t.story.Actions) {
-					log.Fatal(
-						"we should never roll back a successfull saga",
-						"saga",
-						t.sagaName,
-						"actionLen",
-						len(t.story.Actions),
-						"gotI",
-						actionI,
-					)
-					continue
-				}
+			/* this no longer works as we are setting the stageDone when failing as well
+			if actionI-1 == len(t.story.Actions) {
+				log.Fatal(
+					"we should never roll back a successfull saga",
+					"saga",
+					t.sagaName,
+					"actionLen",
+					len(t.story.Actions),
+					"gotI",
+					actionI,
+				)
+				continue
+			}
 			*/
 			// This is just temporary, it will change when Barry is done...
 			log.Trace("failed / paniced found")
@@ -388,6 +388,7 @@ func (t *executor[BT, T]) handler(
 				)
 				continue
 			}
+			/* this no longer works as we are setting the stageDone when failing as well
 			if actionI == len(t.story.Actions)-1 {
 				log.Fatal(
 					"we should never roll back a successfull saga",
@@ -400,6 +401,7 @@ func (t *executor[BT, T]) handler(
 				)
 				continue
 			}
+			*/
 			log.Trace("retryable found")
 		case StateWorking:
 			t.taskLock.Lock()

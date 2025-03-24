@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -19,11 +20,11 @@ type Que[T any, RT bcts.ReadWriter[T]] interface {
 }
 */
 
-func NewQue[BT any, T bcts.ReadWriter[BT]]() *Que[BT, T] {
+func NewQue[BT bcts.Writer, T bcts.ReadWriter[BT]]() *Que[BT, T] {
 	return &Que[BT, T]{signal: make(chan struct{})}
 }
 
-func QueFromReader[BT any, T bcts.ReadWriter[BT]](r io.Reader) (*Que[BT, T], error) {
+func QueFromReader[BT bcts.Writer, T bcts.ReadWriter[BT]](r io.Reader) (*Que[BT, T], error) {
 	q := Que[BT, T]{signal: make(chan struct{})}
 	err := q.ReadBytes(r)
 	if err != nil {
@@ -32,9 +33,9 @@ func QueFromReader[BT any, T bcts.ReadWriter[BT]](r io.Reader) (*Que[BT, T], err
 	return &q, nil
 }
 
-type Que[T any, RT bcts.ReadWriter[T]] struct {
+type Que[T bcts.Writer, RT bcts.ReadWriter[T]] struct {
 	signal chan struct{}
-	data   []RT
+	data   []T
 	rwLock sync.RWMutex
 	has    bool
 }
@@ -42,14 +43,14 @@ type Que[T any, RT bcts.ReadWriter[T]] struct {
 func (s *Que[BT, T]) Push(data T) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
-	s.data = append(s.data, data)
+	s.data = append(s.data, *data)
 	if !s.has {
 		s.has = true
 		close(s.signal)
 	}
 }
 
-func (s *Que[BT, T]) Pop() (data T, ok bool) {
+func (s *Que[BT, T]) Pop() (data BT, ok bool) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	if len(s.data) == 0 {
@@ -66,7 +67,7 @@ func (s *Que[BT, T]) Pop() (data T, ok bool) {
 	return
 }
 
-func (s *Que[BT, T]) Delete(is func(v T) bool) {
+func (s *Que[BT, T]) Delete(is func(v BT) bool) {
 	s.rwLock.Lock()
 	defer s.rwLock.Unlock()
 	for i, v := range s.data {
@@ -80,7 +81,7 @@ func (s *Que[BT, T]) Delete(is func(v T) bool) {
 	}
 }
 
-func (s *Que[BT, T]) Peek() (data T, ok bool) {
+func (s *Que[BT, T]) Peek() (data BT, ok bool) {
 	s.rwLock.RLock()
 	defer s.rwLock.RUnlock()
 	if len(s.data) == 0 {
@@ -116,7 +117,8 @@ func (s *Que[BT, T]) ReadBytes(r io.Reader) (err error) {
 	if vers != 0 {
 		return fmt.Errorf("invalid que version, %s=%d, %s=%d", "expected", 0, "got", vers)
 	}
-	err = bcts.ReadSlice(r, &s.data)
+	return errors.New("temp")
+	// err = bcts.ReadSlice(r, &s.data)
 	if err != nil {
 		return
 	}

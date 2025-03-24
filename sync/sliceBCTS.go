@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -139,7 +140,8 @@ func (s *sliceBCTS[T, RT]) ReadBytes(r io.Reader) (err error) {
 	if vers != 0 {
 		return fmt.Errorf("invalid sliceBCTS version, %s=%d, %s=%d", "expected", 0, "got", vers)
 	}
-	err = bcts.ReadSlice(r, &s.data)
+	return errors.New("temp")
+	// err = bcts.ReadSlice(r, &s.data)
 	if err != nil {
 		return
 	}
