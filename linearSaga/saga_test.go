@@ -189,12 +189,13 @@ func TestInit(t *testing.T) {
 }
 
 var id uuid.UUID
+var errs <-chan error
 
 func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
 	var err error
 	v := bcts.TinyString("init")
-	id, err = s.ExecuteFirst(&v)
+	id, errs, err = s.ExecuteFirst(&v)
 	if err != nil {
 		t.Error(err)
 		return
@@ -212,6 +213,11 @@ func TestTairdown(t *testing.T) {
 	if st != saga.StateSuccess {
 		t.Error("expected completed saga to be success", st.String())
 		return
+	}
+	select {
+	case <-errs:
+	default:
+		t.Error("expected to have error in err chan", st.String())
 	}
 	ctxGlobalCancel()
 	s.Close()
@@ -246,7 +252,7 @@ func BenchmarkSaga(b *testing.B) {
 	defer edt.Close()
 	go serv.Run()
 	for i := 0; i < b.N; i++ {
-		_, err = edt.ExecuteFirst(nil)
+		_, _, err := edt.ExecuteFirst(nil)
 		if err != nil {
 			b.Error(err)
 			return
