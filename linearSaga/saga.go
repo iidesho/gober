@@ -126,8 +126,6 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 									close(errChan)
 									out.errors.Delete(e.Data.status.id)
 								}
-								close(errChan)
-								out.errors.Delete(e.Data.status.id)
 							} else {
 								sbragi.Error("error channel not found")
 							}
