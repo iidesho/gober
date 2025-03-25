@@ -121,8 +121,9 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							).Error("panic while executing")
 							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
 								errChan <- fmt.Errorf("panic while executing, recoverd: %v, stack: %s", r, string(debug.Stack()))
+								close(errChan)
 							} else {
-								sbragi.WithError(err).Error("error channel not found")
+								sbragi.Error("error channel not found")
 							}
 							id, err := uuid.NewV7()
 							sbragi.WithError(err).Fatal("could not generage UUID")
