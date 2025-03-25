@@ -120,8 +120,14 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
 							).Error("panic while executing")
 							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-								errChan <- fmt.Errorf("panic while executing, recoverd: %v, stack: %s", r, string(debug.Stack()))
+								select {
+								case errChan <- fmt.Errorf("panic while executing, recoverd: %v, stack: %s", r, string(debug.Stack())):
+								default: // errChan is full, probably no receiver
+									close(errChan)
+									out.errors.Delete(e.Data.status.id)
+								}
 								close(errChan)
+								out.errors.Delete(e.Data.status.id)
 							} else {
 								sbragi.Error("error channel not found")
 							}
@@ -164,9 +170,14 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							WithError(err).
 							Warning("there was an error while reducing saga part") {
 							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-								errChan <- err
+								select {
+								case errChan <- err:
+								default: // errChan is full, probably no receiver
+									close(errChan)
+									out.errors.Delete(e.Data.status.id)
+								}
 							} else {
-								sbragi.WithError(err).Error("error channel not found")
+								sbragi.Error("error channel not found")
 							}
 							state = StateFailed
 						}
@@ -226,9 +237,14 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						Warning("there was an error while executing task. not finishing") {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 						if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-							errChan <- err
+							select {
+							case errChan <- err:
+							default: // errChan is full, probably no receiver
+								close(errChan)
+								out.errors.Delete(e.Data.status.id)
+							}
 						} else {
-							sbragi.WithError(err).Error("error channel not found")
+							sbragi.Error("error channel not found")
 						}
 						state := StateFailed
 						retryFrom := ""
