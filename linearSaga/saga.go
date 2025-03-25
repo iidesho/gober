@@ -166,7 +166,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
 								errChan <- err
 							} else {
-								sbragi.WithError(err).Error("error channel not found")
+								sbragi.Error("error channel not found")
 							}
 							state = StateFailed
 						}
@@ -228,7 +228,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						if errChan, ok := out.errors.Get(e.Data.status.id); ok {
 							errChan <- err
 						} else {
-							sbragi.WithError(err).Error("error channel not found")
+							sbragi.Error("error channel not found")
 						}
 						state := StateFailed
 						retryFrom := ""
