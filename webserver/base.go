@@ -180,7 +180,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 			return c.Next()
 		}
 		err := c.Next()
-		sbragi.WithError(err).
+		log.WithError(err).
 			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
 		return err
 	})
@@ -278,12 +278,12 @@ func (s *server) API() fiber.Router {
 
 func (s *server) Run() {
 	s.r.Server().Logger = sbragi.GetDefaultLogger()
-	sbragi.WithError(s.r.Listen(fmt.Sprintf(":%d", s.Port()))).
+	log.WithError(s.r.Listen(fmt.Sprintf(":%d", s.Port()))).
 		Fatal("while starting or running webserver")
 }
 
 func (s *server) Shutdown() {
-	sbragi.WithError(s.r.Shutdown()).Fatal("while shutdown webserver")
+	log.WithError(s.r.Shutdown()).Fatal("while shutdown webserver")
 }
 
 func (s *server) Port() uint16 {
