@@ -26,7 +26,7 @@ import (
 	jsoniter "github.com/json-iterator/go"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelError)
+var log = sbragi.WithLocalScope(sbragi.LevelInfo)
 
 const (
 	CONTENT_TYPE      = "Content-Type"
@@ -74,7 +74,7 @@ func init() {
 	}
 	if os.Getenv("debug.port") != "" {
 		go func() {
-			log.WithError(http.ListenAndServe(":"+os.Getenv("debug.port"), nil)).
+			log.WithError(http.ListenAndServe("127.0.0.1:"+os.Getenv("debug.port"), nil)).
 				Info("while running debug server", "port", os.Getenv("debug.port"))
 		}()
 	}
@@ -84,6 +84,7 @@ type Server interface {
 	Base() fiber.Router
 	API() fiber.Router
 	Run()
+	RunIP(ip string)
 	Shutdown()
 	Port() uint16
 	Url() (u *url.URL)
@@ -277,8 +278,12 @@ func (s *server) API() fiber.Router {
 }
 
 func (s *server) Run() {
+	s.RunIP("")
+}
+
+func (s *server) RunIP(ip string) {
 	s.r.Server().Logger = sbragi.GetDefaultLogger()
-	log.WithError(s.r.Listen(fmt.Sprintf(":%d", s.Port()))).
+	log.WithError(s.r.Listen(fmt.Sprintf("%s:%d", ip, s.Port()))).
 		Fatal("while starting or running webserver")
 }
 
