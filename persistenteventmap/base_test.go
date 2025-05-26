@@ -20,8 +20,27 @@ var (
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
 type dd struct {
-	Name string `json:"name"`
-	Id   int    `json:"id"`
+	Name   string `json:"name"`
+	Extras []interface {
+		Type() int
+	}
+	Id int `json:"id"`
+}
+
+type e1 struct {
+	V1 string
+}
+
+func (e e1) Type() int {
+	return 1
+}
+
+type e2 struct {
+	V2 string
+}
+
+func (e e2) Type() int {
+	return 2
 }
 
 func cryptKeyProvider(_ string) string {
@@ -58,6 +77,16 @@ func TestStore(t *testing.T) {
 	data := dd{
 		Id:   1,
 		Name: "test",
+		Extras: []interface {
+			Type() int
+		}{
+			e1{
+				V1: "var1 in e1",
+			},
+			e2{
+				V2: "var2 in e2",
+			},
+		},
 	}
 	err := ed.Set(data)
 	if err != nil {
