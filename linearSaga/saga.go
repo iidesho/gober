@@ -25,13 +25,13 @@ import (
 
 const MESSAGE_BUFFER_SIZE = 1024
 
-type Saga[BT, T any] interface {
+type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
 	ExecuteFirst(T) (uuid.UUID, <-chan error, error)
 	Status(uuid.UUID) (State, error)
 	Close()
 }
 
-type executor[BT any, T bcts.ReadWriter[BT]] struct {
+type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	ctx      context.Context
 	es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
 	statuses gsync.Map[uuid.UUID, status]
@@ -46,7 +46,7 @@ type executor[BT any, T bcts.ReadWriter[BT]] struct {
 	taskLock sync.Mutex
 }
 
-func Init[BT any, T bcts.ReadWriter[BT]](
+func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	pers stream.Stream,
 	serv webserver.Server,
 	dataTypeVersion, name string,
@@ -163,7 +163,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
-						err := story.Actions[actionI].Handler.Reduce(e.Data.v)
+						err := story.Actions[actionI].Handler.Reduce(&e.Data.v)
 						if log. // Should not escalate
 							WithError(err).
 							Warning("there was an error while reducing saga part") {
@@ -229,7 +229,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 						},
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
-					err := story.Actions[actionI].Handler.Execute(e.Data.v)
+					err := story.Actions[actionI].Handler.Execute(&e.Data.v)
 					if log. // Should not escalate
 						WithError(err).
 						Warning("there was an error while executing task. not finishing") {
@@ -517,7 +517,7 @@ func (t *executor[BT, T]) writeEvent(tt sagaValue[BT, T]) error {
 }
 
 func (t *executor[BT, T]) ExecuteFirst(
-	dt T,
+	dt BT,
 ) (uuid.UUID, <-chan error, error) {
 	id, err := uuid.NewV7()
 	if err != nil {

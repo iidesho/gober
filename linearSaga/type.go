@@ -50,8 +50,8 @@ func (a Action[BT, T]) WriteBytes(w io.Writer) error {
 	return nil
 }
 
-type sagaValue[BT any, T bcts.ReadWriter[BT]] struct {
-	v      T
+type sagaValue[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
+	v      BT
 	status status
 }
 

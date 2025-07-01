@@ -212,6 +212,34 @@ func ReadMap[KT comparable, K ComparableReader[KT], VT any, V Reader[VT]](
 	return nil
 }
 
+func ReadMapAny[K comparable, V any](
+	r io.Reader,
+	mp *map[K]V,
+	keyReader func(r io.Reader, v *K) error,
+	valReader func(r io.Reader, v *V) error,
+) error {
+	*mp = map[K]V{}
+	var l int32
+	err := ReadInt32(r, &l)
+	if err != nil {
+		return err
+	}
+	for range l {
+		k := new(K)
+		v := new(V)
+		err = keyReader(r, k)
+		if err != nil {
+			return err
+		}
+		err = valReader(r, v)
+		if err != nil {
+			return err
+		}
+		(*mp)[*k] = *v
+	}
+	return nil
+}
+
 func ReadSlice[TV any, T Reader[TV]](r io.Reader, s *[]TV) error {
 	var l int32
 	err := ReadInt32(r, &l)
@@ -222,6 +250,24 @@ func ReadSlice[TV any, T Reader[TV]](r io.Reader, s *[]TV) error {
 	for i := range l {
 		v := new(TV)
 		err = T(v).ReadBytes(r)
+		if err != nil {
+			return err
+		}
+		(*s)[i] = *v
+	}
+	return nil
+}
+
+func ReadSliceAny[TV any](r io.Reader, s *[]TV, t func(r io.Reader, v *TV) error) error {
+	var l int32
+	err := ReadInt32(r, &l)
+	if err != nil {
+		return err
+	}
+	*s = make([]TV, l)
+	for i := range l {
+		v := new(TV)
+		err := t(r, v) // T(v).ReadBytes(r)
 		if err != nil {
 			return err
 		}

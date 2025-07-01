@@ -84,12 +84,11 @@ func (e *ReadEvent) ReadBytes(r io.Reader) error {
 		return err
 	}
 
-	re, err := bcts.ReadReader[Event](r)
+	e.Event, err = bcts.ReadReader[Event](r)
 	// err = e.Event.ReadBytes(r)
 	if err != nil {
 		return err
 	}
-	e.Event = *re
 	err = bcts.ReadUInt64(r, &e.Position)
 	if err != nil {
 		return err

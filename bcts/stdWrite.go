@@ -206,6 +206,29 @@ func WriteMap[K ComparableWriter, T Writer](w io.Writer, m map[K]T) error {
 	return nil
 }
 
+func WriteMapAny[K comparable, T any](
+	w io.Writer,
+	m map[K]T,
+	writeKey func(w io.Writer, v K) error,
+	writeVal func(w io.Writer, v T) error,
+) error {
+	err := WriteInt32(w, int32(len(m)))
+	if err != nil {
+		return err
+	}
+	for k, v := range m {
+		err = writeKey(w, k)
+		if err != nil {
+			return err
+		}
+		err = writeVal(w, v)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
 	err := WriteInt32(w, int32(len(s)))
 	if err != nil {
@@ -213,6 +236,20 @@ func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
 	}
 	for _, v := range s {
 		err = v.WriteBytes(w)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func WriteSliceAny[T any, TI ~[]T](w io.Writer, s TI, t func(w io.Writer, s T) error) error {
+	err := WriteInt32(w, int32(len(s)))
+	if err != nil {
+		return err
+	}
+	for _, v := range s {
+		err = t(w, v) // v.WriteBytes(w)
 		if err != nil {
 			return err
 		}
