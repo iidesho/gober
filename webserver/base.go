@@ -107,6 +107,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 			EnablePrintRoutes: true,
 			JSONDecoder:       json.Unmarshal,
 			JSONEncoder:       json.Marshal,
+			Network:           "tcp",
 			// Override default error handler
 			ErrorHandler: func(c *fiber.Ctx, err error) error {
 				// Status code defaults to 500
