@@ -26,7 +26,7 @@ import (
 const MESSAGE_BUFFER_SIZE = 1024
 
 type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
-	ExecuteFirst(T) (uuid.UUID, <-chan error, error)
+	ExecuteFirst(BT) (uuid.UUID, <-chan error, error)
 	Status(uuid.UUID) (State, error)
 	Close()
 }
