@@ -77,6 +77,7 @@ type status struct {
 	retryFrom string
 	duration  time.Duration
 	state     State
+	err       error
 	consID    contenious.ConsID
 	id        uuid.UUID
 }
@@ -148,6 +149,8 @@ const (
 	StateRetryable
 	StateFailed
 	StatePaniced
+	StateSagaFailed
+	StateSagaSucceeded
 )
 
 func (s State) String() string {

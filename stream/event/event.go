@@ -17,13 +17,13 @@ import (
 // var json = jsoniter.ConfigDefault
 
 type Metadata struct {
-	Created   time.Time                           `json:"created"`
-	Extra     map[bcts.TinyString]bcts.SmallBytes `json:"extra"`
-	Stream    string                              `json:"stream"`
-	EventType Type                                `json:"event_type"`
-	Version   string                              `json:"version"`
-	DataType  string                              `json:"data_type"`
-	Key       string                              `json:"key"`
+	Created   time.Time         `json:"created"`
+	Extra     map[string]string `json:"extra"`
+	Stream    string            `json:"stream"`
+	EventType Type              `json:"event_type"`
+	Version   string            `json:"version"`
+	DataType  string            `json:"data_type"`
+	Key       string            `json:"key"`
 }
 
 func (m Metadata) WriteBytes(w io.Writer) (err error) {
@@ -35,7 +35,7 @@ func (m Metadata) WriteBytes(w io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = bcts.WriteMap(w, m.Extra)
+	err = bcts.WriteMapAny(w, m.Extra, bcts.WriteTinyString, bcts.WriteSmallString)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func (m *Metadata) ReadBytes(r io.Reader) (err error) {
 	if err != nil {
 		return err
 	}
-	err = bcts.ReadMap(r, &m.Extra)
+	err = bcts.ReadMapAny(r, &m.Extra, bcts.ReadTinyString, bcts.ReadSmallString)
 	if err != nil {
 		return err
 	}

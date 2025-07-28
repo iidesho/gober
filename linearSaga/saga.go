@@ -23,11 +23,18 @@ import (
 	"github.com/iidesho/gober/webserver"
 )
 
-const MESSAGE_BUFFER_SIZE = 1024
+const (
+	MESSAGE_BUFFER_SIZE = 1024
+	ERROR_BUFFER_SIZE   = 16
+)
 
 type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
-	ExecuteFirst(BT) (uuid.UUID, <-chan error, error)
+	ExecuteFirst(BT) (uuid.UUID, error)
 	Status(uuid.UUID) (State, error)
+	ReadErrors(
+		id uuid.UUID,
+		ctx context.Context,
+	) (<-chan error, error)
 	Close()
 }
 
@@ -35,7 +42,7 @@ type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	ctx      context.Context
 	es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
 	statuses gsync.Map[uuid.UUID, status]
-	errors   gsync.Map[uuid.UUID, chan error]
+	// errors   gsync.Map[uuid.UUID, chan error]
 	provider stream.CryptoKeyProvider
 	failed   chan<- uuid.UUID
 	close    context.CancelFunc
@@ -85,10 +92,10 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		taskLock: sync.Mutex{},
 		story:    story,
 		statuses: gsync.NewMap[uuid.UUID, status](),
-		errors:   gsync.NewMap[uuid.UUID, chan error](),
-		es:       es,
-		close:    cancel,
-		ctx:      ctxTask,
+		// errors:   gsync.NewMap[uuid.UUID, chan error](),
+		es:    es,
+		close: cancel,
+		ctx:   ctxTask,
 	}
 	discovery := local.New()
 	for actI, action := range story.Actions {
@@ -119,6 +126,8 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							log.WithError(
 								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
 							).Error("panic while executing")
+							//TODO: add panic event
+							/* No need to chose error channel? but should ensure last error is added as event
 							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
 								select {
 								case errChan <- fmt.Errorf("panic while executing, recoverd: %v, stack: %s", r, string(debug.Stack())):
@@ -129,6 +138,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							} else {
 								sbragi.Error("error channel not found")
 							}
+							*/
 							id, err := uuid.NewV7()
 							sbragi.WithError(err).Fatal("could not generage UUID")
 							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
@@ -164,19 +174,23 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
 						err := story.Actions[actionI].Handler.Reduce(&e.Data.v)
-						if log. // Should not escalate
-							WithError(err).
-							Warning("there was an error while reducing saga part") {
-							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-								select {
-								case errChan <- err:
-								default: // errChan is full, probably no receiver
-									close(errChan)
-									out.errors.Delete(e.Data.status.id)
+						//TODO: add failed event?
+						/* No need to chose error channel? but should ensure last error is added as event
+							if log. // Should not escalate
+								WithError(err).
+								Warning("there was an error while reducing saga part") {
+								if errChan, ok := out.errors.Get(e.Data.status.id); ok {
+									select {
+									case errChan <- err:
+									default: // errChan is full, probably no receiver
+										close(errChan)
+										out.errors.Delete(e.Data.status.id)
+									}
+								} else {
+									sbragi.Error("error channel not found")
 								}
-							} else {
-								sbragi.Error("error channel not found")
-							}
+						  }
+						*/if err != nil {
 							state = StateFailed
 						}
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
@@ -234,6 +248,8 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						WithError(err).
 						Warning("there was an error while executing task. not finishing") {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
+						//TODO: add failed event?
+						/* No need to chose error channel? but should ensure last error is added as event
 						if errChan, ok := out.errors.Get(e.Data.status.id); ok {
 							select {
 							case errChan <- err:
@@ -244,6 +260,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						} else {
 							sbragi.Error("error channel not found")
 						}
+						*/
 						state := StateFailed
 						retryFrom := ""
 						stepDone := e.Data.status.stepDone
@@ -335,10 +352,12 @@ func (t *executor[BT, T]) handler(
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
 			log.Trace("success / pending found")
 			if actionI >= len(t.story.Actions) {
+				/* no need
 				if errChan, ok := t.errors.Get(e.Data.status.id); ok {
 					close(errChan)
 					t.errors.Delete(e.Data.status.id)
 				}
+				*/
 				log.Trace("saga is completed")
 				continue
 			}
@@ -356,10 +375,12 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			if e.Data.status.stepDone == "" {
+				/* no need
 				if errChan, ok := t.errors.Get(e.Data.status.id); ok {
 					close(errChan)
 					t.errors.Delete(e.Data.status.id)
 				}
+				*/
 				log.Trace("rollback completed as there is no more completed steps")
 				continue
 			}
@@ -504,6 +525,9 @@ func (t *executor[BT, T]) event(
 			Version:  t.version,
 			DataType: t.sagaName,
 			Key:      crypto.SimpleHash(data.status.id.String()),
+			Extra: map[string]string{
+				"id": data.status.id.String(),
+			},
 		},
 	}
 	return
@@ -518,14 +542,13 @@ func (t *executor[BT, T]) writeEvent(tt sagaValue[BT, T]) error {
 
 func (t *executor[BT, T]) ExecuteFirst(
 	dt BT,
-) (uuid.UUID, <-chan error, error) {
+) (uuid.UUID, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return uuid.Nil, nil, err
+		return uuid.Nil, err
 	}
-	errChan := make(chan error, MESSAGE_BUFFER_SIZE)
-	t.errors.Set(id, errChan)
-	return id, errChan, t.writeEvent(sagaValue[BT, T]{
+	// errChan := make(chan error, MESSAGE_BUFFER_SIZE)
+	return id, t.writeEvent(sagaValue[BT, T]{
 		v: dt,
 		status: status{
 			state:  StatePending,
@@ -533,6 +556,65 @@ func (t *executor[BT, T]) ExecuteFirst(
 			consID: consensus.ConsID(id),
 		},
 	})
+}
+
+func (t *executor[BT, T]) ReadErrors(
+	id uuid.UUID,
+	ctx context.Context,
+) (<-chan error, error) {
+	ids := id.String()
+	ctx, cancel := context.WithCancel(ctx)
+	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START, func(md event.Metadata) bool {
+		return md.Extra["id"] != ids
+	}, ctx)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	out := make(chan error, ERROR_BUFFER_SIZE)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-t.ctx.Done():
+				cancel()
+				return
+			case <-ctx.Done():
+				return
+			case e := <-s:
+				if e.Data.status.err != nil {
+					select {
+					case <-t.ctx.Done():
+						cancel()
+						return
+					case <-ctx.Done():
+						return
+					case out <- e.Data.status.err:
+						continue
+					}
+				}
+				switch e.Data.status.state {
+				case StateFailed:
+					fallthrough
+				case StatePaniced:
+					if e.Data.status.stepDone != "" {
+						log.Trace("rollback completed as there is no more completed steps")
+						return
+					}
+				case StatePending:
+					fallthrough
+				case StateSuccess:
+					actionI := findStep(t.story.Actions, e.Data.status.stepDone) + 1
+					log.Trace("success / pending found")
+					if actionI >= len(t.story.Actions) {
+						log.Trace("saga is completed")
+						return
+					}
+				}
+			}
+		}
+	}()
+	return out, nil
 }
 
 func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {

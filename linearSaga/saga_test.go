@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -189,13 +190,12 @@ func TestInit(t *testing.T) {
 }
 
 var id uuid.UUID
-var errs <-chan error
 
 func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
 	var err error
 	v := bcts.TinyString("init")
-	id, errs, err = s.ExecuteFirst(&v)
+	id, err = s.ExecuteFirst(v)
 	if err != nil {
 		t.Error(err)
 		return
@@ -203,6 +203,10 @@ func TestExecuteFirst(t *testing.T) {
 }
 
 func TestTairdown(t *testing.T) {
+	errs, err := s.ReadErrors(id, t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	wg.Wait()
 	time.Sleep(time.Second)
 	st, err := s.Status(id)
@@ -251,8 +255,9 @@ func BenchmarkSaga(b *testing.B) {
 	}
 	defer edt.Close()
 	go serv.Run()
+	bv := bcts.TinyString(strconv.Itoa(b.N))
 	for i := 0; i < b.N; i++ {
-		_, _, err := edt.ExecuteFirst(nil)
+		_, err := edt.ExecuteFirst(bv)
 		if err != nil {
 			b.Error(err)
 			return
