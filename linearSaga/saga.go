@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid"
-	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	consensus "github.com/iidesho/gober/consensus/contenious"
 	"github.com/iidesho/gober/crypto"
@@ -136,12 +135,12 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									out.errors.Delete(e.Data.status.id)
 								}
 							} else {
-								sbragi.Error("error channel not found")
+								log.Error("error channel not found")
 							}
 							*/
 							id, err := uuid.NewV7()
-							sbragi.WithError(err).Fatal("could not generage UUID")
-							sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+							log.WithError(err).Fatal("could not generage UUID")
+							log.WithError(out.writeEvent(sagaValue[BT, T]{
 								v: e.Data.v,
 								status: status{
 									stepDone:  e.Data.status.stepDone,
@@ -187,7 +186,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 										out.errors.Delete(e.Data.status.id)
 									}
 								} else {
-									sbragi.Error("error channel not found")
+									log.Error("error channel not found")
 								}
 						  }
 						*/if err != nil {
@@ -205,7 +204,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									retryFrom = ""
 									state = StatePending
 									id, err := uuid.NewV7()
-									sbragi.WithError(err).Fatal("could not generage UUID")
+									log.WithError(err).Fatal("could not generage UUID")
 									consID = consensus.ConsID(id)
 								}
 							} else {
@@ -217,7 +216,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						if actionI != 0 {
 							prevStepID = story.Actions[actionI-1].Id
 						}
-						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+						log.WithError(out.writeEvent(sagaValue[BT, T]{
 							v: e.Data.v,
 							status: status{
 								stepDone:  prevStepID,
@@ -232,7 +231,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					}
 					actionI++
 					// Ignoring this state for now
-					sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+					log.WithError(out.writeEvent(sagaValue[BT, T]{
 						v: e.Data.v,
 						status: status{
 							stepDone:  e.Data.status.stepDone,
@@ -258,7 +257,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								out.errors.Delete(e.Data.status.id)
 							}
 						} else {
-							sbragi.Error("error channel not found")
+							log.Error("error channel not found")
 						}
 						*/
 						state := StateFailed
@@ -271,8 +270,8 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							stepDone = story.Actions[actionI].Id
 						}
 						id, err := uuid.NewV7()
-						sbragi.WithError(err).Fatal("could not generage UUID")
-						sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+						log.WithError(err).Fatal("could not generage UUID")
+						log.WithError(out.writeEvent(sagaValue[BT, T]{
 							v: e.Data.v,
 							status: status{
 								stepDone:  stepDone,
@@ -286,7 +285,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						return
 					}
 					if state != StateSuccess {
-						sbragi.Fatal(
+						log.Fatal(
 							"Invalid saga state, should be success",
 							"state",
 							state,
@@ -294,7 +293,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							e.Data,
 						)
 					}
-					sbragi.WithError(out.writeEvent(sagaValue[BT, T]{
+					log.WithError(out.writeEvent(sagaValue[BT, T]{
 						v: e.Data.v,
 						status: status{
 							stepDone: story.Actions[actionI].Id,
@@ -350,7 +349,7 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
-			log.Trace("success / pending found")
+			log.Info("success / pending found", "loc", "executor")
 			if actionI >= len(t.story.Actions) {
 				/* no need
 				if errChan, ok := t.errors.Get(e.Data.status.id); ok {
@@ -358,7 +357,7 @@ func (t *executor[BT, T]) handler(
 					t.errors.Delete(e.Data.status.id)
 				}
 				*/
-				log.Trace("saga is completed")
+				log.Info("saga is completed", "loc", "executor")
 				continue
 			}
 		case StatePaniced:
@@ -381,7 +380,11 @@ func (t *executor[BT, T]) handler(
 					t.errors.Delete(e.Data.status.id)
 				}
 				*/
-				log.Trace("rollback completed as there is no more completed steps")
+				log.Info(
+					"rollback completed as there is no more completed steps",
+					"loc",
+					"executor",
+				)
 				continue
 			}
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
@@ -565,7 +568,8 @@ func (t *executor[BT, T]) ReadErrors(
 	ids := id.String()
 	ctx, cancel := context.WithCancel(ctx)
 	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START, func(md event.Metadata) bool {
-		return md.Extra["id"] != ids
+		return false
+		// return md.Extra["id"] != ids
 	}, ctx)
 	if err != nil {
 		cancel()
@@ -582,6 +586,17 @@ func (t *executor[BT, T]) ReadErrors(
 			case <-ctx.Done():
 				return
 			case e := <-s:
+				log.Info(
+					"read event in error",
+					"want",
+					ids,
+					"got",
+					e.Metadata.Extra["id"],
+					"state",
+					e.Data.status.state,
+					"err",
+					e.Data.status.err,
+				)
 				if e.Data.status.err != nil {
 					select {
 					case <-t.ctx.Done():
@@ -597,17 +612,26 @@ func (t *executor[BT, T]) ReadErrors(
 				case StateFailed:
 					fallthrough
 				case StatePaniced:
+					log.Info("rolling back")
 					if e.Data.status.stepDone != "" {
-						log.Trace("rollback completed as there is no more completed steps")
+						log.Info("rollback completed as there is no more completed steps")
 						return
 					}
 				case StatePending:
 					fallthrough
 				case StateSuccess:
 					actionI := findStep(t.story.Actions, e.Data.status.stepDone) + 1
-					log.Trace("success / pending found")
+					log.Info(
+						"success / pending found",
+						"actionI",
+						actionI,
+						"step done",
+						e.Data.status.stepDone,
+						"acrions",
+						len(t.story.Actions),
+					)
 					if actionI >= len(t.story.Actions) {
-						log.Trace("saga is completed")
+						log.Info("saga is completed")
 						return
 					}
 				}
