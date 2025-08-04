@@ -1,6 +1,7 @@
 package saga
 
 import (
+	"errors"
 	"io"
 	"time"
 
@@ -108,6 +109,10 @@ func (s status) WriteBytes(w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	err = bcts.WriteSmallString(w, s.err.Error())
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -136,6 +141,12 @@ func (s *status) ReadBytes(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+	var errS string
+	err = bcts.ReadSmallString(r, &errS)
+	if err != nil {
+		return err
+	}
+	s.err = errors.New(errS)
 	return nil
 }
 
