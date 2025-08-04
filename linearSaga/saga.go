@@ -149,6 +149,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									state:     StatePaniced,
 									id:        e.Data.status.id,
 									consID:    consensus.ConsID(id),
+									err:       fmt.Errorf("recoveced panic: %v", r),
 								},
 							})).Error("writing panic event", "id", e.Data.status.id.String())
 							return
@@ -172,7 +173,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
-						err := story.Actions[actionI].Handler.Reduce(&e.Data.v)
+						reduErr := story.Actions[actionI].Handler.Reduce(&e.Data.v)
 						//TODO: add failed event?
 						/* No need to chose error channel? but should ensure last error is added as event
 							if log. // Should not escalate
@@ -189,7 +190,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									log.Error("error channel not found")
 								}
 						  }
-						*/if err != nil {
+						*/if reduErr != nil {
 							state = StateFailed
 						}
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
@@ -225,6 +226,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								state:     state,
 								id:        e.Data.status.id,
 								consID:    consID,
+								err:       reduErr,
 							},
 						})).Error("writing failed event", "id", e.Data.status.id.String())
 						return
@@ -242,9 +244,9 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						},
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
-					err := story.Actions[actionI].Handler.Execute(&e.Data.v)
+					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v)
 					if log. // Should not escalate
-						WithError(err).
+						WithError(execErr).
 						Warning("there was an error while executing task. not finishing") {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 						//TODO: add failed event?
@@ -264,7 +266,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						retryFrom := ""
 						stepDone := e.Data.status.stepDone
 						var retryError retryableError
-						if errors.As(err, &retryError) {
+						if errors.As(execErr, &retryError) {
 							retryFrom = retryError.from
 							state = StateRetryable
 							stepDone = story.Actions[actionI].Id
@@ -280,6 +282,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								state:     state,
 								id:        e.Data.status.id,
 								consID:    consensus.ConsID(id),
+								err:       execErr,
 							},
 						})).Error("writing failed event", "id", e.Data.status.id.String())
 						return
@@ -349,7 +352,7 @@ func (t *executor[BT, T]) handler(
 			}
 			t.taskLock.Unlock()
 			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
-			log.Info("success / pending found", "loc", "executor")
+			log.Trace("success / pending found", "loc", "executor")
 			if actionI >= len(t.story.Actions) {
 				/* no need
 				if errChan, ok := t.errors.Get(e.Data.status.id); ok {
@@ -357,7 +360,7 @@ func (t *executor[BT, T]) handler(
 					t.errors.Delete(e.Data.status.id)
 				}
 				*/
-				log.Info("saga is completed", "loc", "executor")
+				log.Trace("saga is completed", "loc", "executor")
 				continue
 			}
 		case StatePaniced:
@@ -380,7 +383,7 @@ func (t *executor[BT, T]) handler(
 					t.errors.Delete(e.Data.status.id)
 				}
 				*/
-				log.Info(
+				log.Trace(
 					"rollback completed as there is no more completed steps",
 					"loc",
 					"executor",
@@ -568,8 +571,7 @@ func (t *executor[BT, T]) ReadErrors(
 	ids := id.String()
 	ctx, cancel := context.WithCancel(ctx)
 	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START, func(md event.Metadata) bool {
-		return false
-		// return md.Extra["id"] != ids
+		return md.Extra["id"] != ids
 	}, ctx)
 	if err != nil {
 		cancel()
@@ -586,7 +588,7 @@ func (t *executor[BT, T]) ReadErrors(
 			case <-ctx.Done():
 				return
 			case e := <-s:
-				log.Info(
+				log.Trace(
 					"read event in error",
 					"want",
 					ids,
@@ -612,16 +614,16 @@ func (t *executor[BT, T]) ReadErrors(
 				case StateFailed:
 					fallthrough
 				case StatePaniced:
-					log.Info("rolling back")
-					if e.Data.status.stepDone != "" {
-						log.Info("rollback completed as there is no more completed steps")
+					log.Trace("rolling back")
+					if e.Data.status.stepDone == "" {
+						log.Trace("rollback completed as there is no more completed steps")
 						return
 					}
 				case StatePending:
 					fallthrough
 				case StateSuccess:
 					actionI := findStep(t.story.Actions, e.Data.status.stepDone) + 1
-					log.Info(
+					log.Trace(
 						"success / pending found",
 						"actionI",
 						actionI,
@@ -631,7 +633,7 @@ func (t *executor[BT, T]) ReadErrors(
 						len(t.story.Actions),
 					)
 					if actionI >= len(t.story.Actions) {
-						log.Info("saga is completed")
+						log.Trace("saga is completed")
 						return
 					}
 				}
