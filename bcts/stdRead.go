@@ -2,6 +2,7 @@ package bcts
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"time"
 )
@@ -273,5 +274,18 @@ func ReadSliceAny[TV any](r io.Reader, s *[]TV, t func(r io.Reader, v *TV) error
 		}
 		(*s)[i] = *v
 	}
+	return nil
+}
+
+func ReadError(r io.Reader, err *error) error {
+	var errS string
+	iErr := ReadSmallString(r, &errS)
+	if err != nil {
+		return iErr
+	}
+	if len(errS) == 0 {
+		return nil
+	}
+	*err = errors.New(errS)
 	return nil
 }

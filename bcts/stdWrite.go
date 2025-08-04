@@ -256,3 +256,14 @@ func WriteSliceAny[T any, TI ~[]T](w io.Writer, s TI, t func(w io.Writer, s T) e
 	}
 	return nil
 }
+
+func WriteError(w io.Writer, err error) error {
+	if err == nil {
+		return WriteUInt16(w, uint16(0))
+	}
+	err = WriteSmallString(w, err.Error())
+	if err != nil {
+		return err
+	}
+	return nil
+}
