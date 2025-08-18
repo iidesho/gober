@@ -689,6 +689,10 @@ func findStep[BT any, T bcts.ReadWriter[BT]](actions []Action[BT, T], id string)
 	return -1
 }
 
+func IsRetryableError(err error) bool {
+	return errors.Is(err, retryableError{})
+}
+
 func RetryableError(from string, err error) retryableError {
 	return retryableError{
 		err:  err,
