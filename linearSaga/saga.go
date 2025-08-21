@@ -245,9 +245,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
 					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v)
-					if log. // Should not escalate
-						WithError(execErr).
-						Warning("there was an error while executing task. not finishing") {
+					if err != nil {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 						//TODO: add failed event?
 						/* No need to chose error channel? but should ensure last error is added as event
@@ -267,6 +265,8 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						stepDone := e.Data.status.stepDone
 						var retryError retryableError
 						if errors.As(execErr, &retryError) {
+							log.WithError(retryError.err).
+								Notice("there was an retryable error while executing task")
 							retryFrom = retryError.from
 							state = StateRetryable
 							stepDone = story.Actions[actionI].Id
@@ -276,6 +276,9 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							case <-time.NewTimer(time.Second * 10).C:
 								log.Warning("slept before retry", "duration", time.Second*10)
 							}
+						} else {
+							log.WithError(execErr).
+								Warning("there was an error while executing task. not finishing")
 						}
 						id, err := uuid.NewV7()
 						log.WithError(err).Fatal("could not generage UUID")
