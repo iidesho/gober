@@ -29,11 +29,11 @@ const (
 
 type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
 	ExecuteFirst(BT) (uuid.UUID, error)
-	Status(uuid.UUID) (State, error)
+	// Status(uuid.UUID) (State, error)
 	ReadErrors(
 		id uuid.UUID,
 		ctx context.Context,
-	) (<-chan error, error)
+	) (<-chan error, func() State, error)
 	Close()
 }
 
@@ -576,7 +576,8 @@ func (t *executor[BT, T]) ExecuteFirst(
 func (t *executor[BT, T]) ReadErrors(
 	id uuid.UUID,
 	ctx context.Context,
-) (<-chan error, error) {
+) (<-chan error, func() State, error) {
+	curState := StateInvalid
 	ids := id.String()
 	ctx, cancel := context.WithCancel(ctx)
 	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START, func(md event.Metadata) bool {
@@ -584,7 +585,7 @@ func (t *executor[BT, T]) ReadErrors(
 	}, ctx)
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, nil, err
 	}
 	out := make(chan error, ERROR_BUFFER_SIZE)
 	go func() {
@@ -597,6 +598,7 @@ func (t *executor[BT, T]) ReadErrors(
 			case <-ctx.Done():
 				return
 			case e := <-s:
+				curState = e.Data.status.state
 				log.Trace(
 					"read event in error",
 					"want",
@@ -649,28 +651,34 @@ func (t *executor[BT, T]) ReadErrors(
 			}
 		}
 	}()
-	return out, nil
+	return out, func() State { return curState }, nil
 }
 
+/*
 func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {
 	st := itr.NewIterator(t.tasks).
 		Filter(func(v status) bool { return v.id == id }).First()
 	if st.id == uuid.Nil {
+		log.Error("invalid saga id")
 		return StateInvalid, ErrExecutionNotFound
 	}
 	if st.state == StateInvalid {
+		log.Error("invalid saga status")
 		return StateInvalid, errors.New("saga status was invalid")
 	}
-	log.Trace("got state", "step", st.stepDone, "state", st.state, "status", st)
+	log.Info("got state", "step", st.stepDone, "state", st.state, "status", st)
 	if st.state == StateSuccess {
 		i := findStep(t.story.Actions, st.stepDone) + 1
 		if i >= len(t.story.Actions) {
+			log.Info("return success")
 			return StateSuccess, nil
 		}
+		log.Info("return pending")
 		return StatePending, nil
 	}
 	return st.state, nil
 }
+*/
 
 func (t *executor[BT, T]) Close() {
 	t.close()
