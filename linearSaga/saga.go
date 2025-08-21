@@ -173,7 +173,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
-						reduErr := story.Actions[actionI].Handler.Reduce(&e.Data.v)
+						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v)
 						//TODO: add failed event?
 						/* No need to chose error channel? but should ensure last error is added as event
 							if log. // Should not escalate
@@ -190,7 +190,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									log.Error("error channel not found")
 								}
 						  }
-						*/if reduErr != nil {
+						*/if reduceErr != nil {
 							state = StateFailed
 						}
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
@@ -226,7 +226,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								state:     state,
 								id:        e.Data.status.id,
 								consID:    consID,
-								err:       reduErr,
+								err:       reduceErr,
 							},
 						})).Error("writing failed event", "id", e.Data.status.id.String())
 						return
@@ -270,6 +270,12 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							retryFrom = retryError.from
 							state = StateRetryable
 							stepDone = story.Actions[actionI].Id
+							select {
+							case <-out.ctx.Done():
+								return
+							case <-time.NewTimer(time.Second * 10).C:
+								log.Warning("slept before retry", "duration", time.Second*10)
+							}
 						}
 						id, err := uuid.NewV7()
 						log.WithError(err).Fatal("could not generage UUID")
