@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/gofrs/uuid"
 )
 
 // I hate that we do not have the ability to either write single bit or do better bitwize operations...
@@ -181,6 +183,11 @@ func WriteBytes(w io.Writer, b []byte) error {
 
 func WriteStaticBytes(w io.Writer, b []byte) error {
 	_, err := w.Write(b)
+	return err
+}
+
+func WriteUUID(w io.Writer, b uuid.UUID) error {
+	_, err := w.Write(b[:])
 	return err
 }
 

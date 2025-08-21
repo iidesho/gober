@@ -245,7 +245,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
 					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v)
-					if err != nil {
+					if execErr != nil {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 						//TODO: add failed event?
 						/* No need to chose error channel? but should ensure last error is added as event

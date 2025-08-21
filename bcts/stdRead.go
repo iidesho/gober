@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/gofrs/uuid"
 )
 
 // I hate that we do not have the ability to either write single bit or do better bitwize operations...
@@ -174,6 +176,11 @@ func ReadBytes[T ~[]byte](r io.Reader, b *T) error {
 
 func ReadStaticBytes[T ~[]byte](r io.Reader, b T) error {
 	_, err := io.ReadFull(r, b)
+	return err
+}
+
+func ReadUUID(r io.Reader, b *uuid.UUID) error {
+	_, err := io.ReadFull(r, b[:])
 	return err
 }
 
