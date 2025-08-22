@@ -157,8 +157,8 @@ const (
 	StateRetryable
 	StateFailed
 	StatePaniced
-	StateSagaFailed
-	StateSagaSucceeded
+	// StateSagaFailed
+	// StateSagaSucceeded
 )
 
 func (s State) String() string {
