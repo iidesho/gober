@@ -24,6 +24,9 @@ import (
 	"github.com/iidesho/gober/webserver/health"
 	"github.com/joho/godotenv"
 	jsoniter "github.com/json-iterator/go"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var log = sbragi.WithLocalScope(sbragi.LevelInfo)
@@ -97,7 +100,9 @@ type server struct {
 	port uint16
 }
 
-func Init(port uint16, from_base bool) (Server, error) {
+var Registry *prometheus.Registry
+
+func Init(port uint16, fromBase bool) (Server, error) {
 	h := health.Init()
 	s := server{
 		r: fiber.New(fiber.Config{
@@ -118,7 +123,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 				if errors.As(err, &e) {
 					status = e.Code
 				}
-				msg := map[string]interface{}{
+				msg := map[string]any{
 					"status":      status,
 					"status_text": http.StatusText(status),
 					"error_msg":   err.Error(),
@@ -141,8 +146,26 @@ func Init(port uint16, from_base bool) (Server, error) {
 	s.r.Use(earlydata.New())
 
 	healthPath := "/health"
-	if !from_base && health.Name != "" {
+	if !fromBase && health.Name != "" {
 		healthPath = "/" + health.Name + "/health"
+	}
+
+	Registry = prometheus.NewRegistry()
+	responseTimeCount := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_response_count",
+		Help: "Contains endpoint count responses",
+	}, []string{"method", "path", "status"})
+	err := Registry.Register(responseTimeCount)
+	if err != nil {
+		return nil, err
+	}
+	responseTimeTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_response_time_total",
+		Help: "Contains endpoint total response time in ms",
+	}, []string{"method", "path", "status"})
+	err = Registry.Register(responseTimeTotal)
+	if err != nil {
+		return nil, err
 	}
 	QPSs := make([]atomic.Uint64, 60)
 	for i := range QPSs {
@@ -178,12 +201,16 @@ func Init(port uint16, from_base bool) (Server, error) {
 	s.r.Use(func(c *fiber.Ctx) error {
 		start := time.Now()
 		QPSs[start.Second()].Add(1)
-		if string(c.Context().Path()) == healthPath {
-			return c.Next()
-		}
 		err := c.Next()
-		log.WithError(err).
-			Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", time.Since(start), "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
+		duration := time.Since(start)
+		sc := strconv.Itoa(c.Response().StatusCode())
+		responseTimeCount.WithLabelValues(c.Route().Method, c.Route().Path, sc).Inc()
+		responseTimeTotal.WithLabelValues(c.Route().Method, c.Route().Path, sc).
+			Add(float64(duration.Microseconds()))
+		if string(c.Route().Path) != healthPath {
+			log.WithError(err).
+				Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", duration, "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
+		}
 		return err
 	})
 	s.r.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))
@@ -202,7 +229,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 	})
 	s.r.Use(cors.New())
 	s.base = s.r.Group("")
-	if health.Name == "" || from_base {
+	if health.Name == "" || fromBase {
 		s.api = s.base.Group("/")
 	} else {
 		s.api = s.base.Group("/" + health.Name)
@@ -212,6 +239,9 @@ func Init(port uint16, from_base bool) (Server, error) {
 		return h.WriteHealthReport(c)
 		// return c.JSON(hr)
 		// return c.JSON(h.GetHealthReport())
+	})
+	s.api.Get("/metrics", func(c *fiber.Ctx) error {
+		return adaptor.HTTPHandler(promhttp.HandlerFor(Registry, promhttp.HandlerOpts{}))(c)
 	})
 	s.api.Get("/qps", func(c *fiber.Ctx) error {
 		tot := 0
@@ -263,7 +293,7 @@ func Init(port uint16, from_base bool) (Server, error) {
 				// pprof.Symbol(c.Writer, c.Request)
 			default:
 				return adaptor.HTTPHandlerFunc(pprof.Index)(c)
-				// pprof.Index(c.Writer, c.Request)
+				// pprof.Index(c.Writer,c.Request)
 			}
 		})
 	}

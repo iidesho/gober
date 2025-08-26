@@ -20,6 +20,7 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 	gsync "github.com/iidesho/gober/sync"
 	"github.com/iidesho/gober/webserver"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -112,6 +113,56 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		story.Actions[actI].aborted = aborted
 		story.Actions[actI].approved = approved
 	}
+	var executionCount *prometheus.CounterVec
+	var executionTimeTotal *prometheus.CounterVec
+	var reductionCount *prometheus.CounterVec
+	var reductionTimeTotal *prometheus.CounterVec
+	if webserver.Registry != nil {
+		executionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "saga_execution_count",
+			Help: "Contains saga execution count",
+			ConstLabels: prometheus.Labels{
+				"story": story.Name,
+			},
+		}, []string{"part"})
+		err := webserver.Registry.Register(executionCount)
+		if err != nil {
+			return nil, err
+		}
+		executionTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "saga_execution_time_total",
+			Help: "Contains saga execution time total",
+			ConstLabels: prometheus.Labels{
+				"story": story.Name,
+			},
+		}, []string{"part"})
+		err = webserver.Registry.Register(executionTimeTotal)
+		if err != nil {
+			return nil, err
+		}
+		reductionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "saga_reduction_count",
+			Help: "Contains saga reduction count",
+			ConstLabels: prometheus.Labels{
+				"story": story.Name,
+			},
+		}, []string{"part"})
+		err = webserver.Registry.Register(reductionCount)
+		if err != nil {
+			return nil, err
+		}
+		reductionTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "saga_reduction_time_total",
+			Help: "Contains saga reduction time total",
+			ConstLabels: prometheus.Labels{
+				"story": story.Name,
+			},
+		}, []string{"part"})
+		err = webserver.Registry.Register(reductionTimeTotal)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
 	exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
 	for range workers {
@@ -173,24 +224,28 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
+						start := time.Now()
 						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v)
-						//TODO: add failed event?
-						/* No need to chose error channel? but should ensure last error is added as event
-							if log. // Should not escalate
-								WithError(err).
-								Warning("there was an error while reducing saga part") {
-								if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-									select {
-									case errChan <- err:
-									default: // errChan is full, probably no receiver
-										close(errChan)
-										out.errors.Delete(e.Data.status.id)
+						reductionCount.WithLabelValues(story.Actions[actionI].Id).Inc()
+						reductionTimeTotal.WithLabelValues(story.Actions[actionI].Id).
+							Add(float64(time.Since(start).Microseconds()))
+							//TODO: add failed event?
+							/* No need to chose error channel? but should ensure last error is added as event
+								if log. // Should not escalate
+									WithError(err).
+									Warning("there was an error while reducing saga part") {
+									if errChan, ok := out.errors.Get(e.Data.status.id); ok {
+										select {
+										case errChan <- err:
+										default: // errChan is full, probably no receiver
+											close(errChan)
+											out.errors.Delete(e.Data.status.id)
+										}
+									} else {
+										log.Error("error channel not found")
 									}
-								} else {
-									log.Error("error channel not found")
-								}
-						  }
-						*/if reduceErr != nil {
+							  }
+							*/if reduceErr != nil {
 							state = StateFailed
 						}
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
@@ -244,7 +299,11 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						},
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
+					start := time.Now()
 					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v)
+					executionCount.WithLabelValues(story.Actions[actionI].Id).Inc()
+					executionTimeTotal.WithLabelValues(story.Actions[actionI].Id).
+						Add(float64(time.Since(start).Microseconds()))
 					if execErr != nil {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 						//TODO: add failed event?
