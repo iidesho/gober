@@ -14,6 +14,7 @@ import (
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/discovery/local"
 	"github.com/iidesho/gober/itr"
+	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
@@ -117,7 +118,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	var executionTimeTotal *prometheus.CounterVec
 	var reductionCount *prometheus.CounterVec
 	var reductionTimeTotal *prometheus.CounterVec
-	if webserver.Registry != nil {
+	if metrics.Registry != nil {
 		executionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_execution_count",
 			Help: "Contains saga execution count",
@@ -125,7 +126,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 				"story": story.Name,
 			},
 		}, []string{"part"})
-		err := webserver.Registry.Register(executionCount)
+		err := metrics.Registry.Register(executionCount)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +137,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 				"story": story.Name,
 			},
 		}, []string{"part"})
-		err = webserver.Registry.Register(executionTimeTotal)
+		err = metrics.Registry.Register(executionTimeTotal)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +148,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 				"story": story.Name,
 			},
 		}, []string{"part"})
-		err = webserver.Registry.Register(reductionCount)
+		err = metrics.Registry.Register(reductionCount)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +159,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 				"story": story.Name,
 			},
 		}, []string{"part"})
-		err = webserver.Registry.Register(reductionTimeTotal)
+		err = metrics.Registry.Register(reductionTimeTotal)
 		if err != nil {
 			return nil, err
 		}

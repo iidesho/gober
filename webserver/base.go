@@ -21,6 +21,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/earlydata"
 	"github.com/iidesho/bragi"
 	"github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/webserver/health"
 	"github.com/joho/godotenv"
 	jsoniter "github.com/json-iterator/go"
@@ -100,8 +101,6 @@ type server struct {
 	port uint16
 }
 
-var Registry *prometheus.Registry
-
 func Init(port uint16, fromBase bool) (Server, error) {
 	h := health.Init()
 	s := server{
@@ -150,12 +149,14 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		healthPath = "/" + health.Name + "/health"
 	}
 
-	Registry = prometheus.NewRegistry()
+	if metrics.Registry == nil {
+		metrics.Init()
+	}
 	responseTimeCount := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "http_response_count",
 		Help: "Contains endpoint count responses",
 	}, []string{"method", "path", "status"})
-	err := Registry.Register(responseTimeCount)
+	err := metrics.Registry.Register(responseTimeCount)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +164,7 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		Name: "http_response_time_total",
 		Help: "Contains endpoint total response time in ms",
 	}, []string{"method", "path", "status"})
-	err = Registry.Register(responseTimeTotal)
+	err = metrics.Registry.Register(responseTimeTotal)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +242,7 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		// return c.JSON(h.GetHealthReport())
 	})
 	s.api.Get("/metrics", func(c *fiber.Ctx) error {
-		return adaptor.HTTPHandler(promhttp.HandlerFor(Registry, promhttp.HandlerOpts{}))(c)
+		return adaptor.HTTPHandler(promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))(c)
 	})
 	s.api.Get("/qps", func(c *fiber.Ctx) error {
 		tot := 0

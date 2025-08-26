@@ -5,7 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream/event/store"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type inMemEvent struct {
@@ -20,6 +22,11 @@ type stream struct {
 	newData  *sync.Cond
 	db       []inMemEvent
 	position uint64
+
+	writeCount     *prometheus.CounterVec
+	writeTimeTotal *prometheus.CounterVec
+	readCount      *prometheus.CounterVec
+	readTimeTotal  *prometheus.CounterVec
 }
 
 type Stream struct {
@@ -41,6 +48,52 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 		writeChan: writeChan,
 		ctx:       ctx,
 	}
+	if metrics.Registry != nil {
+		es.data.writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "inmemeory_event_write_count",
+			Help: "in-memory event write count",
+			ConstLabels: prometheus.Labels{
+				"stream": es.name,
+			},
+		}, []string{})
+		err = metrics.Registry.Register(es.data.writeCount)
+		if err != nil {
+			return nil, err
+		}
+		es.data.writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "inmemeory_event_write_time_total",
+			Help: "in-memory event write time total",
+			ConstLabels: prometheus.Labels{
+				"stream": es.name,
+			},
+		}, []string{})
+		err = metrics.Registry.Register(es.data.writeTimeTotal)
+		if err != nil {
+			return nil, err
+		}
+		es.data.readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "inmemeory_event_read_count",
+			Help: "in-memory event read count",
+			ConstLabels: prometheus.Labels{
+				"stream": es.name,
+			},
+		}, []string{})
+		err = metrics.Registry.Register(es.data.readCount)
+		if err != nil {
+			return nil, err
+		}
+		es.data.readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "inmemeory_event_read_time_total",
+			Help: "in-memory event read time total",
+			ConstLabels: prometheus.Labels{
+				"stream": es.name,
+			},
+		}, []string{})
+		err = metrics.Registry.Register(es.data.readTimeTotal)
+		if err != nil {
+			return nil, err
+		}
+	}
 	go func() {
 		for {
 			select {
@@ -48,6 +101,14 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 				return
 			case e := <-writeChan:
 				func() {
+					if es.data.writeCount != nil {
+						start := time.Now()
+						defer func() {
+							es.data.writeCount.WithLabelValues().Inc()
+							es.data.writeTimeTotal.WithLabelValues().
+								Add(float64(time.Since(start).Microseconds()))
+						}()
+					}
 					es.data.dbLock.Lock()
 					defer es.data.dbLock.Unlock()
 					defer func() {
@@ -90,6 +151,7 @@ func (es *Stream) Stream(
 	out = eventChan
 	go func() {
 		defer close(eventChan)
+		var start time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -109,6 +171,9 @@ func (es *Stream) Stream(
 				case <-es.ctx.Done():
 					return
 				default:
+					if es.data.writeCount != nil {
+						start = time.Now()
+					}
 					for ; position < uint64(len(es.data.db)); position++ {
 						se := es.data.db[position]
 						eventChan <- store.ReadEvent{
@@ -122,6 +187,11 @@ func (es *Stream) Stream(
 						es.data.newData.Wait()
 						es.data.newData.L.Unlock()
 					}
+				}
+				if es.data.readCount != nil {
+					es.data.readCount.WithLabelValues().Inc()
+					es.data.readTimeTotal.WithLabelValues().
+						Add(float64(time.Since(start).Microseconds()))
 				}
 			}
 		}
