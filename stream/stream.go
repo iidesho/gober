@@ -18,18 +18,20 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelError)
-
-// var json = jsoniter.ConfigDefault
-
-type eventService[BT any, T bcts.ReadWriter[BT]] struct {
-	store          Stream
-	writes         chan<- event.WriteEventReadStatus[BT, T]
+var (
+	log            = sbragi.WithLocalScope(sbragi.LevelError)
 	writeCount     *prometheus.CounterVec
 	writeTimeTotal *prometheus.CounterVec
 	readCount      *prometheus.CounterVec
 	readTimeTotal  *prometheus.CounterVec
-	ctx            context.Context
+)
+
+// var json = jsoniter.ConfigDefault
+
+type eventService[BT any, T bcts.ReadWriter[BT]] struct {
+	store  Stream
+	writes chan<- event.WriteEventReadStatus[BT, T]
+	ctx    context.Context
 }
 
 type Filter func(md event.Metadata) bool
@@ -64,48 +66,36 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 		writes: writes,
 		ctx:    ctx,
 	}
-	if metrics.Registry != nil {
-		es.writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+	if metrics.Registry != nil && writeCount == nil {
+		writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "filtered_stream_event_write_count",
 			Help: "Filtered stream event write count",
-			ConstLabels: prometheus.Labels{
-				"stream": st.Name(),
-			},
-		}, []string{"worker"})
-		err = metrics.Registry.Register(es.writeCount)
+		}, []string{"stream", "worker"})
+		err = metrics.Registry.Register(writeCount)
 		if err != nil {
 			return nil, err
 		}
-		es.writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "filtered_stream_event_write_time_total",
 			Help: "Filtered stream event write time total microseconds",
-			ConstLabels: prometheus.Labels{
-				"stream": st.Name(),
-			},
-		}, []string{"worker"})
-		err = metrics.Registry.Register(es.writeTimeTotal)
+		}, []string{"stream", "worker"})
+		err = metrics.Registry.Register(writeTimeTotal)
 		if err != nil {
 			return nil, err
 		}
-		es.readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "filtered_stream_event_read_count",
 			Help: "Filtered stream event read count",
-			ConstLabels: prometheus.Labels{
-				"stream": st.Name(),
-			},
-		}, []string{})
-		err = metrics.Registry.Register(es.readCount)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(readCount)
 		if err != nil {
 			return nil, err
 		}
-		es.readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "filtered_stream_event_read_time_total",
 			Help: "Filtered stream event read time total microseconds",
-			ConstLabels: prometheus.Labels{
-				"stream": st.Name(),
-			},
-		}, []string{})
-		err = metrics.Registry.Register(es.readTimeTotal)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(readTimeTotal)
 		if err != nil {
 			return nil, err
 		}
@@ -114,7 +104,7 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	go func() {
 		var start time.Time
 		for we := range writes {
-			if es.writeCount != nil {
+			if writeCount != nil {
 				start = time.Now()
 			}
 			e := we.Event()
@@ -132,9 +122,9 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 				continue
 			}
 			es.store.Write() <- *se
-			if es.writeCount != nil {
-				es.writeCount.WithLabelValues("true").Inc()
-				es.writeTimeTotal.WithLabelValues("true").
+			if writeCount != nil {
+				writeCount.WithLabelValues(es.Name(), "true").Inc()
+				writeTimeTotal.WithLabelValues(es.Name(), "true").
 					Add(float64(time.Since(start).Microseconds()))
 			}
 		}
@@ -148,15 +138,15 @@ func (es eventService[BT, T]) Write() chan<- event.WriteEventReadStatus[BT, T] {
 
 func (es eventService[BT, T]) Store(e event.Event[BT, T]) (position uint64, err error) {
 	var start time.Time
-	if es.writeCount != nil {
+	if writeCount != nil {
 		start = time.Now()
 	}
 	we := event.NewWriteEvent(e)
 	es.writes <- we
 	s := <-we.Done()
-	if es.writeCount != nil {
-		es.writeCount.WithLabelValues("false").Inc()
-		es.writeTimeTotal.WithLabelValues("false").
+	if writeCount != nil {
+		writeCount.WithLabelValues(es.Name(), "false").Inc()
+		writeTimeTotal.WithLabelValues(es.Name(), "false").
 			Add(float64(time.Since(start).Microseconds()))
 	}
 	return s.Position, s.Error
@@ -190,7 +180,7 @@ func (es eventService[BT, T]) Stream(
 			case <-mctx.Done():
 				return
 			case e := <-s:
-				if es.readCount != nil {
+				if readCount != nil {
 					start = time.Now()
 				}
 				t := event.TypeFromString(e.Type)
@@ -232,9 +222,9 @@ func (es eventService[BT, T]) Stream(
 					Position: e.Position,
 					Created:  e.Created,
 				}
-				if es.readCount != nil {
-					es.readCount.WithLabelValues().Inc()
-					es.readTimeTotal.WithLabelValues().
+				if readCount != nil {
+					readCount.WithLabelValues(es.Name()).Inc()
+					readTimeTotal.WithLabelValues(es.Name()).
 						Add(float64(time.Since(start).Microseconds()))
 				}
 			}

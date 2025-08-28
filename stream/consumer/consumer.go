@@ -14,7 +14,7 @@ import (
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelError)
+var log = sbragi.WithLocalScope(sbragi.LevelNotice)
 
 type consumer[BT any, T bcts.ReadWriter[BT]] struct {
 	stream             stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
@@ -162,11 +162,14 @@ func (c *consumer[BT, T]) streamReadEvents(
 			select {
 			case <-mctx.Done():
 				return
-			case e := <-s:
+			case e, ok := <-s:
+				if !ok {
+					log.Warning("read event channel closed", "name", c.Name())
+					return
+				}
 				o, err := DecryptEvent[BT, T](e, c.cryptoKey)
-				if err != nil {
-					log.WithError(err).
-						Error("while reading event", "?", e.Metadata.DataType, "len", len(*e.Data))
+				if log.WithError(err).
+					Error("while decrypting event", "data_type", e.Metadata.DataType, "len", len(*e.Data)) {
 					continue
 				}
 				eventChan <- event.ReadEventWAcc[BT, T]{
@@ -227,20 +230,18 @@ func DecryptEvent[BT any, T bcts.ReadWriter[BT]](
 	e event.ReadEvent[bcts.Bytes, *bcts.Bytes],
 	cryptoKey stream.CryptoKeyProvider,
 ) (out event.ReadEvent[BT, T], err error) {
-	dataJson, err := crypto.Decrypt(*e.Data, cryptoKey(e.Metadata.Key))
-	if err != nil {
-		log.WithError(err).Warning("Decrypting event data error")
+	dataBytes, err := crypto.Decrypt(*e.Data, cryptoKey(e.Metadata.Key))
+	if log.WithError(err).Warning("Decrypting event data error") {
 		return
 	}
 	// var data T
 	// err = json.Unmarshal(dataJson, &data)
-	data, err := bcts.Read[BT, T](dataJson)
-	if err != nil {
-		log.WithError(err).
-			Warning("Unmarshalling event data error", "type", e.Metadata.DataType, "len", len(dataJson), "data", dataJson)
+	data, err := bcts.Read[BT, T](dataBytes)
+	if log.WithError(err).
+		Warning("Unmarshalling event data error", "type", e.Metadata.DataType, "len", len(dataBytes), "data", dataBytes) {
 		return
 	}
-	log.Info("decrypting", "data", dataJson, "e.Data", data)
+	log.Info("decrypting", "data", dataBytes, "e.Data", data)
 	out = event.ReadEvent[BT, T]{
 		Event: event.Event[BT, T]{
 			Type:     e.Type,

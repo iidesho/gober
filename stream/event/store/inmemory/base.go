@@ -10,6 +10,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+var (
+	writeCount     *prometheus.CounterVec
+	writeTimeTotal *prometheus.CounterVec
+	readCount      *prometheus.CounterVec
+	readTimeTotal  *prometheus.CounterVec
+)
+
 type inMemEvent struct {
 	Created  time.Time
 	Event    store.Event
@@ -22,11 +29,6 @@ type stream struct {
 	newData  *sync.Cond
 	db       []inMemEvent
 	position uint64
-
-	writeCount     *prometheus.CounterVec
-	writeTimeTotal *prometheus.CounterVec
-	readCount      *prometheus.CounterVec
-	readTimeTotal  *prometheus.CounterVec
 }
 
 type Stream struct {
@@ -48,48 +50,36 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 		writeChan: writeChan,
 		ctx:       ctx,
 	}
-	if metrics.Registry != nil {
-		es.data.writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+	if metrics.Registry != nil && writeCount == nil {
+		writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_write_count",
 			Help: "in-memory event write count",
-			ConstLabels: prometheus.Labels{
-				"stream": es.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(es.data.writeCount)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(writeCount)
 		if err != nil {
 			return nil, err
 		}
-		es.data.writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_write_time_total",
 			Help: "in-memory event write time total",
-			ConstLabels: prometheus.Labels{
-				"stream": es.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(es.data.writeTimeTotal)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(writeTimeTotal)
 		if err != nil {
 			return nil, err
 		}
-		es.data.readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_read_count",
 			Help: "in-memory event read count",
-			ConstLabels: prometheus.Labels{
-				"stream": es.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(es.data.readCount)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(readCount)
 		if err != nil {
 			return nil, err
 		}
-		es.data.readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_read_time_total",
 			Help: "in-memory event read time total",
-			ConstLabels: prometheus.Labels{
-				"stream": es.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(es.data.readTimeTotal)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(readTimeTotal)
 		if err != nil {
 			return nil, err
 		}
@@ -101,11 +91,11 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 				return
 			case e := <-writeChan:
 				func() {
-					if es.data.writeCount != nil {
+					if writeCount != nil {
 						start := time.Now()
 						defer func() {
-							es.data.writeCount.WithLabelValues().Inc()
-							es.data.writeTimeTotal.WithLabelValues().
+							writeCount.WithLabelValues(es.name).Inc()
+							writeTimeTotal.WithLabelValues(es.name).
 								Add(float64(time.Since(start).Microseconds()))
 						}()
 					}
@@ -171,7 +161,7 @@ func (es *Stream) Stream(
 				case <-es.ctx.Done():
 					return
 				default:
-					if es.data.writeCount != nil {
+					if writeCount != nil {
 						start = time.Now()
 					}
 					for ; position < uint64(len(es.data.db)); position++ {
@@ -188,9 +178,9 @@ func (es *Stream) Stream(
 						es.data.newData.L.Unlock()
 					}
 				}
-				if es.data.readCount != nil {
-					es.data.readCount.WithLabelValues().Inc()
-					es.data.readTimeTotal.WithLabelValues().
+				if readCount != nil {
+					readCount.WithLabelValues(es.name).Inc()
+					readTimeTotal.WithLabelValues(es.name).
 						Add(float64(time.Since(start).Microseconds()))
 				}
 			}

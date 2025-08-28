@@ -16,7 +16,7 @@ import (
 	"github.com/iidesho/gober/itr"
 	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream"
-	"github.com/iidesho/gober/stream/consumer"
+	// "github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 	gsync "github.com/iidesho/gober/sync"
@@ -27,6 +27,13 @@ import (
 const (
 	MESSAGE_BUFFER_SIZE = 1024
 	ERROR_BUFFER_SIZE   = 16
+)
+
+var (
+	executionCount     *prometheus.CounterVec
+	executionTimeTotal *prometheus.CounterVec
+	reductionCount     *prometheus.CounterVec
+	reductionTimeTotal *prometheus.CounterVec
 )
 
 type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
@@ -40,8 +47,9 @@ type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
 }
 
 type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
-	ctx      context.Context
-	es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
+	ctx context.Context
+	// es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
+	es       stream.FilteredStream[sagaValue[BT, T], *sagaValue[BT, T]]
 	statuses gsync.Map[uuid.UUID, status]
 	// errors   gsync.Map[uuid.UUID, chan error]
 	provider stream.CryptoKeyProvider
@@ -69,10 +77,10 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	}
 	ctxTask, cancel := context.WithCancel(ctx)
 	token := gsync.NewObj[string]()
-	token.Set("someTestToken")
-	// cons, err := consensus.Init(3134, token, local.New())
 	dataTypeName := name + "_saga"
-	es, err := consumer.New[sagaValue[BT, T]](pers, p, ctxTask)
+	token.Set(dataTypeName) // This should be configurable and secure
+	// es, err := consumer.New[sagaValue[BT, T]](pers, p, ctxTask)
+	es, err := stream.Init[sagaValue[BT, T]](pers, ctxTask)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -114,18 +122,11 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		story.Actions[actI].aborted = aborted
 		story.Actions[actI].approved = approved
 	}
-	var executionCount *prometheus.CounterVec
-	var executionTimeTotal *prometheus.CounterVec
-	var reductionCount *prometheus.CounterVec
-	var reductionTimeTotal *prometheus.CounterVec
-	if metrics.Registry != nil {
+	if metrics.Registry != nil && executionCount == nil {
 		executionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_execution_count",
 			Help: "Contains saga execution count",
-			ConstLabels: prometheus.Labels{
-				"story": story.Name,
-			},
-		}, []string{"part"})
+		}, []string{"story", "part"})
 		err := metrics.Registry.Register(executionCount)
 		if err != nil {
 			return nil, err
@@ -133,10 +134,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		executionTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_execution_time_total",
 			Help: "Contains saga execution time total",
-			ConstLabels: prometheus.Labels{
-				"story": story.Name,
-			},
-		}, []string{"part"})
+		}, []string{"story", "part"})
 		err = metrics.Registry.Register(executionTimeTotal)
 		if err != nil {
 			return nil, err
@@ -144,10 +142,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		reductionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_reduction_count",
 			Help: "Contains saga reduction count",
-			ConstLabels: prometheus.Labels{
-				"story": story.Name,
-			},
-		}, []string{"part"})
+		}, []string{"story", "part"})
 		err = metrics.Registry.Register(reductionCount)
 		if err != nil {
 			return nil, err
@@ -155,19 +150,18 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		reductionTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_reduction_time_total",
 			Help: "Contains saga reduction time total",
-			ConstLabels: prometheus.Labels{
-				"story": story.Name,
-			},
-		}, []string{"part"})
+		}, []string{"story", "part"})
 		err = metrics.Registry.Register(reductionTimeTotal)
 		if err != nil {
 			return nil, err
 		}
 	}
 	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
-	exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
+	// exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
+	exec := make(chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]])
 	for range workers {
-		go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+		// go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+		go func(events <-chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
 			for e := range events {
 				func() {
 					startTime := time.Now()
@@ -227,26 +221,30 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						state := StateSuccess
 						start := time.Now()
 						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v)
-						reductionCount.WithLabelValues(story.Actions[actionI].Id).Inc()
-						reductionTimeTotal.WithLabelValues(story.Actions[actionI].Id).
-							Add(float64(time.Since(start).Microseconds()))
-							//TODO: add failed event?
-							/* No need to chose error channel? but should ensure last error is added as event
-								if log. // Should not escalate
-									WithError(err).
-									Warning("there was an error while reducing saga part") {
-									if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-										select {
-										case errChan <- err:
-										default: // errChan is full, probably no receiver
-											close(errChan)
-											out.errors.Delete(e.Data.status.id)
-										}
-									} else {
-										log.Error("error channel not found")
+						if reductionCount != nil {
+							reductionCount.WithLabelValues(story.Name, story.Actions[actionI].Id).
+								Inc()
+							reductionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].Id).
+								Add(float64(time.Since(start).Microseconds()))
+						}
+
+						//TODO: add failed event?
+						/* No need to chose error channel? but should ensure last error is added as event
+							if log. // Should not escalate
+								WithError(err).
+								Warning("there was an error while reducing saga part") {
+								if errChan, ok := out.errors.Get(e.Data.status.id); ok {
+									select {
+									case errChan <- err:
+									default: // errChan is full, probably no receiver
+										close(errChan)
+										out.errors.Delete(e.Data.status.id)
 									}
-							  }
-							*/if reduceErr != nil {
+								} else {
+									log.Error("error channel not found")
+								}
+						  }
+						*/if reduceErr != nil {
 							state = StateFailed
 						}
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
@@ -302,9 +300,11 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					state := StateSuccess
 					start := time.Now()
 					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v)
-					executionCount.WithLabelValues(story.Actions[actionI].Id).Inc()
-					executionTimeTotal.WithLabelValues(story.Actions[actionI].Id).
-						Add(float64(time.Since(start).Microseconds()))
+					if executionCount != nil {
+						executionCount.WithLabelValues(story.Name, story.Actions[actionI].Id).Inc()
+						executionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].Id).
+							Add(float64(time.Since(start).Microseconds()))
+					}
 					if execErr != nil {
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
 						//TODO: add failed event?
@@ -387,8 +387,10 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 }
 
 func (t *executor[BT, T]) handler(
-	events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
-	execChan chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
+	// events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
+	// execChan chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]],
+	events <-chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]],
+	execChan chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]],
 ) {
 	for e := range events {
 		log.Debug(
@@ -404,7 +406,7 @@ func (t *executor[BT, T]) handler(
 			"step",
 			findStep(t.story.Actions, e.Data.status.stepDone)+1,
 		)
-		e.Acc()
+		// e.Acc()
 		var actionI int
 		switch e.Data.status.state {
 		case StatePending:
@@ -567,7 +569,8 @@ func (t *executor[BT, T]) handler(
 			"id",
 			e.Data.status.id,
 		)
-		func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+		// func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+		func(e event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
 			log.Trace("time to do work, writing to exec chan")
 			select {
 			case execChan <- e:
@@ -581,9 +584,9 @@ func (t *executor[BT, T]) handler(
 			case <-t.ctx.Done():
 				log.Trace("service context timed out")
 				return
-			case <-e.CTX.Done():
-				log.Trace("event context timed out")
-				return
+				// case <-e.CTX.Done():
+				// 	log.Trace("event context timed out")
+				// 	return
 			}
 		}(e)
 	}

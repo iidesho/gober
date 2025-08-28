@@ -1,4 +1,4 @@
-package ondisk
+package ondisk_test
 
 import (
 	"context"
@@ -8,23 +8,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/uuid"
+	log "github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
-	log "github.com/iidesho/bragi/sbragi"
-	"github.com/gofrs/uuid"
+	"github.com/iidesho/gober/stream/event/store/ondisk"
 	jsoniter "github.com/json-iterator/go"
 )
 
 var json = jsoniter.ConfigDefault
 
 var (
-	es     *Stream
+	es     *ondisk.Stream
 	ctx    context.Context
 	cancel context.CancelFunc
 )
 
-var STREAM_NAME = "TestStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
-var position = store.STREAM_START
+var (
+	STREAM_NAME = "TestStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
+	position    = store.STREAM_START
+)
 
 func TestPreInit(t *testing.T) {
 	os.RemoveAll("streams")
@@ -39,7 +42,7 @@ func TestInit(t *testing.T) {
 	ctx, cancel = context.WithCancel(context.Background())
 	var err error
 	t.Log("init test init started")
-	es, err = Init(STREAM_NAME, ctx)
+	es, err = ondisk.Init(STREAM_NAME, ctx)
 	t.Log("init test init ended")
 	if err != nil {
 		t.Error(err)
@@ -53,7 +56,7 @@ func TestStore(t *testing.T) {
 	data := make(map[string]interface{})
 	data["id"] = 1
 	data["name"] = "test"
-	data["data"] = make([]byte, MB*6)
+	data["data"] = make([]byte, ondisk.MB*6)
 
 	bytes, err := json.Marshal(data)
 	if err != nil {
@@ -221,7 +224,7 @@ func TestStoreAndStream(t *testing.T) {
 	data := make(map[string]interface{})
 	data["id"] = 1
 	data["name"] = "test"
-	data["data"] = make([]byte, MB*6)
+	data["data"] = make([]byte, ondisk.MB*6)
 
 	bytes, err := json.Marshal(data)
 	if err != nil {
@@ -259,7 +262,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 	}
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
-	es, err = Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+	es, err = ondisk.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -299,7 +302,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			b.Error(fmt.Errorf("missmatch inMemEvent types"))
 			return
 		}
-		if e.Id.String() == "" { //This is wrong, Not checking anything
+		if e.Id.String() == "" { // This is wrong, Not checking anything
 			b.Error(fmt.Errorf("missing inMemEvent id"))
 			return
 		}

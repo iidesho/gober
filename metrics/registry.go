@@ -18,7 +18,7 @@ func Init() {
 	Registry = prometheus.NewRegistry()
 }
 
-func Push(url string) {
+func Push(url string) *push.Pusher {
 	// Create a pusher. The job name is required.
 	// The instance label is optional but highly recommended to distinguish instances.
 	pusher := push.New(url, health.Name)
@@ -34,4 +34,5 @@ func Push(url string) {
 	if !log.WithError(err).Error("getting hostname for metrics push") {
 		pusher.Grouping("instance", hn)
 	}
+	return pusher
 }

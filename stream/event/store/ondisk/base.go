@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
+	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream/event/store"
@@ -23,6 +23,14 @@ const (
 	KB = B << 10
 	MB = KB << 10
 	GB = MB << 10
+)
+
+var (
+	log            = sbragi.WithLocalScope(sbragi.LevelInfo)
+	writeCount     *prometheus.CounterVec
+	writeTimeTotal *prometheus.CounterVec
+	readCount      *prometheus.CounterVec
+	readTimeTotal  *prometheus.CounterVec
 )
 
 type storeEvent struct {
@@ -103,11 +111,6 @@ type stream struct {
 	// dbLock   *sync.Mutex
 	newData  *sync.Cond
 	position uint64
-
-	writeCount     *prometheus.CounterVec
-	writeTimeTotal *prometheus.CounterVec
-	readCount      *prometheus.CounterVec
-	readTimeTotal  *prometheus.CounterVec
 }
 
 type Stream struct {
@@ -155,48 +158,36 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 		writeChan: writeChan,
 		ctx:       ctx,
 	}
-	if metrics.Registry != nil {
-		s.data.writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+	if metrics.Registry != nil && writeCount == nil {
+		writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_write_count",
 			Help: "in-memory event write count",
-			ConstLabels: prometheus.Labels{
-				"stream": s.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(s.data.writeCount)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(writeCount)
 		if err != nil {
 			return nil, err
 		}
-		s.data.writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_write_time_total",
 			Help: "in-memory event write time total",
-			ConstLabels: prometheus.Labels{
-				"stream": s.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(s.data.writeTimeTotal)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(writeTimeTotal)
 		if err != nil {
 			return nil, err
 		}
-		s.data.readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_read_count",
 			Help: "in-memory event read count",
-			ConstLabels: prometheus.Labels{
-				"stream": s.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(s.data.readCount)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(readCount)
 		if err != nil {
 			return nil, err
 		}
-		s.data.readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "inmemeory_event_read_time_total",
 			Help: "in-memory event read time total",
-			ConstLabels: prometheus.Labels{
-				"stream": s.name,
-			},
-		}, []string{})
-		err = metrics.Registry.Register(s.data.readTimeTotal)
+		}, []string{"stream"})
+		err = metrics.Registry.Register(readTimeTotal)
 		if err != nil {
 			return nil, err
 		}
@@ -222,11 +213,11 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 			return
 		case e := <-writes:
 			func() {
-				if s.data.writeCount != nil {
+				if writeCount != nil {
 					start := time.Now()
 					defer func() {
-						s.data.writeCount.WithLabelValues().Inc()
-						s.data.writeTimeTotal.WithLabelValues().
+						writeCount.WithLabelValues(s.name).Inc()
+						writeTimeTotal.WithLabelValues(s.name).
 							Add(float64(time.Since(start).Microseconds()))
 					}()
 				}
@@ -344,7 +335,7 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 			return
 		default:
 			for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
-				if s.data.writeCount != nil {
+				if writeCount != nil {
 					start = time.Now()
 				}
 				log.Trace("has more", "name", s.name)
@@ -354,9 +345,9 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 					Created:  se.Created,
 				}
 				position = se.Position
-				if s.data.readCount != nil {
-					s.data.readCount.WithLabelValues().Inc()
-					s.data.readTimeTotal.WithLabelValues().
+				if readCount != nil {
+					readCount.WithLabelValues(s.name).Inc()
+					readTimeTotal.WithLabelValues(s.name).
 						Add(float64(time.Since(start).Microseconds()))
 				}
 			}

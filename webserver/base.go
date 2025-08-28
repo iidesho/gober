@@ -30,7 +30,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var log = sbragi.WithLocalScope(sbragi.LevelInfo)
+var (
+	log               = sbragi.WithLocalScope(sbragi.LevelInfo)
+	responseCount     *prometheus.CounterVec
+	responseTimeTotal *prometheus.CounterVec
+)
 
 const (
 	CONTENT_TYPE      = "Content-Type"
@@ -148,25 +152,23 @@ func Init(port uint16, fromBase bool) (Server, error) {
 	if !fromBase && health.Name != "" {
 		healthPath = "/" + health.Name + "/health"
 	}
-
-	if metrics.Registry == nil {
-		metrics.Init()
-	}
-	responseTimeCount := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_response_count",
-		Help: "Contains endpoint count responses",
-	}, []string{"method", "path", "status"})
-	err := metrics.Registry.Register(responseTimeCount)
-	if err != nil {
-		return nil, err
-	}
-	responseTimeTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_response_time_total",
-		Help: "Contains endpoint total response time in ms",
-	}, []string{"method", "path", "status"})
-	err = metrics.Registry.Register(responseTimeTotal)
-	if err != nil {
-		return nil, err
+	if metrics.Registry != nil && responseCount == nil {
+		responseCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "http_response_count",
+			Help: "Contains endpoint count responses",
+		}, []string{"method", "path", "status"})
+		err := metrics.Registry.Register(responseCount)
+		if err != nil {
+			return nil, err
+		}
+		responseTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "http_response_time_total",
+			Help: "Contains endpoint total response time in ms",
+		}, []string{"method", "path", "status"})
+		err = metrics.Registry.Register(responseTimeTotal)
+		if err != nil {
+			return nil, err
+		}
 	}
 	QPSs := make([]atomic.Uint64, 60)
 	for i := range QPSs {
@@ -205,9 +207,11 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		err := c.Next()
 		duration := time.Since(start)
 		sc := strconv.Itoa(c.Response().StatusCode())
-		responseTimeCount.WithLabelValues(c.Route().Method, c.Route().Path, sc).Inc()
-		responseTimeTotal.WithLabelValues(c.Route().Method, c.Route().Path, sc).
-			Add(float64(duration.Microseconds()))
+		if responseCount != nil {
+			responseCount.WithLabelValues(c.Route().Method, c.Route().Path, sc).Inc()
+			responseTimeTotal.WithLabelValues(c.Route().Method, c.Route().Path, sc).
+				Add(float64(duration.Microseconds()))
+		}
 		if string(c.Route().Path) != healthPath {
 			log.WithError(err).
 				Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", duration, "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
@@ -241,9 +245,15 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		// return c.JSON(hr)
 		// return c.JSON(h.GetHealthReport())
 	})
-	s.api.Get("/metrics", func(c *fiber.Ctx) error {
-		return adaptor.HTTPHandler(promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))(c)
-	})
+	if metrics.Registry != nil {
+		s.api.Get("/metrics", func(c *fiber.Ctx) error {
+			return adaptor.HTTPHandler(
+				promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}),
+			)(
+				c,
+			)
+		})
+	}
 	s.api.Get("/qps", func(c *fiber.Ctx) error {
 		tot := 0
 		i := time.Now().Second() + 50
