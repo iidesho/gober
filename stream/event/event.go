@@ -35,7 +35,7 @@ func (m Metadata) WriteBytes(w io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = bcts.WriteMapAny(w, m.Extra, bcts.WriteTinyString, bcts.WriteSmallString)
+	err = bcts.WriteMapAnyFunc(w, m.Extra, bcts.WriteTinyString, bcts.WriteSmallString)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func (m *Metadata) ReadBytes(r io.Reader) (err error) {
 	if err != nil {
 		return err
 	}
-	err = bcts.ReadMapAny(r, &m.Extra, bcts.ReadTinyString, bcts.ReadSmallString)
+	err = bcts.ReadMapAnyFunc(r, &m.Extra, bcts.ReadTinyString, bcts.ReadSmallString)
 	if err != nil {
 		return err
 	}

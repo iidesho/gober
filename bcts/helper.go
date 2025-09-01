@@ -21,7 +21,7 @@ func Write(w Writer) ([]byte, error) {
 	return out, nil
 }
 
-func ReadAny[BT any, T Reader[BT]](r io.Reader, v *T) error {
+func ReadAnyReader[BT any, T Reader[BT]](r io.Reader, v *T) error {
 	*v = new(BT)
 	return (*v).ReadBytes(r)
 }

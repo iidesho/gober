@@ -220,7 +220,66 @@ func ReadMap[KT comparable, K ComparableReader[KT], VT any, V Reader[VT]](
 	return nil
 }
 
+func ReadAny(r io.Reader, a any) error {
+	switch a := a.(type) {
+	// case *uint:
+	// return ReadUInt32(r, a)
+	case *uint8:
+		return ReadUInt8(r, a)
+	case *uint16:
+		return ReadUInt16(r, a)
+	case *uint32:
+		return ReadUInt32(r, a)
+	case *uint64:
+		return ReadUInt64(r, a)
+	// case *int:
+	// return ReadInt32(r, int32(a))
+	case *int8:
+		return ReadInt8(r, a)
+	case *int16:
+		return ReadInt16(r, a)
+	case *int32:
+		return ReadInt32(r, a)
+	case *int64:
+		return ReadInt64(r, a)
+	case *string:
+		return ReadTinyString(r, a)
+	case uuid.UUID:
+		return ReadStaticBytes(r, a[:])
+	case *time.Time:
+		return ReadTime(r, a)
+	default:
+		return errors.New("unsuported any type")
+	}
+}
+
 func ReadMapAny[K comparable, V any](
+	r io.Reader,
+	mp *map[K]V,
+) error {
+	*mp = map[K]V{}
+	var l int32
+	err := ReadInt32(r, &l)
+	if err != nil {
+		return err
+	}
+	for range l {
+		k := new(K)
+		v := new(V)
+		err = ReadAny(r, k)
+		if err != nil {
+			return err
+		}
+		err = ReadAny(r, v)
+		if err != nil {
+			return err
+		}
+		(*mp)[*k] = *v
+	}
+	return nil
+}
+
+func ReadMapAnyFunc[K comparable, V any](
 	r io.Reader,
 	mp *map[K]V,
 	keyReader func(r io.Reader, v *K) error,

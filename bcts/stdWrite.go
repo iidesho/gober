@@ -2,6 +2,7 @@ package bcts
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -213,7 +214,61 @@ func WriteMap[K ComparableWriter, T Writer](w io.Writer, m map[K]T) error {
 	return nil
 }
 
+func WriteAny(w io.Writer, a any) error {
+	switch a := a.(type) {
+	case uint:
+		return WriteUInt32(w, uint32(a))
+	case uint8:
+		return WriteUInt8(w, a)
+	case uint16:
+		return WriteUInt16(w, a)
+	case uint32:
+		return WriteUInt32(w, a)
+	case uint64:
+		return WriteUInt64(w, a)
+	case int:
+		return WriteInt32(w, int32(a))
+	case int8:
+		return WriteInt8(w, a)
+	case int16:
+		return WriteInt16(w, a)
+	case int32:
+		return WriteInt32(w, a)
+	case int64:
+		return WriteInt64(w, a)
+	case string:
+		return WriteSmallString(w, a)
+	case uuid.UUID:
+		return WriteStaticBytes(w, a[:])
+	case time.Time:
+		return WriteTime(w, a)
+	default:
+		return errors.New("unsuported any type")
+	}
+}
+
 func WriteMapAny[K comparable, T any](
+	w io.Writer,
+	m map[K]T,
+) error {
+	err := WriteInt32(w, int32(len(m)))
+	if err != nil {
+		return err
+	}
+	for k, v := range m {
+		err = WriteAny(w, k)
+		if err != nil {
+			return err
+		}
+		err = WriteAny(w, v)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func WriteMapAnyFunc[K comparable, T any](
 	w io.Writer,
 	m map[K]T,
 	writeKey func(w io.Writer, v K) error,
