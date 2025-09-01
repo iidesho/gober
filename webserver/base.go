@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"context"
 	stdJson "encoding/json"
 	"errors"
 	"fmt"
@@ -20,11 +19,10 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/earlydata"
-	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi"
 	"github.com/iidesho/bragi/sbragi"
-	contextkeys "github.com/iidesho/gober/contextKeys"
 	"github.com/iidesho/gober/metrics"
+	"github.com/iidesho/gober/traces"
 	"github.com/iidesho/gober/webserver/health"
 	"github.com/joho/godotenv"
 	jsoniter "github.com/json-iterator/go"
@@ -110,6 +108,9 @@ type server struct {
 
 func Init(port uint16, fromBase bool) (Server, error) {
 	h := health.Init()
+	if traces.Traces == nil {
+		traces.Init()
+	}
 	s := server{
 		r: fiber.New(fiber.Config{
 			// Prefork:           true,
@@ -205,14 +206,13 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		}
 	}()
 	s.r.Use(func(c *fiber.Ctx) error {
+		span := fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path)
+		ctx, childSpan := traces.Traces.Start(c.Context(), span)
+		defer childSpan.End()
 		start := time.Now()
-		tid, err := uuid.NewV7()
-		if err != nil {
-			return err
-		}
-		c.SetUserContext(context.WithValue(c.Context(), contextkeys.TraceID, tid))
+		c.SetUserContext(ctx)
 		QPSs[start.Second()].Add(1)
-		err = c.Next()
+		err := c.Next()
 		duration := time.Since(start)
 		sc := strconv.Itoa(c.Response().StatusCode())
 		if responseCount != nil {
@@ -221,8 +221,8 @@ func Init(port uint16, fromBase bool) (Server, error) {
 				Add(float64(duration.Microseconds()))
 		}
 		if string(c.Route().Path) != healthPath {
-			log.WithContext(c.UserContext()).WithError(err).
-				Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", duration, "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
+			log.WithContext(ctx).WithError(err).
+				Info(span, "duration", duration, "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
 		}
 		return err
 	})
