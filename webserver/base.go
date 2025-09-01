@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"context"
 	stdJson "encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/earlydata"
+	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi"
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/metrics"
@@ -203,8 +205,13 @@ func Init(port uint16, fromBase bool) (Server, error) {
 	}()
 	s.r.Use(func(c *fiber.Ctx) error {
 		start := time.Now()
+		tid, err := uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		c.SetUserContext(context.WithValue(c.Context(), sbragi.ContextKeyTraceID, tid))
 		QPSs[start.Second()].Add(1)
-		err := c.Next()
+		err = c.Next()
 		duration := time.Since(start)
 		sc := strconv.Itoa(c.Response().StatusCode())
 		if responseCount != nil {
@@ -213,7 +220,7 @@ func Init(port uint16, fromBase bool) (Server, error) {
 				Add(float64(duration.Microseconds()))
 		}
 		if string(c.Route().Path) != healthPath {
-			log.WithError(err).
+			log.WithContext(c.UserContext()).WithError(err).
 				Info(fmt.Sprintf("[%s]%s", c.Route().Method, c.Route().Path), "duration", duration, "ip", c.IP(), "ips", c.IPs(), "hostname", c.Hostname())
 		}
 		return err
