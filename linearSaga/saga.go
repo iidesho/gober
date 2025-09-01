@@ -16,6 +16,9 @@ import (
 	"github.com/iidesho/gober/itr"
 	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream"
+	"github.com/iidesho/gober/traces"
+	"go.opentelemetry.io/otel/trace"
+
 	// "github.com/iidesho/gober/stream/consumer"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
@@ -112,7 +115,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 			serv,
 			token,
 			discovery,
-			fmt.Sprintf("saga_%s_%s", name, action.Id),
+			fmt.Sprintf("saga_%s_%s", name, action.ID),
 			ctxTask,
 		)
 		if err != nil {
@@ -126,7 +129,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		executionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_execution_count",
 			Help: "Contains saga execution count",
-		}, []string{"story", "part"})
+		}, []string{"story", "part", "id", "trace_id"})
 		err := metrics.Registry.Register(executionCount)
 		if err != nil {
 			return nil, err
@@ -134,7 +137,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		executionTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_execution_time_total",
 			Help: "Contains saga execution time total",
-		}, []string{"story", "part"})
+		}, []string{"story", "part", "id", "trace_id"})
 		err = metrics.Registry.Register(executionTimeTotal)
 		if err != nil {
 			return nil, err
@@ -142,7 +145,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		reductionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_reduction_count",
 			Help: "Contains saga reduction count",
-		}, []string{"story", "part"})
+		}, []string{"story", "part", "id", "trace_id"})
 		err = metrics.Registry.Register(reductionCount)
 		if err != nil {
 			return nil, err
@@ -150,7 +153,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		reductionTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "saga_reduction_time_total",
 			Help: "Contains saga reduction time total",
-		}, []string{"story", "part"})
+		}, []string{"story", "part", "id", "trace_id"})
 		err = metrics.Registry.Register(reductionTimeTotal)
 		if err != nil {
 			return nil, err
@@ -165,6 +168,32 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 			for e := range events {
 				func() {
 					startTime := time.Now()
+					actionI := findStep(story.Actions, e.Data.status.stepDone)
+					if actionI >= len(story.Actions) {
+						log.Fatal(
+							"this should never happen...",
+							"saga",
+							name,
+							"actionLen",
+							len(story.Actions),
+							"gotI",
+							actionI,
+						)
+						return
+					}
+					if traces.Traces != nil {
+						var childSpan trace.Span
+						e.Data.ctx, childSpan = traces.Traces.Start(
+							e.Data.ctx,
+							fmt.Sprintf(
+								"saga[%s] execute step %s id %s",
+								story.Name,
+								story.Actions[actionI].ID,
+								e.Data.status.id.String(),
+							),
+						)
+						defer childSpan.End()
+					}
 					log := log.WithContext(e.Data.ctx)
 					defer func() {
 						r := recover()
@@ -203,29 +232,23 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						}
 					}()
 					log.Debug("selected task", "id", e.Data.status.id, "event", e)
-					actionI := findStep(story.Actions, e.Data.status.stepDone)
-					if actionI >= len(story.Actions) {
-						log.Fatal(
-							"this should never happen...",
-							"saga",
-							name,
-							"actionLen",
-							len(story.Actions),
-							"gotI",
-							actionI,
-						)
-						return
-					}
 					if actionI >= 0 && // Falesafing the -1 case
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
 						start := time.Now()
-						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v)
+						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v, e.Data.ctx)
 						if reductionCount != nil {
-							reductionCount.WithLabelValues(story.Name, story.Actions[actionI].Id).
+							var traceID string
+							spanCTX := trace.SpanContextFromContext(e.Data.ctx)
+							if spanCTX.IsValid() {
+								traceID = spanCTX.TraceID().String()
+							} else {
+								traceID = "nil"
+							}
+							reductionCount.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
 								Inc()
-							reductionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].Id).
+							reductionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
 								Add(float64(time.Since(start).Microseconds()))
 						}
 
@@ -256,7 +279,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							if e.Data.status.state == StateRetryable {
 								state = StateRetryable
 								if actionI == 0 ||
-									story.Actions[actionI].Id == e.Data.status.retryFrom {
+									story.Actions[actionI].ID == e.Data.status.retryFrom {
 									retryFrom = ""
 									state = StatePending
 									id, err := uuid.NewV7()
@@ -270,7 +293,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 
 						prevStepID := ""
 						if actionI != 0 {
-							prevStepID = story.Actions[actionI-1].Id
+							prevStepID = story.Actions[actionI-1].ID
 						}
 						log.WithError(out.writeEvent(sagaValue[BT, T]{
 							v: e.Data.v,
@@ -300,10 +323,18 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
 					start := time.Now()
-					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v)
+					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v, e.Data.ctx)
 					if executionCount != nil {
-						executionCount.WithLabelValues(story.Name, story.Actions[actionI].Id).Inc()
-						executionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].Id).
+						var traceID string
+						spanCTX := trace.SpanContextFromContext(e.Data.ctx)
+						if spanCTX.IsValid() {
+							traceID = spanCTX.TraceID().String()
+						} else {
+							traceID = "nil"
+						}
+						executionCount.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
+							Inc()
+						executionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
 							Add(float64(time.Since(start).Microseconds()))
 					}
 					if execErr != nil {
@@ -330,7 +361,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								Notice("there was an retryable error while executing task")
 							retryFrom = retryError.from
 							state = StateRetryable
-							stepDone = story.Actions[actionI].Id
+							stepDone = story.Actions[actionI].ID
 							select {
 							case <-out.ctx.Done():
 								return
@@ -369,7 +400,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					log.WithError(out.writeEvent(sagaValue[BT, T]{
 						v: e.Data.v,
 						status: status{
-							stepDone: story.Actions[actionI].Id,
+							stepDone: story.Actions[actionI].ID,
 							duration: time.Since(startTime),
 							state:    state,
 							id:       e.Data.status.id,
@@ -628,6 +659,14 @@ func (t *executor[BT, T]) ExecuteFirst(
 	if err != nil {
 		return uuid.Nil, err
 	}
+	if traces.Traces != nil {
+		var childSpan trace.Span
+		ctx, childSpan = traces.Traces.Start(
+			ctx,
+			fmt.Sprintf("saga[%s] execute first %s", t.story.Name, id.String()),
+		)
+		defer childSpan.End()
+	}
 	// errChan := make(chan error, MESSAGE_BUFFER_SIZE)
 	return id, t.writeEvent(sagaValue[BT, T]{
 		v: dt,
@@ -767,7 +806,7 @@ func findStep[BT any, T bcts.ReadWriter[BT]](actions []Action[BT, T], id string)
 		return -1
 	}
 	for i, a := range actions {
-		if a.Id == id {
+		if a.ID == id {
 			return i
 		}
 	}

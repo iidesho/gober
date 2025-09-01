@@ -121,7 +121,7 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 	Name: "test",
 	Actions: []saga.Action[bcts.TinyString, *bcts.TinyString]{
 		{
-			Id:      "action_1",
+			ID:      "action_1",
 			Handler: &a1,
 			/*
 				Status:  a1.Status,
@@ -130,7 +130,7 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 			*/
 		},
 		{
-			Id:      "action_2",
+			ID:      "action_2",
 			Handler: &a2,
 			/*
 				Status:  a2.Status,
@@ -139,7 +139,7 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 			*/
 		},
 		{
-			Id:      "action_2_pre_done",
+			ID:      "action_2_pre_done",
 			Handler: &a2D,
 			/*
 				Status:  a2.Status,
@@ -148,7 +148,7 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 			*/
 		},
 		{
-			Id:      "action_3",
+			ID:      "action_3",
 			Handler: &a3,
 			/*
 				Status:  a3.Status,

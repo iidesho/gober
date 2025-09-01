@@ -18,7 +18,7 @@ type Action[BT any, T bcts.ReadWriter[BT]] struct {
 	cons     contenious.Consensus
 	aborted  <-chan contenious.ConsID
 	approved <-chan contenious.ConsID
-	Id       string
+	ID       string
 	Type     string
 }
 
@@ -28,7 +28,7 @@ type Story[BT any, T bcts.ReadWriter[BT]] struct {
 }
 
 func (a *Action[BT, T]) ReadBytes(r io.Reader) error {
-	err := bcts.ReadSmallString(r, &a.Id)
+	err := bcts.ReadSmallString(r, &a.ID)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (a *Action[BT, T]) ReadBytes(r io.Reader) error {
 }
 
 func (a Action[BT, T]) WriteBytes(w io.Writer) error {
-	err := bcts.WriteSmallString(w, a.Id)
+	err := bcts.WriteSmallString(w, a.ID)
 	if err != nil {
 		return err
 	}
