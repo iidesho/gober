@@ -165,6 +165,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 			for e := range events {
 				func() {
 					startTime := time.Now()
+					log := log.WithContext(e.Data.ctx)
 					defer func() {
 						r := recover()
 						if r != nil {
@@ -393,6 +394,7 @@ func (t *executor[BT, T]) handler(
 	execChan chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]],
 ) {
 	for e := range events {
+		log := log.WithContext(e.Data.ctx)
 		log.Debug(
 			"read event",
 			"event",
@@ -620,6 +622,7 @@ func (t *executor[BT, T]) writeEvent(tt sagaValue[BT, T]) error {
 
 func (t *executor[BT, T]) ExecuteFirst(
 	dt BT,
+	ctx context.Context,
 ) (uuid.UUID, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -633,6 +636,7 @@ func (t *executor[BT, T]) ExecuteFirst(
 			id:     id,
 			consID: consensus.ConsID(id),
 		},
+		ctx: ctx,
 	})
 }
 
@@ -662,7 +666,7 @@ func (t *executor[BT, T]) ReadErrors(
 				return
 			case e := <-s:
 				curState = e.Data.status.state
-				log.Trace(
+				log.WithContext(e.Data.ctx).Trace(
 					"read event in error",
 					"want",
 					ids,
@@ -688,16 +692,17 @@ func (t *executor[BT, T]) ReadErrors(
 				case StateFailed:
 					fallthrough
 				case StatePaniced:
-					log.Trace("rolling back")
+					log.WithContext(e.Data.ctx).Trace("rolling back")
 					if e.Data.status.stepDone == "" {
-						log.Trace("rollback completed as there is no more completed steps")
+						log.WithContext(e.Data.ctx).
+							Trace("rollback completed as there is no more completed steps")
 						return
 					}
 				case StatePending:
 					fallthrough
 				case StateSuccess:
 					actionI := findStep(t.story.Actions, e.Data.status.stepDone) + 1
-					log.Trace(
+					log.WithContext(e.Data.ctx).Trace(
 						"success / pending found",
 						"actionI",
 						actionI,
@@ -707,7 +712,7 @@ func (t *executor[BT, T]) ReadErrors(
 						len(t.story.Actions),
 					)
 					if actionI >= len(t.story.Actions) {
-						log.Trace("saga is completed")
+						log.WithContext(e.Data.ctx).Trace("saga is completed")
 						return
 					}
 				}

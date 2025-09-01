@@ -1,6 +1,7 @@
 package saga
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -53,6 +54,7 @@ func (a Action[BT, T]) WriteBytes(w io.Writer) error {
 type sagaValue[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	v      BT
 	status status
+	ctx    context.Context
 }
 
 func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
@@ -61,7 +63,14 @@ func (s *sagaValue[BT, T]) ReadBytes(r io.Reader) error {
 		return err
 	}
 	s.v, err = bcts.ReadReader[BT, T](r)
-	return err
+	if err != nil {
+		return err
+	}
+	s.ctx, err = bcts.ReadContext(r, context.Background())
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
@@ -69,7 +78,11 @@ func (s sagaValue[BT, T]) WriteBytes(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return s.v.WriteBytes(w)
+	err = s.v.WriteBytes(w)
+	if err != nil {
+		return err
+	}
+	return bcts.WriteContext(w, s.ctx)
 }
 
 type status struct {
