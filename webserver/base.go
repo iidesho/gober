@@ -23,6 +23,7 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/iidesho/bragi"
 	"github.com/iidesho/bragi/sbragi"
+	contextkeys "github.com/iidesho/gober/contextKeys"
 	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/webserver/health"
 	"github.com/joho/godotenv"
@@ -209,7 +210,7 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		if err != nil {
 			return err
 		}
-		c.SetUserContext(context.WithValue(c.Context(), sbragi.ContextKeyTraceID, tid))
+		c.SetUserContext(context.WithValue(c.Context(), contextkeys.TraceID, tid))
 		QPSs[start.Second()].Add(1)
 		err = c.Next()
 		duration := time.Since(start)
