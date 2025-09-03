@@ -3,10 +3,12 @@ package bcts
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/gofrs/uuid"
+	contextkeys "github.com/iidesho/gober/contextKeys"
 )
 
 // I hate that we do not have the ability to either write single bit or do better bitwize operations...
@@ -220,37 +222,110 @@ func ReadMap[KT comparable, K ComparableReader[KT], VT any, V Reader[VT]](
 	return nil
 }
 
-func ReadAny(r io.Reader, a any) error {
-	switch a := a.(type) {
-	// case *uint:
-	// return ReadUInt32(r, a)
-	case *uint8:
-		return ReadUInt8(r, a)
-	case *uint16:
-		return ReadUInt16(r, a)
-	case *uint32:
-		return ReadUInt32(r, a)
-	case *uint64:
-		return ReadUInt64(r, a)
-	// case *int:
-	// return ReadInt32(r, int32(a))
-	case *int8:
-		return ReadInt8(r, a)
-	case *int16:
-		return ReadInt16(r, a)
-	case *int32:
-		return ReadInt32(r, a)
-	case *int64:
-		return ReadInt64(r, a)
-	case *string:
-		return ReadTinyString(r, a)
-	case uuid.UUID:
-		return ReadStaticBytes(r, a[:])
-	case *time.Time:
-		return ReadTime(r, a)
-	default:
-		return errors.New("unsuported any type")
+func ReadAny[T any](r io.Reader, a *any) error {
+	var t uint16
+	err := ReadUInt16(r, &t)
+	if err != nil {
+		return err
 	}
+	switch t {
+	case typeUint:
+		return ReadUInt32(r, (*a).(*uint32))
+	case typeUint8:
+		return ReadUInt8(r, (*a).(*uint8))
+	case typeUint16:
+		return ReadUInt16(r, (*a).(*uint16))
+	case typeUint32:
+		return ReadUInt32(r, (*a).(*uint32))
+	case typeUint64:
+		return ReadUInt64(r, (*a).(*uint64))
+	case typeInt:
+		return ReadInt32(r, (*a).(*int32))
+	case typeInt8:
+		return ReadInt8(r, (*a).(*int8))
+	case typeInt16:
+		return ReadInt16(r, (*a).(*int16))
+	case typeInt32:
+		return ReadInt32(r, (*a).(*int32))
+	case typeInt64:
+		return ReadInt64(r, (*a).(*int64))
+	case typeString:
+		var v string
+		err := ReadSmallString(r, &v)
+		if err != nil {
+			return err
+		}
+		*a = v
+	case typeUUID:
+		var v uuid.UUID
+		err := ReadStaticBytes(r, v[:])
+		if err != nil {
+			return err
+		}
+		*a = v
+	case typeTime:
+		var v time.Time
+		err := ReadTime(r, &v)
+		if err != nil {
+			return err
+		}
+		*a = v
+	case typeContextKey:
+		var v contextkeys.ContextKey
+		err := ReadSmallString(r, &v)
+		if err != nil {
+			return err
+		}
+		*a = v
+	default:
+		return fmt.Errorf("unsuported any type, %T, %d", a, t)
+	}
+	return nil
+	/*
+		v := *a
+		fmt.Printf("trying to read any %T/%T\n", a, v)
+		// for {
+		// 	switch t := v.(type) {
+		// 	case *any:
+		// 		v = *t
+		// 		continue
+		// 	}
+		// 	break
+		// }
+		// v = any(v.(*T))
+		switch a := v.(type) {
+		// case *uint:
+		// return ReadUInt32(r, a)
+		case *uint8:
+			return ReadUInt8(r, a)
+		case *uint16:
+			return ReadUInt16(r, a)
+		case *uint32:
+			return ReadUInt32(r, a)
+		case *uint64:
+			return ReadUInt64(r, a)
+		// case *int:
+		// return ReadInt32(r, int32(a))
+		case *int8:
+			return ReadInt8(r, a)
+		case *int16:
+			return ReadInt16(r, a)
+		case *int32:
+			return ReadInt32(r, a)
+		case *int64:
+			return ReadInt64(r, a)
+		case *string:
+			return ReadTinyString(r, a)
+		case uuid.UUID:
+			return ReadStaticBytes(r, a[:])
+		case *time.Time:
+			return ReadTime(r, a)
+		case *contextkeys.ContextKey:
+			return ReadTinyString(r, a)
+		default:
+			return fmt.Errorf("unsuported any type, %T", a)
+		}
+	*/
 }
 
 func ReadMapAny[K comparable, V any](
@@ -266,15 +341,18 @@ func ReadMapAny[K comparable, V any](
 	for range l {
 		k := new(K)
 		v := new(V)
-		err = ReadAny(r, k)
+		ak := any(k)
+		err = ReadAny[K](r, &ak)
 		if err != nil {
 			return err
 		}
-		err = ReadAny(r, v)
+		av := any(v)
+		err = ReadAny[V](r, &av)
 		if err != nil {
 			return err
 		}
-		(*mp)[*k] = *v
+		(*mp)[(ak).(K)] = (av).(V)
+		// (*mp)[*k] = *v
 	}
 	return nil
 }
@@ -344,9 +422,12 @@ func ReadSliceAny[TV any](r io.Reader, s *[]TV, t func(r io.Reader, v *TV) error
 }
 
 func ReadError(r io.Reader, err *error) error {
+	if err == nil {
+		return errors.New("provided ptr can not be nil")
+	}
 	var errS string
 	iErr := ReadSmallString(r, &errS)
-	if err != nil {
+	if iErr != nil {
 		return iErr
 	}
 	if len(errS) == 0 {

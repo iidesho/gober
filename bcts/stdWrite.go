@@ -2,12 +2,12 @@ package bcts
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/gofrs/uuid"
+	contextkeys "github.com/iidesho/gober/contextKeys"
 )
 
 // I hate that we do not have the ability to either write single bit or do better bitwize operations...
@@ -217,33 +217,92 @@ func WriteMap[K ComparableWriter, T Writer](w io.Writer, m map[K]T) error {
 func WriteAny(w io.Writer, a any) error {
 	switch a := a.(type) {
 	case uint:
+		err := WriteUInt16(w, typeUint)
+		if err != nil {
+			return err
+		}
 		return WriteUInt32(w, uint32(a))
 	case uint8:
+		err := WriteUInt16(w, typeUint8)
+		if err != nil {
+			return err
+		}
 		return WriteUInt8(w, a)
 	case uint16:
+		err := WriteUInt16(w, typeUint16)
+		if err != nil {
+			return err
+		}
 		return WriteUInt16(w, a)
 	case uint32:
+		err := WriteUInt16(w, typeUint32)
+		if err != nil {
+			return err
+		}
 		return WriteUInt32(w, a)
 	case uint64:
+		err := WriteUInt16(w, typeUint64)
+		if err != nil {
+			return err
+		}
 		return WriteUInt64(w, a)
 	case int:
+		err := WriteUInt16(w, typeInt)
+		if err != nil {
+			return err
+		}
 		return WriteInt32(w, int32(a))
 	case int8:
+		err := WriteUInt16(w, typeInt8)
+		if err != nil {
+			return err
+		}
 		return WriteInt8(w, a)
 	case int16:
+		err := WriteUInt16(w, typeInt16)
+		if err != nil {
+			return err
+		}
 		return WriteInt16(w, a)
 	case int32:
+		err := WriteUInt16(w, typeInt32)
+		if err != nil {
+			return err
+		}
 		return WriteInt32(w, a)
 	case int64:
+		err := WriteUInt16(w, typeInt64)
+		if err != nil {
+			return err
+		}
 		return WriteInt64(w, a)
 	case string:
+		err := WriteUInt16(w, typeString)
+		if err != nil {
+			return err
+		}
 		return WriteSmallString(w, a)
 	case uuid.UUID:
+		err := WriteUInt16(w, typeUUID)
+		if err != nil {
+			return err
+		}
 		return WriteStaticBytes(w, a[:])
 	case time.Time:
+		err := WriteUInt16(w, typeTime)
+		if err != nil {
+			return err
+		}
 		return WriteTime(w, a)
+	// case fmt.Stringer:
+	case contextkeys.ContextKey:
+		err := WriteUInt16(w, typeContextKey)
+		if err != nil {
+			return err
+		}
+		return WriteSmallString(w, a)
 	default:
-		return errors.New("unsuported any type")
+		return fmt.Errorf("unsuported any type, %T", a)
 	}
 }
 

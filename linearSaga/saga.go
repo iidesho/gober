@@ -40,7 +40,7 @@ var (
 )
 
 type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
-	ExecuteFirst(BT) (uuid.UUID, error)
+	ExecuteFirst(BT, context.Context) (uuid.UUID, error)
 	// Status(uuid.UUID) (State, error)
 	ReadErrors(
 		id uuid.UUID,
@@ -68,7 +68,7 @@ type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	pers stream.Stream,
 	serv webserver.Server,
-	dataTypeVersion, name string,
+	dataTypeVersion string,
 	story Story[BT, T],
 	p stream.CryptoKeyProvider,
 	workers int,
@@ -80,7 +80,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	}
 	ctxTask, cancel := context.WithCancel(ctx)
 	token := gsync.NewObj[string]()
-	dataTypeName := name + "_saga"
+	dataTypeName := story.Name + "_saga"
 	token.Set(dataTypeName) // This should be configurable and secure
 	// es, err := consumer.New[sagaValue[BT, T]](pers, p, ctxTask)
 	es, err := stream.Init[sagaValue[BT, T]](pers, ctxTask)
@@ -115,7 +115,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 			serv,
 			token,
 			discovery,
-			fmt.Sprintf("saga_%s_%s", name, action.ID),
+			fmt.Sprintf("saga_%s_%s", story.Name, action.ID),
 			ctxTask,
 		)
 		if err != nil {
@@ -173,7 +173,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						log.Fatal(
 							"this should never happen...",
 							"saga",
-							name,
+							story.Name,
 							"actionLen",
 							len(story.Actions),
 							"gotI",
@@ -181,20 +181,28 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						)
 						return
 					}
+					var curActionI int
+					if e.Data.status.state == StateRetryable ||
+						e.Data.status.state == StateFailed { // story.Actions[actionI].Id {
+						curActionI = actionI
+					} else {
+						curActionI = actionI + 1
+					}
+					ctx := e.Data.ctx
 					if traces.Traces != nil {
 						var childSpan trace.Span
-						e.Data.ctx, childSpan = traces.Traces.Start(
+						ctx, childSpan = traces.Traces.Start(
 							e.Data.ctx,
 							fmt.Sprintf(
 								"saga[%s] execute step %s id %s",
 								story.Name,
-								story.Actions[actionI].ID,
+								story.Actions[curActionI].ID,
 								e.Data.status.id.String(),
 							),
 						)
 						defer childSpan.End()
 					}
-					log := log.WithContext(e.Data.ctx)
+					log := log.WithContext(ctx)
 					defer func() {
 						r := recover()
 						if r != nil {
@@ -227,6 +235,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									consID:    consensus.ConsID(id),
 									err:       fmt.Errorf("recoveced panic: %v", r),
 								},
+								ctx: e.Data.ctx,
 							})).Error("writing panic event", "id", e.Data.status.id.String())
 							return
 						}
@@ -237,7 +246,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
 						state := StateSuccess
 						start := time.Now()
-						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v, e.Data.ctx)
+						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v, ctx)
 						if reductionCount != nil {
 							var traceID string
 							spanCTX := trace.SpanContextFromContext(e.Data.ctx)
@@ -306,6 +315,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								consID:    consID,
 								err:       reduceErr,
 							},
+							ctx: e.Data.ctx,
 						})).Error("writing failed event", "id", e.Data.status.id.String())
 						return
 					}
@@ -320,10 +330,11 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							id:        e.Data.status.id,
 							consID:    e.Data.status.consID,
 						},
+						ctx: e.Data.ctx,
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
 					start := time.Now()
-					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v, e.Data.ctx)
+					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v, ctx)
 					if executionCount != nil {
 						var traceID string
 						spanCTX := trace.SpanContextFromContext(e.Data.ctx)
@@ -385,6 +396,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								consID:    consensus.ConsID(id),
 								err:       execErr,
 							},
+							ctx: e.Data.ctx,
 						})).Error("writing failed event", "id", e.Data.status.id.String())
 						return
 					}
@@ -406,6 +418,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 							id:       e.Data.status.id,
 							consID:   e.Data.status.consID, // consensus.ConsID(rid),
 						},
+						ctx: e.Data.ctx,
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					log.Trace("executed task", "event", e)
 				}()
@@ -660,8 +673,7 @@ func (t *executor[BT, T]) ExecuteFirst(
 		return uuid.Nil, err
 	}
 	if traces.Traces != nil {
-		var childSpan trace.Span
-		ctx, childSpan = traces.Traces.Start(
+		_, childSpan := traces.Traces.Start(
 			ctx,
 			fmt.Sprintf("saga[%s] execute first %s", t.story.Name, id.String()),
 		)

@@ -7,11 +7,13 @@ func (c ContextKey) String() string {
 }
 
 const (
-	TraceID ContextKey = "trace_id"
-	SpanID  ContextKey = "span_id"
+	Deadline ContextKey = "deadline"
+	TraceID  ContextKey = "trace_id"
+	SpanID   ContextKey = "span_id"
 )
 
 var Keys []ContextKey = []ContextKey{
+	Deadline,
 	TraceID,
 	SpanID,
 }
