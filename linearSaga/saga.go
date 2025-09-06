@@ -189,8 +189,8 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						curActionI = actionI + 1
 					}
 					ctx := e.Data.ctx
+					var childSpan trace.Span
 					if traces.Traces != nil {
-						var childSpan trace.Span
 						ctx, childSpan = traces.Traces.Start(
 							e.Data.ctx,
 							fmt.Sprintf(
@@ -241,23 +241,22 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						}
 					}()
 					log.Debug("selected task", "id", e.Data.status.id, "event", e)
-					if actionI >= 0 && // Falesafing the -1 case
+					if curActionI >= 0 && // Falesafing the -1 case
 						(e.Data.status.state == StateRetryable ||
 							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
-						state := StateSuccess
+						state := StateFailed
 						start := time.Now()
-						reduceErr := story.Actions[actionI].Handler.Reduce(&e.Data.v, ctx)
+						reduceErr := story.Actions[curActionI].Handler.Reduce(&e.Data.v, ctx)
 						if reductionCount != nil {
 							var traceID string
-							spanCTX := trace.SpanContextFromContext(e.Data.ctx)
-							if spanCTX.IsValid() {
-								traceID = spanCTX.TraceID().String()
+							if childSpan != nil && childSpan.SpanContext().IsValid() {
+								traceID = childSpan.SpanContext().TraceID().String()
 							} else {
 								traceID = "nil"
 							}
-							reductionCount.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
+							reductionCount.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
 								Inc()
-							reductionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
+							reductionTimeTotal.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
 								Add(float64(time.Since(start).Microseconds()))
 						}
 
@@ -277,32 +276,30 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 									log.Error("error channel not found")
 								}
 						  }
-						*/if reduceErr != nil {
+						if reduceErr != nil {
 							state = StateFailed
 						}
+						*/
 						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
-						story.Actions[actionI].cons.Completed(e.Data.status.consID)
+						story.Actions[curActionI].cons.Completed(e.Data.status.consID)
 						retryFrom := e.Data.status.retryFrom
 						consID := e.Data.status.consID
-						if state == StateSuccess {
-							if e.Data.status.state == StateRetryable {
-								state = StateRetryable
-								if actionI == 0 ||
-									story.Actions[actionI].ID == e.Data.status.retryFrom {
-									retryFrom = ""
-									state = StatePending
-									id, err := uuid.NewV7()
-									log.WithError(err).Fatal("could not generage UUID")
-									consID = consensus.ConsID(id)
-								}
-							} else {
-								state = e.Data.status.state
+						if reduceErr == nil &&
+							e.Data.status.state == StateRetryable {
+							state = StateRetryable
+							if curActionI == 0 ||
+								story.Actions[curActionI].ID == e.Data.status.retryFrom {
+								retryFrom = ""
+								state = StatePending
+								id, err := uuid.NewV7()
+								log.WithError(err).Fatal("could not generage UUID")
+								consID = consensus.ConsID(id)
 							}
 						}
 
 						prevStepID := ""
-						if actionI != 0 {
-							prevStepID = story.Actions[actionI-1].ID
+						if curActionI != 0 {
+							prevStepID = story.Actions[curActionI-1].ID
 						}
 						log.WithError(out.writeEvent(sagaValue[BT, T]{
 							v: e.Data.v,
@@ -319,7 +316,6 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 						})).Error("writing failed event", "id", e.Data.status.id.String())
 						return
 					}
-					actionI++
 					// Ignoring this state for now
 					log.WithError(out.writeEvent(sagaValue[BT, T]{
 						v: e.Data.v,
@@ -334,18 +330,17 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					})).Error("writing panic event", "id", e.Data.status.id.String())
 					state := StateSuccess
 					start := time.Now()
-					execErr := story.Actions[actionI].Handler.Execute(&e.Data.v, ctx)
+					execErr := story.Actions[curActionI].Handler.Execute(&e.Data.v, ctx)
 					if executionCount != nil {
 						var traceID string
-						spanCTX := trace.SpanContextFromContext(e.Data.ctx)
-						if spanCTX.IsValid() {
-							traceID = spanCTX.TraceID().String()
+						if childSpan != nil && childSpan.SpanContext().IsValid() {
+							traceID = childSpan.SpanContext().TraceID().String()
 						} else {
 							traceID = "nil"
 						}
-						executionCount.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
+						executionCount.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
 							Inc()
-						executionTimeTotal.WithLabelValues(story.Name, story.Actions[actionI].ID, e.Data.status.id.String(), traceID).
+						executionTimeTotal.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
 							Add(float64(time.Since(start).Microseconds()))
 					}
 					if execErr != nil {
@@ -372,7 +367,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 								Notice("there was an retryable error while executing task")
 							retryFrom = retryError.from
 							state = StateRetryable
-							stepDone = story.Actions[actionI].ID
+							stepDone = story.Actions[curActionI].ID
 							select {
 							case <-out.ctx.Done():
 								return
@@ -412,7 +407,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 					log.WithError(out.writeEvent(sagaValue[BT, T]{
 						v: e.Data.v,
 						status: status{
-							stepDone: story.Actions[actionI].ID,
+							stepDone: story.Actions[curActionI].ID,
 							duration: time.Since(startTime),
 							state:    state,
 							id:       e.Data.status.id,
@@ -723,8 +718,12 @@ func (t *executor[BT, T]) ReadErrors(
 					ids,
 					"got",
 					e.Metadata.Extra["id"],
+					"stepDone",
+					e.Data.status.stepDone,
 					"state",
 					e.Data.status.state,
+					"failed",
+					e.Data.status.state == StateFailed,
 					"err",
 					e.Data.status.err,
 				)
@@ -736,7 +735,6 @@ func (t *executor[BT, T]) ReadErrors(
 					case <-ctx.Done():
 						return
 					case out <- e.Data.status.err:
-						continue
 					}
 				}
 				switch e.Data.status.state {

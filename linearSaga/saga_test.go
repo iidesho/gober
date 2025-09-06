@@ -2,9 +2,12 @@ package saga_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,17 +47,48 @@ type act1 struct {
 	State saga.State
 }
 
-func (a *act1) Execute(s *bcts.TinyString) error {
-	log.Info("executing act1")
-	defer wg.Done()
+var (
+	expectedSuccess = []string{
+		"1 fail",
+		"1 reduce",
+		"1 success",
+		"2 fail",
+		"2 reduce",
+		"2 success",
+		"2 pre done",
+		"1 success",
+	}
+	expectedFail = []string{
+		"1 fail",
+	}
+	has = []string{}
+)
+
+func (a *act1) Execute(s *bcts.TinyString, ctx context.Context) error {
+	log.Info("executing act1", "s", *s)
+	if *s == "FAIL" {
+		defer wg.Done()
+		has = append(has, "1 fail")
+		return errors.New("failing act1")
+	}
+	if len(string(*s)) > 4 {
+		if !strings.HasSuffix(string(*s), a.Inner) {
+			*s = bcts.TinyString(fmt.Sprint(*s, "-", a.Inner))
+		}
+		defer wg.Done()
+		has = append(has, "1 success")
+		a.State = saga.StateSuccess
+		return nil
+	}
 	log.Info(a.Inner, "s", s)
 	*s = bcts.TinyString(fmt.Sprint(*s, "-", a.Inner))
-	a.State = saga.StateSuccess
-	return nil
+	has = append(has, "1 fail")
+	return saga.RetryableError("action_1", nil)
 }
 
-func (a act1) Reduce(*bcts.TinyString) error {
-	log.Info("recucing act 1")
+func (a act1) Reduce(s *bcts.TinyString, ctx context.Context) error {
+	log.Info("recucing act 1", "s", *s)
+	has = append(has, "1 reduce")
 	return nil
 }
 
@@ -75,23 +109,27 @@ type act2 struct {
 	State  saga.State
 }
 
-func (a *act2) Execute(*bcts.TinyString) error {
-	log.Info("executing act2", "pre", a.Pre, "post", a.Post)
+func (a *act2) Execute(s *bcts.TinyString, ctx context.Context) error {
+	log.Info("executing act2", "s", *s, "pre", a.Pre, "post", a.Post)
 	if a.State == saga.StateSuccess {
+		has = append(has, "2 pre done")
 		return nil
 	}
 	if !a.Failed {
 		a.Failed = true
+		has = append(has, "2 fail")
 		return saga.RetryableError("action_2", nil)
 	}
 	defer wg.Done()
 	log.Info(a.Pre, "woop", a.Post)
 	a.State = saga.StateSuccess
+	has = append(has, "2 success")
 	return nil
 }
 
-func (a act2) Reduce(*bcts.TinyString) error {
-	log.Info("recucing act 2")
+func (a act2) Reduce(s *bcts.TinyString, ctx context.Context) error {
+	log.Info("recucing act 2", "s", *s)
+	has = append(has, "2 reduce")
 	return nil
 }
 
@@ -139,7 +177,7 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 			*/
 		},
 		{
-			ID:      "action_2_pre_done",
+			ID:      "action_3_pre_done",
 			Handler: &a2D,
 			/*
 				Status:  a2.Status,
@@ -148,7 +186,7 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 			*/
 		},
 		{
-			ID:      "action_3",
+			ID:      "action_4",
 			Handler: &a3,
 			/*
 				Status:  a3.Status,
@@ -174,7 +212,6 @@ func TestInit(t *testing.T) {
 		store,
 		serv,
 		"1.0.0",
-		STREAM_NAME,
 		stry,
 		cryptKeyProvider,
 		runtime.NumCPU(),
@@ -195,7 +232,7 @@ func TestExecuteFirst(t *testing.T) {
 	wg.Add(3)
 	var err error
 	v := bcts.TinyString("init")
-	id, err = s.ExecuteFirst(v)
+	id, err = s.ExecuteFirst(v, context.Background())
 	if err != nil {
 		t.Error(err)
 		return
@@ -203,25 +240,74 @@ func TestExecuteFirst(t *testing.T) {
 }
 
 func TestTairdown(t *testing.T) {
-	errs, err := s.ReadErrors(id, t.Context())
+	errs, status, err := s.ReadErrors(id, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	wg.Wait()
 	time.Sleep(time.Second)
-	st, err := s.Status(id)
+forLoop:
+	for {
+		select {
+		case err, ok := <-errs:
+			if !ok {
+				break forLoop
+			}
+			log.WithError(err).Notice("success saga error")
+		default:
+			t.Error("expected to have error in err chan", status().String())
+			return
+		}
+	}
+	if status() != saga.StateSuccess {
+		t.Error("expected completed saga to be success", status().String())
+		return
+	}
+	if !slices.Equal(expectedSuccess, has) {
+		t.Error("expected saga order missmatch", expectedSuccess, has)
+		return
+	}
+}
+
+func TestExecuteFirstFail(t *testing.T) {
+	has = []string{}
+	wg.Add(1)
+	var err error
+	v := bcts.TinyString("FAIL")
+	id, err = s.ExecuteFirst(v, context.Background())
 	if err != nil {
-		t.Error(err, id)
+		t.Error(err)
 		return
 	}
-	if st != saga.StateSuccess {
-		t.Error("expected completed saga to be success", st.String())
+}
+
+func TestTairdownFail(t *testing.T) {
+	errs, status, err := s.ReadErrors(id, t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	time.Sleep(time.Second * 10)
+forLoop:
+	for {
+		select {
+		case err, ok := <-errs:
+			if !ok {
+				break forLoop
+			}
+			log.WithError(err).Notice("fail saga error")
+		default:
+			t.Error("expected to have error in err chan", status().String())
+			return
+		}
+	}
+	if status() != saga.StateFailed {
+		t.Error("expected completed saga to be failed", status().String())
 		return
 	}
-	select {
-	case <-errs:
-	default:
-		t.Error("expected to have error in err chan", st.String())
+	if !slices.Equal(expectedFail, has) {
+		t.Error("expected saga order missmatch", expectedFail, has)
+		return
 	}
 	ctxGlobalCancel()
 	s.Close()
@@ -243,7 +329,6 @@ func BenchmarkSaga(b *testing.B) {
 		store,
 		serv,
 		"1.0.0",
-		fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N),
 		stry,
 		cryptKeyProvider,
 		runtime.NumCPU(),
@@ -257,7 +342,7 @@ func BenchmarkSaga(b *testing.B) {
 	go serv.Run()
 	bv := bcts.TinyString(strconv.Itoa(b.N))
 	for i := 0; i < b.N; i++ {
-		_, err := edt.ExecuteFirst(bv)
+		_, err := edt.ExecuteFirst(bv, context.Background())
 		if err != nil {
 			b.Error(err)
 			return
