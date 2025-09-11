@@ -11,6 +11,9 @@ import (
 
 func WriteContext(w io.Writer, ctx context.Context) error {
 	values := map[string]any{}
+	if ctx == nil {
+		return WriteMapAny(w, values) //, WriteTinyString, WriteAny)
+	}
 	for _, key := range contextkeys.Keys {
 		if val := ctx.Value(key); val != nil {
 			values[key.String()] = val
