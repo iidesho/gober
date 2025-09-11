@@ -298,7 +298,7 @@ func Init(port uint16, fromBase bool) (Server, error) {
 		debug.Use(basicauth.New(basicauth.Config{
 			Users: map[string]string{user: pass},
 		}))
-		debug.Get("/pprof/*type", func(c *fiber.Ctx) error {
+		debug.Get("/pprof/:type?", func(c *fiber.Ctx) error {
 			fmt.Println(c.Params("type"))
 			switch c.Params("type") {
 			case "/profile":
