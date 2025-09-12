@@ -72,7 +72,7 @@ func (e storeEvent) WriteBytes(w io.Writer) (err error) {
 	return nil
 }
 
-func (se *storeEvent) ReadBytes(r io.Reader) (err error) {
+func (e *storeEvent) ReadBytes(r io.Reader) (err error) {
 	var v uint8
 	err = bcts.ReadUInt8(r, &v)
 	if err != nil {
@@ -81,36 +81,35 @@ func (se *storeEvent) ReadBytes(r io.Reader) (err error) {
 	if v != 0 {
 		return fmt.Errorf("invalid stored event version, %s=%d, %s=%d", "expected", 0, "got", v)
 	}
-	err = bcts.ReadTime(r, &se.Created)
+	err = bcts.ReadTime(r, &e.Created)
 	if err != nil {
 		return
 	}
-	err = bcts.ReadSmallString(r, &se.Event.Type)
+	err = bcts.ReadSmallString(r, &e.Event.Type)
 	if err != nil {
 		return
 	}
-	err = bcts.ReadBytes(r, &se.Event.Data)
+	err = bcts.ReadBytes(r, &e.Event.Data)
 	if err != nil {
 		return
 	}
-	err = bcts.ReadBytes(r, &se.Event.Metadata)
+	err = bcts.ReadBytes(r, &e.Event.Metadata)
 	if err != nil {
 		return
 	}
-	err = bcts.ReadStaticBytes(r, se.Event.Id[:])
+	err = bcts.ReadStaticBytes(r, e.Event.Id[:])
 	if err != nil {
 		return
 	}
-	return bcts.ReadUInt64(r, &se.Position)
+	return bcts.ReadUInt64(r, &e.Position)
 }
 
 // stream Need to add a way to not store multiple events with the same id in the same stream.
 type stream struct {
 	db  *os.File
-	len *atomic.Int64
+	len *atomic.Uint64
 	// dbLock   *sync.Mutex
-	newData  *sync.Cond
-	position uint64
+	newData *sync.Cond
 }
 
 type Stream struct {
@@ -125,39 +124,37 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 	os.Mkdir("streams", 0750)
 	f, err := os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_CREATE|os.O_RDONLY, 0640)
 	if err != nil {
-		return
+		return nil, err
 	}
 	defer f.Close()
 	r := f
 	// j := json.NewDecoder(f)
 	var se storeEvent
 	p := uint64(0)
-	if err != io.EOF {
-		for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
-			if p < se.Position {
-				p = se.Position
-			}
+	for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
+		if p < se.Position {
+			p = se.Position
 		}
 	}
-	if err != nil && err != io.EOF {
-		return
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
 	}
 	f, err = os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0640)
 	if err != nil {
-		return
+		return nil, err
 	}
 	s = &Stream{
 		data: stream{
 			db:  f,
-			len: &atomic.Int64{},
+			len: &atomic.Uint64{},
 			// dbLock:  &sync.Mutex{},
-			newData:  sync.NewCond(&sync.Mutex{}),
-			position: p,
+			newData: sync.NewCond(&sync.Mutex{}),
 		},
 		name:      name,
 		writeChan: writeChan,
 		ctx:       ctx,
 	}
+	s.data.len.Store(p)
 	if metrics.Registry != nil && writeCount == nil {
 		writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ondisk_event_write_count",
@@ -192,19 +189,19 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 			return nil, err
 		}
 	}
-	s.data.len.Store(int64(p))
-	go writeStrem(s, writeChan)
-	return
+	s.data.len.Store(p)
+	go writeStream(s, writeChan)
+	return s, nil
 }
 
-func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
+func writeStream(s *Stream, writes <-chan store.WriteEvent) {
 	defer func() {
 		r := recover()
 		if r == nil {
 			return
 		}
 		log.WithError(fmt.Errorf("%v", r)).Error("recovering write stream", "stream", s.name)
-		writeStrem(s, writes)
+		writeStream(s, writes)
 	}()
 	w := bufio.NewWriter(s.data.db)
 	for {
@@ -226,9 +223,11 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 						close(e.Status)
 					}
 				}()
+				nextPoss := s.data.len.Load() + 1
 				se := storeEvent{
-					Event:    e.Event,
-					Position: uint64(s.data.len.Add(1)),
+					Event: e.Event,
+					// Position: s.data.len.Add(1),
+					Position: nextPoss,
 					Created:  time.Now(),
 				}
 				err := se.WriteBytes(w)
@@ -254,7 +253,8 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 					}
 					return
 				}
-				s.data.position = se.Position
+				s.data.len.Add(1)
+				// s.data.position = se.Position
 				if e.Status != nil {
 					e.Status <- store.WriteStatus{
 						Time:     se.Created,
@@ -349,10 +349,18 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 					start = time.Now()
 				}
 				log.Trace("has more", "name", s.name)
-				events <- store.ReadEvent{
+				select {
+				case <-ctx.Done():
+					exit = true
+					return
+				case <-s.ctx.Done():
+					exit = true
+					return
+				case events <- store.ReadEvent{
 					Event:    se.Event,
 					Position: se.Position,
 					Created:  se.Created,
+				}:
 				}
 				position = se.Position
 				if readCount != nil {
@@ -361,7 +369,7 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 						Add(float64(time.Since(start).Microseconds()))
 				}
 			}
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				time.Sleep(time.Second)
 				log.WithError(err).Fatal("while reading event from store", "name", s.name)
 			}
@@ -373,8 +381,8 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 				position,
 				"dl",
 				s.data.len.Load(),
-				"dp",
-				s.data.position,
+				// "dp",
+				// s.data.position,
 			)
 			if position >= uint64(s.data.len.Load()) {
 				log.Trace("waiting for new data", "name", s.name)
@@ -398,6 +406,7 @@ func (s *Stream) Name() string {
 }
 
 func (s *Stream) End() (pos uint64, err error) {
-	pos = s.data.position
+	// pos = s.data.position
+	pos = s.data.len.Load()
 	return
 }

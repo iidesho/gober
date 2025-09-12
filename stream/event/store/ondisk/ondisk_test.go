@@ -53,7 +53,7 @@ func TestInit(t *testing.T) {
 
 func TestStore(t *testing.T) {
 	t.Log("store test started")
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	data["id"] = 1
 	data["name"] = "test"
 	data["data"] = make([]byte, ondisk.MB*6)
@@ -116,7 +116,7 @@ func TestStream(t *testing.T) {
 		t.Error(fmt.Errorf("missing inMemEvent id"))
 		return
 	}
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	err = json.Unmarshal(e.Data, &data)
 	if err != nil {
 		t.Error(err)
@@ -126,7 +126,7 @@ func TestStream(t *testing.T) {
 		t.Error("data name is wrong")
 		return
 	}
-	meta := make(map[string]interface{})
+	meta := make(map[string]any)
 	err = json.Unmarshal(e.Metadata, &meta)
 	if err != nil {
 		t.Error(err)
@@ -141,7 +141,7 @@ func TestStream(t *testing.T) {
 }
 
 func TestStoreMultiple(t *testing.T) {
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 
 	for i := 2; i < 12; i++ {
 		data["id"] = i
@@ -221,7 +221,7 @@ func TestStoreAndStream(t *testing.T) {
 		}
 		<-s
 	}(&wg)
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	data["id"] = 1
 	data["name"] = "test"
 	data["data"] = make([]byte, ondisk.MB*6)
@@ -251,7 +251,7 @@ func TestTeardown(t *testing.T) {
 func BenchmarkStoreAndStream(b *testing.B) {
 	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	log.Debug("benchmark start", "b.N ", b.N)
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	data["id"] = 1
 	data["name"] = "test"
 
