@@ -25,7 +25,7 @@ type inMemEvent struct {
 
 // stream Need to add a way to not store multiple events with the same id in the same stream.
 type stream struct {
-	dbLock   *sync.Mutex
+	dbLock   *sync.RWMutex
 	newData  *sync.Cond
 	db       []inMemEvent
 	position uint64
@@ -43,7 +43,7 @@ func Init(name string, ctx context.Context) (es *Stream, err error) {
 	es = &Stream{
 		data: stream{
 			db:      make([]inMemEvent, 0),
-			dbLock:  &sync.Mutex{},
+			dbLock:  &sync.RWMutex{},
 			newData: sync.NewCond(&sync.Mutex{}),
 		},
 		name:      name,
@@ -164,15 +164,20 @@ func (es *Stream) Stream(
 					if writeCount != nil {
 						start = time.Now()
 					}
+					es.data.dbLock.RLock()
 					for ; position < uint64(len(es.data.db)); position++ {
 						se := es.data.db[position]
+						es.data.dbLock.RUnlock()
 						eventChan <- store.ReadEvent{
 							Event:    se.Event,
 							Position: se.Position,
 							Created:  se.Created,
 						}
+						es.data.dbLock.RLock()
 					}
-					if position >= uint64(len(es.data.db)) {
+					dbLen := uint64(len(es.data.db))
+					es.data.dbLock.RUnlock()
+					if position >= dbLen {
 						es.data.newData.L.Lock()
 						es.data.newData.Wait()
 						es.data.newData.L.Unlock()

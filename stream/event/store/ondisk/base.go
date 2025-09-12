@@ -40,7 +40,7 @@ type storeEvent struct {
 	// Version  uint8 // Do not need this to be in memory as the version is only relevant for on disk format
 }
 
-func (e storeEvent) WriteBytes(w *bufio.Writer) (err error) {
+func (e storeEvent) WriteBytes(w io.Writer) (err error) {
 	err = bcts.WriteUInt8(w, uint8(0))
 	if err != nil {
 		return
@@ -69,7 +69,7 @@ func (e storeEvent) WriteBytes(w *bufio.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	return w.Flush()
+	return nil
 }
 
 func (se *storeEvent) ReadBytes(r io.Reader) (err error) {
@@ -160,32 +160,32 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 	}
 	if metrics.Registry != nil && writeCount == nil {
 		writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "inmemeory_event_write_count",
-			Help: "in-memory event write count",
+			Name: "ondisk_event_write_count",
+			Help: "ondisk event write count",
 		}, []string{"stream"})
 		err = metrics.Registry.Register(writeCount)
 		if err != nil {
 			return nil, err
 		}
 		writeTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "inmemeory_event_write_time_total",
-			Help: "in-memory event write time total",
+			Name: "ondisk_event_write_time_total",
+			Help: "ondisk event write time total",
 		}, []string{"stream"})
 		err = metrics.Registry.Register(writeTimeTotal)
 		if err != nil {
 			return nil, err
 		}
 		readCount = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "inmemeory_event_read_count",
-			Help: "in-memory event read count",
+			Name: "ondisk_event_read_count",
+			Help: "ondisk event read count",
 		}, []string{"stream"})
 		err = metrics.Registry.Register(readCount)
 		if err != nil {
 			return nil, err
 		}
 		readTimeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "inmemeory_event_read_time_total",
-			Help: "in-memory event read time total",
+			Name: "ondisk_event_read_time_total",
+			Help: "ondisk event read time total",
 		}, []string{"stream"})
 		err = metrics.Registry.Register(readTimeTotal)
 		if err != nil {
@@ -235,6 +235,16 @@ func writeStrem(s *Stream, writes <-chan store.WriteEvent) {
 				//_, err := w.Write(se.Bytes())
 				// Should trunc the file to size minus n returned here on error
 				//err := binary.Write(s.data.db, binary.LittleEndian, se)
+				if err != nil {
+					log.WithError(err).Error("while writing event to buffer")
+					if e.Status != nil {
+						e.Status <- store.WriteStatus{
+							Error: err,
+						}
+					}
+					return
+				}
+				err = w.Flush()
 				if err != nil {
 					log.WithError(err).Error("while writing event to file")
 					if e.Status != nil {
