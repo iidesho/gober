@@ -67,7 +67,7 @@ func TestWrite(t *testing.T) {
 		Event: store.Event{
 			Type: "test",
 			Data: []byte("some test data"),
-			Id:   uuid.Must(uuid.NewV7()),
+			ID:   uuid.Must(uuid.NewV7()),
 		},
 	}:
 	case <-time.Tick(time.Second * 10):

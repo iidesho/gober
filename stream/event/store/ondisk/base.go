@@ -36,7 +36,7 @@ var (
 type storeEvent struct {
 	Created  time.Time
 	Event    store.Event
-	Position uint64
+	Position store.StreamPosition
 	// Version  uint8 // Do not need this to be in memory as the version is only relevant for on disk format
 }
 
@@ -49,19 +49,22 @@ func (e storeEvent) WriteBytes(w io.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	err = bcts.WriteSmallString(w, e.Event.Type)
-	if err != nil {
-		return
-	}
-	err = bcts.WriteBytes(w, e.Event.Data)
-	if err != nil {
-		return
-	}
-	err = bcts.WriteBytes(w, e.Event.Metadata)
-	if err != nil {
-		return
-	}
-	err = bcts.WriteStaticBytes(w, e.Event.Id.Bytes())
+	/*
+		err = bcts.WriteSmallString(w, e.Event.Type)
+		if err != nil {
+			return
+		}
+		err = bcts.WriteBytes(w, e.Event.Data)
+		if err != nil {
+			return
+		}
+		err = bcts.WriteBytes(w, e.Event.Metadata)
+		if err != nil {
+			return
+		}
+		err = bcts.WriteStaticBytes(w, e.Event.ID.Bytes())
+	*/
+	err = e.Event.WriteBytes(w)
 	if err != nil {
 		return
 	}
@@ -85,19 +88,22 @@ func (e *storeEvent) ReadBytes(r io.Reader) (err error) {
 	if err != nil {
 		return
 	}
-	err = bcts.ReadSmallString(r, &e.Event.Type)
-	if err != nil {
-		return
-	}
-	err = bcts.ReadBytes(r, &e.Event.Data)
-	if err != nil {
-		return
-	}
-	err = bcts.ReadBytes(r, &e.Event.Metadata)
-	if err != nil {
-		return
-	}
-	err = bcts.ReadStaticBytes(r, e.Event.Id[:])
+	/*
+		err = bcts.ReadSmallString(r, &e.Event.Type)
+		if err != nil {
+			return
+		}
+		err = bcts.ReadBytes(r, &e.Event.Data)
+		if err != nil {
+			return
+		}
+		err = bcts.ReadBytes(r, &e.Event.Metadata)
+		if err != nil {
+			return
+		}
+		err = bcts.ReadStaticBytes(r, e.Event.ID[:])
+	*/
+	e.Event, err = bcts.ReadReader[store.Event](r)
 	if err != nil {
 		return
 	}
@@ -120,18 +126,18 @@ type Stream struct {
 }
 
 func Init(name string, ctx context.Context) (s *Stream, err error) {
-	writeChan := make(chan store.WriteEvent)
+	writeChan := make(chan store.WriteEvent, 100)
 	os.Mkdir("streams", 0750)
 	f, err := os.OpenFile(fmt.Sprintf("streams/%s", name), os.O_CREATE|os.O_RDONLY, 0640)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	r := f
+	// r := f
 	// j := json.NewDecoder(f)
 	var se storeEvent
-	p := uint64(0)
-	for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
+	p := store.STREAM_START
+	for err = se.ReadBytes(f); err == nil; err = se.ReadBytes(f) {
 		if p < se.Position {
 			p = se.Position
 		}
@@ -154,7 +160,6 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 		writeChan: writeChan,
 		ctx:       ctx,
 	}
-	s.data.len.Store(p)
 	if metrics.Registry != nil && writeCount == nil {
 		writeCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "ondisk_event_write_count",
@@ -189,7 +194,7 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 			return nil, err
 		}
 	}
-	s.data.len.Store(p)
+	s.data.len.Store(uint64(p))
 	go writeStream(s, writeChan)
 	return s, nil
 }
@@ -198,75 +203,95 @@ func writeStream(s *Stream, writes <-chan store.WriteEvent) {
 	defer func() {
 		r := recover()
 		if r == nil {
+			log.Warning("gracefull exit of write staerm")
 			return
 		}
 		log.WithError(fmt.Errorf("%v", r)).Error("recovering write stream", "stream", s.name)
-		writeStream(s, writes)
+		go writeStream(s, writes)
 	}()
-	w := bufio.NewWriter(s.data.db)
+	w := bufio.NewWriterSize(s.data.db, 64*KB)
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
 		case e := <-writes:
-			func() {
-				if writeCount != nil {
-					start := time.Now()
-					defer func() {
-						writeCount.WithLabelValues(s.name).Inc()
-						writeTimeTotal.WithLabelValues(s.name).
-							Add(float64(time.Since(start).Microseconds()))
-					}()
-				}
-				defer func() {
-					if e.Status != nil {
-						close(e.Status)
-					}
-				}()
-				nextPoss := s.data.len.Load() + 1
-				se := storeEvent{
-					Event: e.Event,
-					// Position: s.data.len.Add(1),
-					Position: nextPoss,
-					Created:  time.Now(),
-				}
-				err := se.WriteBytes(w)
-				//_, err := w.Write(se.Bytes())
-				// Should trunc the file to size minus n returned here on error
-				//err := binary.Write(s.data.db, binary.LittleEndian, se)
-				if err != nil {
-					log.WithError(err).Error("while writing event to buffer")
-					if e.Status != nil {
-						e.Status <- store.WriteStatus{
-							Error: err,
-						}
-					}
+			pos := s.data.len.Load() + 1
+			err := s.writeEvent(w, e, pos)
+			if err != nil {
+				log.WithError(err).Error("while writing event to file")
+				w.Reset(s.data.db)
+				continue
+			}
+			i := uint64(1)
+		batcher:
+			for range 1000 {
+				select {
+				case <-s.ctx.Done():
 					return
-				}
-				err = w.Flush()
-				if err != nil {
-					log.WithError(err).Error("while writing event to file")
-					if e.Status != nil {
-						e.Status <- store.WriteStatus{
-							Error: err,
-						}
+				case e := <-writes:
+					err := s.writeEvent(w, e, pos+i)
+					if err != nil {
+						log.WithError(err).Error("while writing event to file")
+						break batcher
 					}
-					return
+					i++
+				default:
+					break batcher
 				}
-				s.data.len.Add(1)
-				// s.data.position = se.Position
-				if e.Status != nil {
-					e.Status <- store.WriteStatus{
-						Time:     se.Created,
-						Position: se.Position,
-					}
-				}
-
-				// Should not be needed as the file is opened with os.SYNC s.data.db.Sync() //Should add this outside a read while readable loop to reduce overhead, possibly
-				s.data.newData.Broadcast()
-			}()
+			}
+			err = w.Flush()
+			if err != nil {
+				log.WithError(err).Error("while flushing event to file")
+				w.Reset(s.data.db)
+				continue
+			}
+			s.data.len.Add(i)
+			s.data.newData.Broadcast()
 		}
 	}
+}
+
+func (s *Stream) writeEvent(w io.Writer, e store.WriteEvent, pos uint64) error {
+	if writeCount != nil {
+		start := time.Now()
+		defer func() {
+			writeCount.WithLabelValues(s.name).Inc()
+			writeTimeTotal.WithLabelValues(s.name).
+				Add(float64(time.Since(start).Microseconds()))
+		}()
+	}
+	defer func() {
+		if e.Status != nil {
+			close(e.Status)
+		}
+	}()
+	se := storeEvent{
+		Event: e.Event,
+		// Position: s.data.len.Add(1),
+		Position: store.StreamPosition(pos),
+		Created:  time.Now(),
+	}
+	err := se.WriteBytes(w)
+	//_, err := w.Write(se.Bytes())
+	// Should trunc the file to size minus n returned here on error
+	//err := binary.Write(s.data.db, binary.LittleEndian, se)
+	if err != nil {
+		log.WithError(err).Error("while writing event to buffer")
+		if e.Status != nil {
+			e.Status <- store.WriteStatus{
+				Error: err,
+			}
+		}
+		return err
+	}
+	// s.data.position = se.Position
+	if e.Status != nil {
+		e.Status <- store.WriteStatus{
+			Time:     se.Created,
+			Position: se.Position,
+		}
+	}
+	return nil
 }
 
 func (s *Stream) Write() chan<- store.WriteEvent {
@@ -277,13 +302,18 @@ func (s *Stream) Stream(
 	from store.StreamPosition,
 	ctx context.Context,
 ) (out <-chan store.ReadEvent, err error) {
-	eventChan := make(chan store.ReadEvent, 2)
+	eventChan := make(chan store.ReadEvent, 1000)
 	out = eventChan
-	go readStream(s, eventChan, uint64(from), ctx)
+	go readStream(s, eventChan, from, ctx)
 	return
 }
 
-func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx context.Context) {
+func readStream(
+	s *Stream,
+	events chan<- store.ReadEvent,
+	position store.StreamPosition,
+	ctx context.Context,
+) {
 	exit := false
 	defer func() {
 		if exit {
@@ -291,21 +321,25 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 		}
 	}()
 	defer func() {
+		if exit {
+			return
+		}
 		r := recover()
 		if r == nil {
 			return
 		}
 		log.WithError(fmt.Errorf("%v", r)).Error("recovering read stream", "stream", s.name)
-		readStream(s, events, position, ctx)
+		go readStream(s, events, position, ctx)
 	}()
 	db, err := os.OpenFile(fmt.Sprintf("streams/%s", s.name), os.O_RDONLY, 0640)
 	// db, err := os.OpenFile(es.data.db.Name(), os.O_RDONLY, 0640)
 	if err != nil {
 		log.WithError(err).Fatal("while opening stream file")
+		exit = true
 		return
 	}
-	r := db
 	defer db.Close()
+	r := bufio.NewReaderSize(db, 64*KB)
 	select {
 	case <-ctx.Done():
 		exit = true
@@ -316,17 +350,18 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 	default:
 	}
 	// position := uint64(from)
-	if position == uint64(store.STREAM_END) {
-		position = uint64(s.data.len.Load())
+	if position == store.STREAM_END {
+		position = store.StreamPosition(s.data.len.Load())
 	}
-	readTo := uint64(0)
+	readTo := store.STREAM_START
 	var se storeEvent
 	for readTo < position {
 		err = se.ReadBytes(r)
 		// err = binary.Read(db, binary.LittleEndian, &se)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				time.Sleep(time.Millisecond * 250)
+				log.Fatal("eof while reading up to position", "cur", position, "want", readTo)
+				// time.Sleep(time.Millisecond * 250)
 				continue
 			}
 			log.WithError(err).Fatal("while unmarshalling event from store catchup", "name", s.name)
@@ -344,6 +379,9 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 			exit = true
 			return
 		default:
+			pos, err := db.Seek(0, io.SeekCurrent)
+			log.WithError(err).Fatal("failed seek")
+			pos = pos - int64(r.Buffered())
 			for err = se.ReadBytes(r); err == nil; err = se.ReadBytes(r) {
 				if writeCount != nil {
 					start = time.Now()
@@ -358,7 +396,7 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 					return
 				case events <- store.ReadEvent{
 					Event:    se.Event,
-					Position: se.Position,
+					Position: store.StreamPosition(se.Position),
 					Created:  se.Created,
 				}:
 				}
@@ -368,9 +406,18 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 					readTimeTotal.WithLabelValues(s.name).
 						Add(float64(time.Since(start).Microseconds()))
 				}
+				pos, err = db.Seek(0, io.SeekCurrent)
+				log.WithError(err).Fatal("failed seek")
+				pos = pos - int64(r.Buffered())
 			}
 			if !errors.Is(err, io.EOF) {
-				time.Sleep(time.Second)
+				time.Sleep(time.Millisecond * 10)
+				if errors.Is(err, io.ErrUnexpectedEOF) {
+					db.Seek(pos, io.SeekStart)
+					r.Reset(db)
+					log.WithError(err).Notice("while reading event from store", "name", s.name)
+					continue
+				}
 				log.WithError(err).Fatal("while reading event from store", "name", s.name)
 			}
 			log.Trace(
@@ -384,15 +431,19 @@ func readStream(s *Stream, events chan<- store.ReadEvent, position uint64, ctx c
 				// "dp",
 				// s.data.position,
 			)
-			if position >= uint64(s.data.len.Load()) {
+			if position >= store.StreamPosition(s.data.len.Load()) {
 				log.Trace("waiting for new data", "name", s.name)
 				s.data.newData.L.Lock()
-				s.data.newData.Wait()
+				if position >= store.StreamPosition(s.data.len.Load()) {
+					s.data.newData.Wait()
+				}
 				s.data.newData.L.Unlock()
+				// time.Sleep(time.Millisecond)
 			} else {
 				log.Warning("hit EOF with data left in file??", "pos", position, "stream_pos", s.data.len.Load())
 				select {
 				case <-ctx.Done():
+					exit = true
 					return
 				case <-time.NewTimer(time.Second).C:
 				}
@@ -405,8 +456,8 @@ func (s *Stream) Name() string {
 	return s.name
 }
 
-func (s *Stream) End() (pos uint64, err error) {
+func (s *Stream) End() (pos store.StreamPosition, err error) {
 	// pos = s.data.position
-	pos = s.data.len.Load()
+	pos = store.StreamPosition(s.data.len.Load())
 	return
 }

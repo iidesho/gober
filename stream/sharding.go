@@ -1,67 +1,33 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/mergedcontext"
 	"github.com/iidesho/gober/metrics"
-	"github.com/prometheus/client_golang/prometheus"
-
-	// jsoniter "github.com/json-iterator/go"
-
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-var (
-	log            = sbragi.WithLocalScope(sbragi.LevelError)
-	writeCount     *prometheus.CounterVec
-	writeTimeTotal *prometheus.CounterVec
-	readCount      *prometheus.CounterVec
-	readTimeTotal  *prometheus.CounterVec
-)
-
-// var json = jsoniter.ConfigDefault
-
-type eventService[BT any, T bcts.ReadWriter[BT]] struct {
-	store  Stream
+type eventShardService[BT any, T bcts.ReadWriter[BT]] struct {
+	store  ShardableStream
 	writes chan<- event.WriteEventReadStatus[BT, T]
 	ctx    context.Context
 }
 
-type Filter func(md event.Metadata) bool
-
-type CryptoKeyProvider func(key string) string
-
-func StaticProvider(key string) func(_ string) string {
-	return func(_ string) string {
-		return key
-	}
-}
-
-func ReadAll() Filter {
-	return func(_ event.Metadata) bool { return false }
-}
-
-func ReadEventType(t event.Type) Filter {
-	return func(md event.Metadata) bool { return md.EventType != t }
-}
-
-func ReadDataType(t string) Filter {
-	return func(md event.Metadata) bool { return md.DataType != t }
-}
-
-func Init[BT any, T bcts.ReadWriter[BT]](
-	st Stream,
+func InitShardable[BT any, T bcts.ReadWriter[BT]](
+	st ShardableStream,
 	ctx context.Context,
-) (out FilteredStream[BT, T], err error) {
-	writes := make(chan event.WriteEventReadStatus[BT, T])
-	es := eventService[BT, T]{
+) (out ShardableFilteredStream[BT, T], err error) {
+	if st == nil {
+		return nil, fmt.Errorf("store can not be nil")
+	}
+	writes := make(chan event.WriteEventReadStatus[BT, T], 100)
+	es := eventShardService[BT, T]{
 		store:  st,
 		writes: writes,
 		ctx:    ctx,
@@ -103,40 +69,52 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	out = es
 	go func() {
 		var start time.Time
-		for we := range writes {
-			if writeCount != nil {
-				start = time.Now()
-			}
-			e := we.Event()
-			if e.Type == event.Invalid {
-				we.Close(store.WriteStatus{
-					Error: fmt.Errorf("event type %s, error:%v", e.Type, event.ErrInvalidType),
-				})
-				continue
-			}
-			e.Metadata.Stream = es.store.Name()
-			e.Metadata.EventType = e.Type
-			e.Metadata.Created = time.Now()
-			se := we.Store()
-			if se == nil {
-				continue
-			}
-			es.store.Write() <- *se
-			if writeCount != nil {
-				writeCount.WithLabelValues(es.Name(), "true").Inc()
-				writeTimeTotal.WithLabelValues(es.Name(), "true").
-					Add(float64(time.Since(start).Microseconds()))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case we, ok := <-writes:
+				if !ok {
+					return
+				}
+				if writeCount != nil {
+					start = time.Now()
+				}
+				e := we.Event()
+				if e.Type == event.Invalid {
+					we.Close(store.WriteStatus{
+						Error: fmt.Errorf("event type %s, error:%v", e.Type, event.ErrInvalidType),
+					})
+					continue
+				}
+				e.Metadata.Stream = es.store.Name()
+				e.Metadata.EventType = e.Type
+				e.Metadata.Created = time.Now()
+				se := we.Store()
+				if se == nil {
+					continue
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case es.store.Write() <- *se:
+				}
+				if writeCount != nil {
+					writeCount.WithLabelValues(es.Name(), "true").Inc()
+					writeTimeTotal.WithLabelValues(es.Name(), "true").
+						Add(float64(time.Since(start).Microseconds()))
+				}
 			}
 		}
 	}()
 	return
 }
 
-func (es eventService[BT, T]) Write() chan<- event.WriteEventReadStatus[BT, T] {
+func (es eventShardService[BT, T]) Write() chan<- event.WriteEventReadStatus[BT, T] {
 	return es.writes
 }
 
-func (es eventService[BT, T]) Store(
+func (es eventShardService[BT, T]) Store(
 	e event.Event[BT, T],
 ) (position store.StreamPosition, err error) {
 	var start time.Time
@@ -154,7 +132,17 @@ func (es eventService[BT, T]) Store(
 	return s.Position, s.Error
 }
 
-func (es eventService[BT, T]) Stream(
+func (es eventShardService[BT, T]) Stream(
+	eventTypes []event.Type,
+	from store.StreamPosition,
+	filter Filter,
+	ctx context.Context,
+) (out <-chan event.ReadEvent[BT, T], err error) {
+	return es.StreamShard("", eventTypes, from, filter, ctx)
+}
+
+func (es eventShardService[BT, T]) StreamShard(
+	shard string,
 	eventTypes []event.Type,
 	from store.StreamPosition,
 	filter Filter,
@@ -166,12 +154,17 @@ func (es eventService[BT, T]) Stream(
 		ets[eventType] = struct{}{}
 	}
 	mctx, cancel := mergedcontext.MergeContexts(es.ctx, ctx)
-	s, err := es.store.Stream(from, mctx)
+	var s <-chan store.ReadEvent
+	if shard == "" {
+		s, err = es.store.Stream(from, mctx)
+	} else {
+		s, err = es.store.StreamShard(shard, from, mctx)
+	}
 	if err != nil {
 		cancel()
 		return
 	}
-	eventChan := make(chan event.ReadEvent[BT, T])
+	eventChan := make(chan event.ReadEvent[BT, T], 100)
 	out = eventChan
 	go func() {
 		defer cancel()
@@ -236,19 +229,19 @@ func (es eventService[BT, T]) Stream(
 	return
 }
 
-func (es eventService[BT, T]) Name() string {
+func (es eventShardService[BT, T]) Name() string {
 	return es.store.Name()
 }
 
-func (es eventService[BT, T]) End() (pos store.StreamPosition, err error) {
+func (es eventShardService[BT, T]) End() (pos store.StreamPosition, err error) {
 	return es.store.End()
 }
 
-func (es eventService[BT, T]) FilteredEnd(
+func (es eventShardService[BT, T]) FilteredEnd(
 	eventTypes []event.Type,
 	filter Filter,
 ) (pos store.StreamPosition, err error) {
-	filterEventTypes := len(eventTypes) > 0
+	// filterEventTypes := len(eventTypes) > 0
 	ets := make(map[event.Type]struct{})
 	for _, eventType := range eventTypes {
 		ets[eventType] = struct{}{}
@@ -258,7 +251,7 @@ func (es eventService[BT, T]) FilteredEnd(
 	if err != nil {
 		return
 	}
-	s, err := es.store.Stream(store.STREAM_START, es.ctx)
+	s, err := es.Stream(eventTypes, store.STREAM_START, filter, es.ctx)
 	if err != nil {
 		return
 	}
@@ -266,23 +259,23 @@ func (es eventService[BT, T]) FilteredEnd(
 	for p < end {
 		e := <-s
 		p = e.Position
-		t := event.TypeFromString(e.Type)
-		if filterEventTypes {
-			if _, ok := ets[t]; !ok {
-				continue
-			}
-		}
-		var metadata event.Metadata
-		err := metadata.ReadBytes(bytes.NewReader(e.Metadata))
+		// t := event.TypeFromString(e.Type)
+		// if filterEventTypes {
+		// 	if _, ok := ets[t]; !ok {
+		// 		continue
+		// 	}
+		// }
+		// var metadata event.Metadata
+		// err := metadata.ReadBytes(bytes.NewReader(e.Metadata))
 		// err := json.Unmarshal(e.Metadata, &metadata)
-		log.WithError(err).
-			Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
+		// log.WithError(err).
+		// 	Debug("Unmarshalling event metadata", "event", string(e.Metadata), "metadata", metadata)
 		if err != nil {
 			continue
 		}
-		if filter(metadata) {
-			continue
-		}
+		// if filter(metadata) {
+		// 	continue
+		// }
 		pos = p
 	}
 	return

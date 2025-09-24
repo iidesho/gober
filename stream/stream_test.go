@@ -20,9 +20,11 @@ import (
 
 var json = jsoniter.ConfigDefault
 
-var es stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
-var ctxGlobal context.Context
-var ctxGlobalCancel context.CancelFunc
+var (
+	es              stream.FilteredStream[bcts.Bytes, *bcts.Bytes]
+	ctxGlobal       context.Context
+	ctxGlobalCancel context.CancelFunc
+)
 
 var STREAM_NAME = "TestServiceStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -36,8 +38,8 @@ type dd struct {
 }
 
 func TestInit(t *testing.T) {
-	//log, _ := sbragi.NewDebugLogger()
-	//log.SetDefault()
+	// log, _ := sbragi.NewDebugLogger()
+	// log.SetDefault()
 	ctxGlobal, ctxGlobalCancel = context.WithCancel(context.Background())
 	pers, err := ondisk.Init(STREAM_NAME, ctxGlobal)
 	if err != nil {
@@ -52,7 +54,7 @@ func TestInit(t *testing.T) {
 	es = est
 }
 
-var extraKey = bcts.TinyString("extra")
+var extraKey = "extra"
 
 func TestStoreOrder(t *testing.T) {
 	writer := es.Write()
@@ -60,9 +62,6 @@ func TestStoreOrder(t *testing.T) {
 		data := dd{
 			Id:   i,
 			Name: "test",
-		}
-		meta := md{
-			Extra: bcts.SmallBytes("extra metadata test"),
 		}
 		bdata, err := json.Marshal(data)
 		if err != nil {
@@ -74,8 +73,8 @@ func TestStoreOrder(t *testing.T) {
 			WithType(event.Created).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
-				Extra: map[bcts.TinyString]bcts.SmallBytes{
-					extraKey: meta.Extra,
+				Extra: map[string]string{
+					extraKey: "extra metadata test",
 				},
 			}).
 			BuildStore()
@@ -150,9 +149,6 @@ func TestStoreDuplicate(t *testing.T) {
 			Id:   i,
 			Name: "test",
 		}
-		meta := md{
-			Extra: bcts.SmallBytes("extra metadata test"),
-		}
 		bdata, err := json.Marshal(data)
 		if err != nil {
 			t.Error(err)
@@ -162,8 +158,8 @@ func TestStoreDuplicate(t *testing.T) {
 			WithType(event.Created).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
-				Extra: map[bcts.TinyString]bcts.SmallBytes{
-					extraKey: meta.Extra,
+				Extra: map[string]string{
+					extraKey: "extra metadata test",
 				},
 			}).
 			BuildStore()
@@ -228,7 +224,7 @@ func TestTairdown(t *testing.T) {
 }
 
 func BenchmarkStoreAndStream(b *testing.B) {
-	//log.SetLevel(log.ERROR) TODO: should add to sbragi
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	pers, err := ondisk.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
@@ -247,9 +243,6 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			Id:   i,
 			Name: "test" + b.Name(),
 		}
-		meta := md{
-			Extra: bcts.SmallBytes("extra metadata test"),
-		}
 		bdata, err := json.Marshal(data)
 		if err != nil {
 			b.Error(err)
@@ -259,8 +252,8 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			WithType(event.Created).
 			WithData(bdata).
 			WithMetadata(event.Metadata{
-				Extra: map[bcts.TinyString]bcts.SmallBytes{
-					extraKey: meta.Extra,
+				Extra: map[string]string{
+					extraKey: "extra metadata test",
 				},
 			}).
 			BuildStore()

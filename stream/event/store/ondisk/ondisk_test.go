@@ -67,7 +67,7 @@ func TestStore(t *testing.T) {
 	t.Log("store test write started")
 	es.Write() <- store.WriteEvent{
 		Event: store.Event{
-			Id:       uuid.Must(uuid.NewV7()),
+			ID:       uuid.Must(uuid.NewV7()),
 			Type:     string(event.Created),
 			Data:     bytes,
 			Metadata: bytes,
@@ -112,7 +112,7 @@ func TestStream(t *testing.T) {
 		t.Error(fmt.Errorf("missmatch inMemEvent types"))
 		return
 	}
-	if e.Id.String() == "" {
+	if e.ID.String() == "" {
 		t.Error(fmt.Errorf("missing inMemEvent id"))
 		return
 	}
@@ -155,7 +155,7 @@ func TestStoreMultiple(t *testing.T) {
 		status := make(chan store.WriteStatus, 1)
 		es.Write() <- store.WriteEvent{
 			Event: store.Event{
-				Id:       uuid.Must(uuid.NewV7()),
+				ID:       uuid.Must(uuid.NewV7()),
 				Type:     string(event.Created),
 				Data:     bytes,
 				Metadata: bytes,
@@ -184,7 +184,7 @@ func TestStreamMultiple(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	prevPos := uint64(position)
+	prevPos := position
 	for i := 0; i < 10; i++ {
 		t.Log("reading stream multiple", "i", i)
 		e := <-s
@@ -200,7 +200,7 @@ func TestStreamMultiple(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch inMemEvent types"))
 			return
 		}
-		if e.Id.String() == "" {
+		if e.ID.String() == "" {
 			t.Error(fmt.Errorf("missing inMemEvent id"))
 			return
 		}
@@ -234,7 +234,7 @@ func TestStoreAndStream(t *testing.T) {
 	status := make(chan store.WriteStatus, 1)
 	es.Write() <- store.WriteEvent{
 		Event: store.Event{
-			Id:   uuid.Must(uuid.NewV7()),
+			ID:   uuid.Must(uuid.NewV7()),
 			Type: string(event.Created),
 			Data: bytes,
 		},
@@ -262,12 +262,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 	}
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
-	es, err = ondisk.Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
-	if err != nil {
-		b.Error(err)
-		return
-	}
-	stream, err := es.Stream(store.STREAM_START, ctx)
+	es, err = ondisk.Init(fmt.Sprintf("b_%s", STREAM_NAME), ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -276,7 +271,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		status := make(chan store.WriteStatus, 1)
 		es.Write() <- store.WriteEvent{
 			Event: store.Event{
-				Id:   uuid.Must(uuid.NewV7()),
+				ID:   uuid.Must(uuid.NewV7()),
 				Type: string(event.Created),
 				Data: bytes,
 			},
@@ -296,15 +291,74 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			return
 		}
 	}
-	for i := 0; i < b.N; i++ {
+	stream, err := es.Stream(store.STREAM_START, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	pos, err := es.End()
+	for i := 0; i < int(pos); i++ {
 		e := <-stream
 		if e.Type != string(event.Created) {
 			b.Error(fmt.Errorf("missmatch inMemEvent types"))
 			return
 		}
-		if e.Id.String() == "" { // This is wrong, Not checking anything
+		if e.ID.String() == "" { // This is wrong, Not checking anything
 			b.Error(fmt.Errorf("missing inMemEvent id"))
 			return
 		}
+	}
+}
+
+func BenchmarkEND(b *testing.B) {
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
+	log.Debug("benchmark start", "b.N ", b.N)
+	data := make(map[string]any)
+	data["id"] = 1
+	data["name"] = "test"
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	es, err = ondisk.Init(fmt.Sprintf("b_%s-%s%d", STREAM_NAME, b.Name(), b.N), ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	for i := 0; i < b.N; i++ {
+		status := make(chan store.WriteStatus, 1)
+		es.Write() <- store.WriteEvent{
+			Event: store.Event{
+				ID:   uuid.Must(uuid.NewV7()),
+				Type: string(event.Created),
+				Data: bytes,
+			},
+			Status: status,
+		}
+		s := <-status
+		if s.Error != nil {
+			b.Error(s.Error)
+			return
+		}
+		if s.Time.After(time.Now()) {
+			b.Error("write time was after current time")
+			return
+		}
+		if s.Position == 0 {
+			b.Error("cannot write at position 0")
+			return
+		}
+	}
+	b.ResetTimer()
+	pos, err := es.End()
+	if err != nil {
+		b.Fatal(err)
+	}
+	if pos != store.StreamPosition(b.N-1) {
+		b.Errorf("wrong end pos, %d!=%d", pos, b.N-1)
 	}
 }

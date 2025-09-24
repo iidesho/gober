@@ -7,16 +7,18 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/iidesho/bragi/sbragi"
 	"github.com/gofrs/uuid"
+	log "github.com/iidesho/bragi/sbragi"
 
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
 )
 
-var es *Stream
-var ctx context.Context
-var cancel context.CancelFunc
+var (
+	es     *Stream
+	ctx    context.Context
+	cancel context.CancelFunc
+)
 
 var STREAM_NAME = "TestStoreAndStream_" + uuid.Must(uuid.NewV7()).String()
 
@@ -44,7 +46,7 @@ func TestStore(t *testing.T) {
 	status := make(chan store.WriteStatus, 1)
 	es.Write() <- store.WriteEvent{
 		Event: store.Event{
-			Id:   uuid.Must(uuid.NewV7()),
+			ID:   uuid.Must(uuid.NewV7()),
 			Type: string(event.Created),
 			Data: bytes,
 		},
@@ -79,7 +81,7 @@ func TestStream(t *testing.T) {
 		t.Error(fmt.Errorf("missmatch inMemEvent types"))
 		return
 	}
-	if e.Id.String() == "" {
+	if e.ID.String() == "" {
 		t.Error(fmt.Errorf("missing inMemEvent id"))
 		return
 	}
@@ -101,7 +103,7 @@ func TestStoreMultiple(t *testing.T) {
 		status := make(chan store.WriteStatus, 1)
 		es.Write() <- store.WriteEvent{
 			Event: store.Event{
-				Id:   uuid.Must(uuid.NewV7()),
+				ID:   uuid.Must(uuid.NewV7()),
 				Type: string(event.Created),
 				Data: bytes,
 			},
@@ -130,7 +132,7 @@ func TestStreamMultiple(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	var position uint64
+	var position store.StreamPosition
 	for i := 0; i < 10; i++ {
 		e := <-s
 		if position < e.Position {
@@ -143,7 +145,7 @@ func TestStreamMultiple(t *testing.T) {
 			t.Error(fmt.Errorf("missmatch inMemEvent types"))
 			return
 		}
-		if e.Id.String() == "" {
+		if e.ID.String() == "" {
 			t.Error(fmt.Errorf("missing inMemEvent id"))
 			return
 		}
@@ -153,10 +155,11 @@ func TestStreamMultiple(t *testing.T) {
 
 func TestTeardown(t *testing.T) {
 	cancel()
+	es = nil
 }
 
-func BenchmarkStoreAndStream(b *testing.B) {
-	//log.SetLevel(log.ERROR) TODO: should add to sbragi
+func BenchmarkStoreAndStreamBase(b *testing.B) {
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
 	log.Debug("b.N ", b.N)
 	data := make(map[string]interface{})
 	data["id"] = 1
@@ -167,12 +170,14 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
-	ctx, cancel = context.WithCancel(context.Background())
-	defer cancel()
-	es, err = Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
-	if err != nil {
-		b.Error(err)
-		return
+	if es == nil {
+		ctx, cancel = context.WithCancel(context.Background())
+		// defer cancel()
+		es, err = Init(fmt.Sprintf("%s_%s-%d", STREAM_NAME, b.Name(), b.N), ctx)
+		if err != nil {
+			b.Error(err)
+			return
+		}
 	}
 	stream, err := es.Stream(store.STREAM_START, ctx)
 	if err != nil {
@@ -183,7 +188,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		status := make(chan store.WriteStatus, 1)
 		es.Write() <- store.WriteEvent{
 			Event: store.Event{
-				Id:   uuid.Must(uuid.NewV7()),
+				ID:   uuid.Must(uuid.NewV7()),
 				Type: string(event.Created),
 				Data: bytes,
 			},
@@ -209,9 +214,130 @@ func BenchmarkStoreAndStream(b *testing.B) {
 			b.Error(fmt.Errorf("missmatch inMemEvent types"))
 			return
 		}
-		if e.Id.String() == "" {
+		if e.ID.String() == "" {
 			b.Error(fmt.Errorf("missing inMemEvent id"))
 			return
 		}
+	}
+}
+
+func BenchmarkStoreAndStream(b *testing.B) {
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
+	log.Debug("benchmark start", "b.N ", b.N)
+	data := make(map[string]any)
+	data["id"] = 1
+	data["name"] = "test"
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	if es == nil {
+		ctx, cancel = context.WithCancel(context.Background())
+		// defer cancel()
+		es, err = Init(fmt.Sprintf("b_%s", STREAM_NAME), ctx)
+		if err != nil {
+			b.Error(err)
+			return
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		status := make(chan store.WriteStatus, 1)
+		es.Write() <- store.WriteEvent{
+			Event: store.Event{
+				ID:   uuid.Must(uuid.NewV7()),
+				Type: string(event.Created),
+				Data: bytes,
+			},
+			Status: status,
+		}
+		s := <-status
+		if s.Error != nil {
+			b.Error(s.Error)
+			return
+		}
+		if s.Time.After(time.Now()) {
+			b.Error("write time was after current time")
+			return
+		}
+		if s.Position == 0 {
+			b.Error("cannot write at position 0")
+			return
+		}
+	}
+	stream, err := es.Stream(store.STREAM_START, ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	pos, err := es.End()
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	for i := 0; i < int(pos); i++ {
+		e := <-stream
+		if e.Type != string(event.Created) {
+			b.Error(fmt.Errorf("missmatch inMemEvent types"))
+			return
+		}
+		if e.ID.String() == "" { // This is wrong, Not checking anything
+			b.Error(fmt.Errorf("missing inMemEvent id"))
+			return
+		}
+	}
+}
+
+func BenchmarkEND(b *testing.B) {
+	// log.SetLevel(log.ERROR) TODO: should add to sbragi
+	log.Debug("benchmark start", "b.N ", b.N)
+	data := make(map[string]any)
+	data["id"] = 1
+	data["name"] = "test"
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	es, err = Init(fmt.Sprintf("b_%s-%s%d", STREAM_NAME, b.Name(), b.N), ctx)
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	for i := 0; i < b.N; i++ {
+		status := make(chan store.WriteStatus, 1)
+		es.Write() <- store.WriteEvent{
+			Event: store.Event{
+				ID:   uuid.Must(uuid.NewV7()),
+				Type: string(event.Created),
+				Data: bytes,
+			},
+			Status: status,
+		}
+		s := <-status
+		if s.Error != nil {
+			b.Error(s.Error)
+			return
+		}
+		if s.Time.After(time.Now()) {
+			b.Error("write time was after current time")
+			return
+		}
+		if s.Position == 0 {
+			b.Error("cannot write at position 0")
+			return
+		}
+	}
+	b.ResetTimer()
+	pos, err := es.End()
+	if err != nil {
+		b.Fatal(err)
+	}
+	if pos != store.StreamPosition(b.N) {
+		b.Errorf("wrong end pos, %d!=%d", pos, b.N)
 	}
 }

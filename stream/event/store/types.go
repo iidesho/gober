@@ -10,10 +10,12 @@ import (
 )
 
 type Event struct {
-	Type     string    `json:"type"`
-	Data     []byte    `json:"data"`
-	Metadata []byte    `json:"metadata"`
-	Id       uuid.UUID `json:"id"`
+	Type      string         `json:"type"`
+	Data      []byte         `json:"data"`
+	Metadata  []byte         `json:"metadata"`
+	ID        uuid.UUID      `json:"id"`
+	Shard     string         `json:"shard_key"`
+	GlobalPos StreamPosition `json:"global_pos"`
 }
 
 func (e Event) WriteBytes(w io.Writer) error {
@@ -29,7 +31,15 @@ func (e Event) WriteBytes(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = bcts.WriteStaticBytes(w, e.Id[:])
+	err = bcts.WriteStaticBytes(w, e.ID[:])
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteTinyString(w, e.Shard)
+	if err != nil {
+		return err
+	}
+	err = bcts.WriteUInt64(w, e.GlobalPos)
 	if err != nil {
 		return err
 	}
@@ -49,7 +59,15 @@ func (e *Event) ReadBytes(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	err = bcts.ReadStaticBytes(r, e.Id[:])
+	err = bcts.ReadStaticBytes(r, e.ID[:])
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadTinyString(r, &e.Shard)
+	if err != nil {
+		return err
+	}
+	err = bcts.ReadUInt64(r, &e.GlobalPos)
 	if err != nil {
 		return err
 	}
@@ -59,19 +77,19 @@ func (e *Event) ReadBytes(r io.Reader) error {
 type ReadEvent struct {
 	Created time.Time `json:"created"`
 	Event
-	Position uint64 `json:"position"`
+	Position StreamPosition `json:"position"`
 }
 
-func (r ReadEvent) WriteBytes(w io.Writer) error {
-	err := bcts.WriteTime(w, r.Created)
+func (e ReadEvent) WriteBytes(w io.Writer) error {
+	err := bcts.WriteTime(w, e.Created)
 	if err != nil {
 		return err
 	}
-	err = r.Event.WriteBytes(w)
+	err = e.Event.WriteBytes(w)
 	if err != nil {
 		return err
 	}
-	err = bcts.WriteUInt64(w, r.Position)
+	err = bcts.WriteUInt64(w, e.Position)
 	if err != nil {
 		return err
 	}
@@ -104,7 +122,7 @@ type WriteEvent struct {
 type WriteStatus struct {
 	Time     time.Time
 	Error    error
-	Position uint64
+	Position StreamPosition
 }
 
 type StreamPosition uint64

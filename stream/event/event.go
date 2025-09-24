@@ -108,6 +108,7 @@ type Event[BT any, T bcts.ReadWriter[BT]] struct {
 	Metadata Metadata `json:"metadata"`
 	Data     T        `json:"data"`
 	Type     Type     `json:"type"`
+	Shard    string   `json:"shard"`
 }
 
 func (e Event[BT, T]) WriteBytes(w io.Writer) (err error) {
@@ -157,7 +158,7 @@ func (e *Event[BT, T]) ReadBytes(r io.Reader) (err error) {
 type ReadEvent[BT any, T bcts.ReadWriter[BT]] struct {
 	Created time.Time `json:"created"`
 	Event[BT, T]
-	Position uint64 `json:"position"`
+	Position store.StreamPosition `json:"position"`
 }
 
 func (e ReadEvent[BT, T]) WriteBytes(w io.Writer) (err error) {
@@ -310,6 +311,7 @@ func (e *WriteEvent[BT, T]) Store() *store.WriteEvent {
 			Type:     string(e.event.Type),
 			Data:     dByte.Bytes(),
 			Metadata: mByte.Bytes(),
+			Shard:    e.event.Shard,
 		},
 		Status: e.status,
 	}

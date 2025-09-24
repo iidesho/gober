@@ -52,8 +52,9 @@ type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
 type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	ctx context.Context
 	// es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
-	es       stream.FilteredStream[sagaValue[BT, T], *sagaValue[BT, T]]
+	es       stream.ShardableFilteredStream[sagaValue[BT, T], *sagaValue[BT, T]]
 	statuses gsync.Map[uuid.UUID, status]
+	// startPosition gsync.Map[uuid.UUID, store.StreamPosition]
 	// errors   gsync.Map[uuid.UUID, chan error]
 	provider stream.CryptoKeyProvider
 	failed   chan<- uuid.UUID
@@ -66,7 +67,7 @@ type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 }
 
 func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
-	pers stream.Stream,
+	pers stream.ShardableStream,
 	serv webserver.Server,
 	dataTypeVersion string,
 	story Story[BT, T],
@@ -83,7 +84,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	dataTypeName := story.Name + "_saga"
 	token.Set(dataTypeName) // This should be configurable and secure
 	// es, err := consumer.New[sagaValue[BT, T]](pers, p, ctxTask)
-	es, err := stream.Init[sagaValue[BT, T]](pers, ctxTask)
+	es, err := stream.InitShardable[sagaValue[BT, T]](pers, ctxTask)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -104,6 +105,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		taskLock: sync.Mutex{},
 		story:    story,
 		statuses: gsync.NewMap[uuid.UUID, status](),
+		// startPosition: gsync.NewMap[uuid.UUID, store.StreamPosition](),
 		// errors:   gsync.NewMap[uuid.UUID, chan error](),
 		es:    es,
 		close: cancel,
@@ -161,7 +163,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	}
 	// Should probably move this out to an external function created by the user instead. For now adding a customizable worker pool size
 	// exec := make(chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]])
-	exec := make(chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]])
+	exec := make(chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]], workers)
 	for range workers {
 		// go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
 		go func(events <-chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
@@ -432,9 +434,28 @@ func (t *executor[BT, T]) handler(
 	events <-chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]],
 	execChan chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]],
 ) {
+	defer func() {
+		r := recover()
+		log.Fatal("exiting reader!!!", "r", r)
+	}()
+	lastEventTime := time.Now()
+	eventCount := 0
+
 	for e := range events {
+		eventCount++
+		now := time.Now()
+		gap := now.Sub(lastEventTime)
+
+		if gap > 100*time.Millisecond {
+			log.Debug("event gap detected",
+				"gap_ms", gap.Milliseconds(),
+				"saga_id", e.Data.status.id,
+				"event_count", eventCount,
+			)
+		}
+		lastEventTime = now
 		log := log.WithContext(e.Data.ctx)
-		log.Debug(
+		log.Trace(
 			"read event",
 			"event",
 			e,
@@ -451,6 +472,12 @@ func (t *executor[BT, T]) handler(
 		var actionI int
 		switch e.Data.status.state {
 		case StatePending:
+			// _, isNew := t.startPosition.GetOrInit(e.Data.status.id, func() store.StreamPosition {
+			// 	return e.Position
+			// })
+			// if isNew {
+			// 	log.Info("found new event", "id", e.Data.status.id.String())
+			// }
 			fallthrough
 		case StateSuccess:
 			t.taskLock.Lock()
@@ -602,14 +629,23 @@ func (t *executor[BT, T]) handler(
 			continue
 		}
 		// This is just temporary, it will change when Barry is done...
+		// log.Info("requesting consensus")
+		startCons := time.Now()
 		t.story.Actions[actionI].cons.Request(e.Data.status.consID)
-		log.Debug(
-			"won event",
-			"name",
-			t.es.Name(),
-			"id",
-			e.Data.status.id,
+		log.Debug("consensus timing",
+			"saga_id", e.Data.status.id,
+			"action", t.story.Actions[actionI].ID,
+			"duration", time.Since(startCons),
+			"action_index", actionI,
 		)
+		// log.Debug(
+		// 	"won event",
+		// 	"name",
+		// 	t.es.Name(),
+		// 	"id",
+		// 	e.Data.status.id,
+		// )
+		// log.Info("received consensus consensus")
 		// func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
 		func(e event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
 			log.Trace("time to do work, writing to exec chan")
@@ -648,6 +684,7 @@ func (t *executor[BT, T]) event(
 				"id": data.status.id.String(),
 			},
 		},
+		Shard: data.status.id.String(),
 	}
 	return
 }
@@ -691,11 +728,27 @@ func (t *executor[BT, T]) ReadErrors(
 	ctx context.Context,
 ) (<-chan error, func() State, error) {
 	curState := StateInvalid
-	ids := id.String()
+	idstr := id.String()
 	ctx, cancel := context.WithCancel(ctx)
-	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START, func(md event.Metadata) bool {
-		return md.Extra["id"] != ids
-	}, ctx)
+	// startPosition, ok := t.startPosition.Get(id)
+	// count := 0
+	// for !ok {
+	// 	count++
+	// 	time.Sleep(time.Millisecond * 10)
+	// 	startPosition, ok = t.startPosition.Get(id)
+	// 	if count > 3000 {
+	// 		log.Fatal("did not find start pos", "id", id.String())
+	// 	}
+	// }
+	s, err := t.es.StreamShard(
+		idstr,
+		event.AllTypes(),
+		store.STREAM_START,
+		func(md event.Metadata) bool {
+			return md.Extra["id"] != idstr
+		},
+		ctx,
+	)
 	if err != nil {
 		cancel()
 		return nil, nil, err
@@ -703,19 +756,25 @@ func (t *executor[BT, T]) ReadErrors(
 	out := make(chan error, ERROR_BUFFER_SIZE)
 	go func() {
 		defer close(out)
+		defer cancel()
 		for {
 			select {
 			case <-t.ctx.Done():
-				cancel()
+				log.Info("ReadErrors: context done")
 				return
 			case <-ctx.Done():
+				log.Info("ReadErrors: caller context done")
 				return
-			case e := <-s:
+			case e, ok := <-s:
+				if !ok {
+					log.Info("ReadErrors: stream closed")
+					return
+				}
 				curState = e.Data.status.state
 				log.WithContext(e.Data.ctx).Trace(
 					"read event in error",
 					"want",
-					ids,
+					idstr,
 					"got",
 					e.Metadata.Extra["id"],
 					"stepDone",
@@ -730,9 +789,10 @@ func (t *executor[BT, T]) ReadErrors(
 				if e.Data.status.err != nil {
 					select {
 					case <-t.ctx.Done():
-						cancel()
+						log.Info("ReadErrors: context done")
 						return
 					case <-ctx.Done():
+						log.Info("ReadErrors: caller context done")
 						return
 					case out <- e.Data.status.err:
 					}

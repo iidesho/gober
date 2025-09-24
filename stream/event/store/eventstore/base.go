@@ -45,7 +45,7 @@ type Stream struct {
 	name      string
 }
 
-const BATCH_SIZE = 1000 //5000 is an arbitrary number, should probably be based on something else.
+const BATCH_SIZE = 1000 // 5000 is an arbitrary number, should probably be based on something else.
 
 func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err error) {
 	writeChan := make(chan store.WriteEvent, BATCH_SIZE)
@@ -65,7 +65,7 @@ func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err er
 				i := 0
 				var statusChans []chan<- store.WriteStatus
 				events[i] = esdb.EventData{
-					EventID:     e.Id,
+					EventID:     e.ID,
 					ContentType: esdb.BinaryContentType,
 					EventType:   string(e.Type),
 					Data:        e.Data,
@@ -82,7 +82,7 @@ func NewStream(c *Client, stream string, ctx context.Context) (s *Stream, err er
 						return
 					case e = <-writeChan:
 						events[i] = esdb.EventData{
-							EventID:     e.Id,
+							EventID:     e.ID,
 							ContentType: esdb.BinaryContentType,
 							EventType:   string(e.Type),
 							Data:        e.Data,
@@ -210,12 +210,12 @@ func (s *Stream) readStream(
 		e := subEvent.EventAppeared.OriginalEvent()
 		es := store.ReadEvent{
 			Event: store.Event{
-				Id:       e.EventID,
+				ID:       e.EventID,
 				Type:     string(event.TypeFromString(e.EventType)),
 				Data:     e.Data,
 				Metadata: e.UserMetadata,
 			},
-			//Transaction: e.Position.Commit,
+			// Transaction: e.Position.Commit,
 			Position: e.EventNumber + 1,
 			Created:  e.CreatedDate,
 		}
@@ -225,8 +225,8 @@ func (s *Stream) readStream(
 }
 
 func (s *Stream) End() (pos uint64, err error) {
-	//ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	//defer cancel()
+	// ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	// defer cancel()
 	rs, err := s.c.c.ReadStream(s.ctx, s.name, esdb.ReadStreamOptions{
 		Direction: esdb.Backwards,
 		From:      esdb.End{},
