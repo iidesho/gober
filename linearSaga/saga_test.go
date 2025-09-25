@@ -694,6 +694,7 @@ var (
 )
 
 func BenchmarkSagaNew(b *testing.B) {
+	os.RemoveAll("./streams")
 	// ... saga Init ...
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // This will cancel the executor's context when the benchmark finishes
@@ -821,6 +822,7 @@ func BenchmarkSagaNew(b *testing.B) {
 }
 
 func BenchmarkSaga(b *testing.B) {
+	os.RemoveAll("./streams")
 	// ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	startGoroutines := runtime.NumGoroutine()

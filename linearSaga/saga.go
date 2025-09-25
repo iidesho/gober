@@ -412,32 +412,6 @@ func (t *executor[BT, T]) handler(
 			log.Fatal("exiting reader!!!", "r", r)
 		}
 	}()
-	lastEventTime := time.Now()
-	eventCount := 0
-	completedSagas := 0
-	startedSagas := 0
-	prevEventCount := 0
-	prevCompletedSagas := 0
-	prevStartedSagas := 0
-
-	go func() {
-		for {
-			select {
-			case <-t.ctx.Done():
-				return
-			case <-time.NewTicker(time.Second).C:
-				fmt.Printf(
-					"eventCount: %d/s\tstartedSagas: %d/s\tcompletedSagas: %d/s\n",
-					eventCount-prevEventCount,
-					startedSagas-prevStartedSagas,
-					completedSagas-prevCompletedSagas,
-				)
-				prevEventCount = eventCount
-				prevStartedSagas = startedSagas
-				prevCompletedSagas = completedSagas
-			}
-		}
-	}()
 
 	// for e := range events {
 	for {
@@ -449,18 +423,7 @@ func (t *executor[BT, T]) handler(
 			if !ok {
 				return
 			}
-			eventCount++
-			now := time.Now()
-			gap := now.Sub(lastEventTime)
 
-			if gap > 100*time.Millisecond {
-				log.Debug("event gap detected",
-					"gap_ms", gap.Milliseconds(),
-					"saga_id", e.Data.status.id,
-					"event_count", eventCount,
-				)
-			}
-			lastEventTime = now
 			log := log.WithContext(e.Data.ctx)
 			log.Trace(
 				"read event",
@@ -479,9 +442,6 @@ func (t *executor[BT, T]) handler(
 			var actionI int
 			switch e.Data.status.state {
 			case StatePending:
-				if e.Data.status.stepDone == "" {
-					startedSagas++
-				}
 				fallthrough
 			case StateSuccess:
 				// t.taskLock.Lock()
@@ -498,7 +458,6 @@ func (t *executor[BT, T]) handler(
 				log.Trace("success / pending found", "loc", "executor")
 				if actionI >= len(t.story.Actions) {
 					log.Trace("saga is completed", "loc", "executor")
-					completedSagas++
 					continue
 				}
 			case StatePaniced:
@@ -520,7 +479,6 @@ func (t *executor[BT, T]) handler(
 						"loc",
 						"executor",
 					)
-					completedSagas++
 					continue
 				}
 				actionI = findStep(t.story.Actions, e.Data.status.stepDone)
