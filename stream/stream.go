@@ -8,7 +8,6 @@ import (
 
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
-	"github.com/iidesho/gober/mergedcontext"
 	"github.com/iidesho/gober/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -103,7 +102,13 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 	out = es
 	go func() {
 		var start time.Time
-		for we := range writes {
+		for {
+			var we event.WriteEventReadStatus[BT, T]
+			select {
+			case <-es.ctx.Done():
+				return
+			case we = <-writes:
+			}
 			if writeCount != nil {
 				start = time.Now()
 			}
@@ -121,7 +126,11 @@ func Init[BT any, T bcts.ReadWriter[BT]](
 			if se == nil {
 				continue
 			}
-			es.store.Write() <- *se
+			select {
+			case <-es.ctx.Done():
+				return
+			case es.store.Write() <- *se:
+			}
 			if writeCount != nil {
 				writeCount.WithLabelValues(es.Name(), "true").Inc()
 				writeTimeTotal.WithLabelValues(es.Name(), "true").
@@ -165,8 +174,9 @@ func (es eventService[BT, T]) Stream(
 	for _, eventType := range eventTypes {
 		ets[eventType] = struct{}{}
 	}
-	mctx, cancel := mergedcontext.MergeContexts(es.ctx, ctx)
-	s, err := es.store.Stream(from, mctx)
+	// mctx, cancel := mergedcontext.MergeContexts(es.ctx, ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	s, err := es.store.Stream(from, ctx)
 	if err != nil {
 		cancel()
 		return
@@ -179,7 +189,9 @@ func (es eventService[BT, T]) Stream(
 		var start time.Time
 		for {
 			select {
-			case <-mctx.Done():
+			case <-es.ctx.Done():
+				return
+			case <-ctx.Done():
 				return
 			case e := <-s:
 				if readCount != nil {
@@ -215,7 +227,12 @@ func (es eventService[BT, T]) Stream(
 					continue
 				}
 
-				eventChan <- event.ReadEvent[BT, T]{
+				select {
+				case <-es.ctx.Done():
+					return
+				case <-ctx.Done():
+					return
+				case eventChan <- event.ReadEvent[BT, T]{
 					Event: event.Event[BT, T]{
 						Type:     t,
 						Data:     d,
@@ -224,6 +241,7 @@ func (es eventService[BT, T]) Stream(
 
 					Position: e.Position,
 					Created:  e.Created,
+				}:
 				}
 				if readCount != nil {
 					readCount.WithLabelValues(es.Name()).Inc()
@@ -264,7 +282,12 @@ func (es eventService[BT, T]) FilteredEnd(
 	}
 	log.WithError(err).Info("got stream end", "end", end, "stream", es.Name())
 	for p < end {
-		e := <-s
+		var e store.ReadEvent
+		select {
+		case <-es.ctx.Done():
+			return
+		case e = <-s:
+		}
 		p = e.Position
 		t := event.TypeFromString(e.Type)
 		if filterEventTypes {
