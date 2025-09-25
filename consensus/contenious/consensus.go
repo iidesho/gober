@@ -375,8 +375,14 @@ func (c *consensus) Request(id ConsID) {
 	}
 	if len(c.discoverer.Servers()) == 1 {
 		c.approved[id] = c.id
-		c.approvedC <- id
 		c.mutex.Unlock()
+		select {
+		case <-c.ctx.Done():
+			return
+		// case <-time.After(time.Minute):
+		// 	log.Fatal("timeout")
+		case c.approvedC <- id:
+		}
 		return // only 1 node, no need to send request
 	}
 	accs := gs.NewSlice[NodeID]()
@@ -407,11 +413,17 @@ func (c *consensus) Request(id ConsID) {
 			return v1 == v2
 		})
 	*/
-	c.distributor <- message{
+	select {
+	case <-c.ctx.Done():
+		return
+	// case <-time.After(time.Minute):
+	// 	log.Fatal("timeout")
+	case c.distributor <- message{
 		t:         request,
 		requester: c.id,
 		// sender:    c.id,
 		consID: id,
+	}:
 	}
 }
 
@@ -482,11 +494,15 @@ func (c *consensus) Completed(id ConsID) {
 	c.completed = append(c.completed, id)
 	delete(c.approved, id)
 	c.mutex.Unlock()
-	c.distributor <- message{
+	select {
+	case <-c.ctx.Done():
+		return
+	case c.distributor <- message{
 		t:         completed,
 		requester: c.id,
 		// sender:    c.id,
 		consID: id,
+	}:
 	}
 }
 
@@ -540,19 +556,45 @@ func (c *consensus) Abort(id ConsID) {
 	delete(c.approved, id)
 
 	c.mutex.Unlock()
-	c.distributor <- message{
+	select {
+	case <-c.ctx.Done():
+		return
+	case c.distributor <- message{
 		t:         failed,
 		requester: c.id,
 		// sender:    c.id,
 		consID: id,
+	}:
 	}
-	c.aborted <- id
+	select {
+	case <-c.ctx.Done():
+		return
+	case c.aborted <- id:
+	}
 }
 
 func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ctx context.Context) {
 	defer close(w)
-	w <- websocket.Write[[]byte]{Data: append(c.id.Bytes(), c.selfBytes...)}
-	read, ok := <-r
+	select {
+	case <-ctx.Done():
+		return
+	case <-c.ctx.Done():
+		return
+	// case <-time.After(time.Minute * 5):
+	// 	log.Fatal("timed out")
+	case w <- websocket.Write[[]byte]{Data: append(c.id.Bytes(), c.selfBytes...)}:
+	}
+	var ok bool
+	var read []byte
+	select {
+	case <-ctx.Done():
+		return
+	case <-c.ctx.Done():
+		return
+	// case <-time.After(time.Minute * 5):
+	// 	log.Fatal("timed out")
+	case read, ok = <-r:
+	}
 	if !ok {
 		return
 	}
@@ -604,11 +646,18 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 		}
 		return false
 	}) {
-		c.distributor <- message{
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.ctx.Done():
+			c.mutex.RUnlock()
+			return
+		case c.distributor <- message{
 			t:         request,
 			requester: c.id,
 			// sender:    c.id,
 			consID: cons,
+		}:
 		}
 	}
 	c.mutex.RUnlock()
@@ -635,6 +684,8 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 	)
 	defer func() {
 		select {
+		case <-ctx.Done():
+			return
 		case <-c.ctx.Done():
 			return
 		default:
@@ -653,7 +704,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 			if v == rid {
 				delete(c.approved, k)
 				log.Info("aborting", "id", k.String())
-				c.aborted <- k
+				select {
+				case <-ctx.Done():
+					return
+				case <-c.ctx.Done():
+					return
+				case c.aborted <- k:
+				}
 				log.Info("aborted", "id", k.String())
 				continue
 			}
@@ -687,11 +744,17 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 			}
 			if hasack { // if we are not aknowledger of their requests, we can skip next step
 				// always decline current approved one before approve another one
-				c.distributor <- message{
+				select {
+				case <-ctx.Done():
+					return
+				case <-c.ctx.Done():
+					return
+				case c.distributor <- message{
 					t:         decline,
 					requester: rid,
 					// sender:    c.id,
 					consID: k,
+				}:
 				}
 			}
 			if reqs.ReadItr().Contains(func(v req) bool {
@@ -719,15 +782,23 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				delete(c.requests, k)
 				c.approved[k] = top.requester
 				if top.requester == c.id {
-					c.approvedC <- k
+					select {
+					case <-c.ctx.Done():
+						return
+					case c.approvedC <- k:
+					}
 				}
 			}
 
-			c.distributor <- message{
+			select {
+			case <-c.ctx.Done():
+				return
+			case c.distributor <- message{
 				t:         approve,
 				requester: top.requester,
 				// sender:    c.id,
 				consID: k,
+			}:
 			}
 
 		}
@@ -862,7 +933,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						delete(c.requests, d.consID)
 						c.mutex.Unlock()
 						if d.requester == c.id {
-							c.approvedC <- d.consID
+							select {
+							case <-ctx.Done():
+								return
+							case <-c.ctx.Done():
+								return
+							case c.approvedC <- d.consID:
+							}
 						}
 						continue
 					}
@@ -877,7 +954,15 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					}
 				} else {
 					// Should distribute our approval when it is the first time we get this request
-					c.distributor <- *d
+					select {
+					case <-ctx.Done():
+						c.mutex.Unlock()
+						return
+					case <-c.ctx.Done():
+						c.mutex.Unlock()
+						return
+					case c.distributor <- *d:
+					}
 
 					if len(c.discoverer.Servers()) <= 3 { // there will be more than half approval
 						c.approved[d.consID] = d.requester
@@ -920,10 +1005,10 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				}
 				reqs, ok := c.requests[d.consID]
 				c.mutex.RUnlock()
-				if d.requester == c.id && reqs.ReadItr().
+				if d.requester == c.id && (!ok || reqs.ReadItr().
 					Filter(func(s req) bool {
 						return s.requester == d.requester
-					}).Count() == 0 {
+					}).Count() == 0) {
 					continue // we have already given up this request
 				}
 
@@ -972,11 +1057,17 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					if givingup { // if more than half declined, we will give up
 						delete(c.requests, d.consID)
 						c.mutex.Unlock()
-						c.distributor <- message{
+						select {
+						case <-ctx.Done():
+							return
+						case <-c.ctx.Done():
+							return
+						case c.distributor <- message{
 							t:         giveup,
 							requester: c.id,
 							// sender:    c.id,
 							consID: d.consID,
+						}:
 						}
 						continue
 					}
@@ -1041,6 +1132,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				reqs, ok := c.requests[d.consID]
 				if !ok {
 					// should log
+					c.mutex.Unlock()
 					continue
 				}
 				hasack := false
@@ -1072,11 +1164,17 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					continue
 				}
 				// always decline current approved one before approve another one
-				c.distributor <- message{
+				select {
+				case <-ctx.Done(): // Maybe for a lot of these writes we should not discard them. As we still want to keep the data sent by the other end even if they disconnect while we are processing...
+					return
+				case <-c.ctx.Done():
+					return
+				case c.distributor <- message{
 					t:         decline,
 					requester: rid,
 					// sender:    c.id,
 					consID: d.consID,
+				}:
 				}
 
 				// get highest voted candidate and approve it
@@ -1097,16 +1195,27 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					delete(c.requests, d.consID)
 					c.approved[d.consID] = top.requester
 					if top.requester == c.id {
-						c.approvedC <- d.consID
+						select {
+						case <-c.ctx.Done():
+							c.mutex.Unlock()
+							return
+						case c.approvedC <- d.consID:
+						}
 					}
 				}
 				c.mutex.Unlock()
 
-				c.distributor <- message{
+				select {
+				case <-ctx.Done(): // Maybe for a lot of these writes we should not discard them. As we still want to keep the data sent by the other end even if they disconnect while we are processing...
+					return
+				case <-c.ctx.Done():
+					return
+				case c.distributor <- message{
 					t:         approve,
 					requester: top.requester,
 					// sender:    c.id,
 					consID: d.consID,
+				}:
 				}
 
 			case failed:
@@ -1132,13 +1241,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				}
 				c.mutex.RLock()
 				node, ok := c.approved[d.consID]
+				c.mutex.RUnlock()
 				if !ok {
 					log.Warning(
 						"failed non existing consensus",
 						"id",
 						d.consID,
 					)
-					c.mutex.RUnlock()
 					continue
 				}
 				if node != d.requester {
@@ -1150,10 +1259,8 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						"appoved",
 						node,
 					)
-					c.mutex.RUnlock()
 					continue
 				}
-				c.mutex.RUnlock()
 				c.mutex.Lock()
 				node, ok = c.approved[d.consID]
 				if !ok {
@@ -1180,7 +1287,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 				delete(c.approved, d.consID)
 				log.Debug("deleted", "consents", c.requests)
 				c.mutex.Unlock()
-				c.aborted <- d.consID
+				select {
+				case <-ctx.Done(): // Maybe for a lot of these writes we should not discard them. As we still want to keep the data sent by the other end even if they disconnect while we are processing...
+					return
+				case <-c.ctx.Done():
+					return
+				case c.aborted <- d.consID:
+				}
 				continue
 			case request:
 				log.Trace(
@@ -1225,7 +1338,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 
 					c.mutex.Unlock()
 					d.t = decline
-					c.distributor <- *d
+					select {
+					case <-ctx.Done(): // Maybe for a lot of these writes we should not discard them. As we still want to keep the data sent by the other end even if they disconnect while we are processing...
+						return
+					case <-c.ctx.Done():
+						return
+					case c.distributor <- *d:
+					}
 					continue
 				}
 
@@ -1262,7 +1381,13 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 
 				c.mutex.Unlock()
 				d.t = approve
-				c.distributor <- *d
+				select {
+				case <-ctx.Done(): // Maybe for a lot of these writes we should not discard them. As we still want to keep the data sent by the other end even if they disconnect while we are processing...
+					return
+				case <-c.ctx.Done():
+					return
+				case c.distributor <- *d:
+				}
 			case completed:
 				log.Trace(
 					"received completed request",

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/iidesho/gober/bcts"
-	"github.com/iidesho/gober/mergedcontext"
 	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream/event"
 	"github.com/iidesho/gober/stream/event/store"
@@ -153,12 +152,13 @@ func (es eventShardService[BT, T]) StreamShard(
 	for _, eventType := range eventTypes {
 		ets[eventType] = struct{}{}
 	}
-	mctx, cancel := mergedcontext.MergeContexts(es.ctx, ctx)
+	// mctx, cancel := mergedcontext.MergeContexts(es.ctx, ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	var s <-chan store.ReadEvent
 	if shard == "" {
-		s, err = es.store.Stream(from, mctx)
+		s, err = es.store.Stream(from, ctx)
 	} else {
-		s, err = es.store.StreamShard(shard, from, mctx)
+		s, err = es.store.StreamShard(shard, from, ctx)
 	}
 	if err != nil {
 		cancel()
@@ -172,7 +172,9 @@ func (es eventShardService[BT, T]) StreamShard(
 		var start time.Time
 		for {
 			select {
-			case <-mctx.Done():
+			case <-es.ctx.Done():
+				return
+			case <-ctx.Done():
 				return
 			case e := <-s:
 				if readCount != nil {
@@ -208,7 +210,12 @@ func (es eventShardService[BT, T]) StreamShard(
 					continue
 				}
 
-				eventChan <- event.ReadEvent[BT, T]{
+				select {
+				case <-es.ctx.Done():
+					return
+				case <-ctx.Done():
+					return
+				case eventChan <- event.ReadEvent[BT, T]{
 					Event: event.Event[BT, T]{
 						Type:     t,
 						Data:     d,
@@ -217,11 +224,12 @@ func (es eventShardService[BT, T]) StreamShard(
 
 					Position: e.Position,
 					Created:  e.Created,
-				}
-				if readCount != nil {
-					readCount.WithLabelValues(es.Name()).Inc()
-					readTimeTotal.WithLabelValues(es.Name()).
-						Add(float64(time.Since(start).Microseconds()))
+				}:
+					if readCount != nil {
+						readCount.WithLabelValues(es.Name()).Inc()
+						readTimeTotal.WithLabelValues(es.Name()).
+							Add(float64(time.Since(start).Microseconds()))
+					}
 				}
 			}
 		}

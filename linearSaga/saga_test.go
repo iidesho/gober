@@ -315,8 +315,8 @@ forLoop:
 		t.Error("expected saga order missmatch", expectedFail, has)
 		return
 	}
-	// ctxGlobalCancel()
-	// s.Close()
+	ctxGlobalCancel()
+	s.Close()
 }
 
 type actBM struct{}
@@ -689,40 +689,46 @@ func BenchmarkSagaWithTiming(b *testing.B) {
 
 var (
 	edt    saga.Saga[bcts.TinyString, *bcts.TinyString]
-	i      = 1
+	i      = 2
 	allIDS = make([]uuid.UUID, 0)
 )
 
-func BenchmarkSaga(b *testing.B) {
+func BenchmarkSagaNew(b *testing.B) {
+	// ... saga Init ...
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // This will cancel the executor's context when the benchmark finishes
 	startGoroutines := runtime.NumGoroutine()
 	b.Logf("Starting with %d goroutines", startGoroutines)
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
-		for range ticker.C {
-			log.Info("runtime stats",
-				"goroutines", runtime.NumGoroutine(),
-			)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				log.Info("runtime stats",
+					"goroutines", runtime.NumGoroutine(),
+				)
+			}
 		}
 	}()
-	// if edt == nil {
-	// store, err := ondisk.Init("b", context.Background())
-	// if err != nil {
-	// 	b.Error(err)
-	// 	return
-	// }
+
 	store, err := sharding.NewShardedStream(fmt.Sprintf("bench-%d", time.Now().Unix()),
 		func(name string, ctx context.Context) (stream.Stream, error) {
-			return ondisk.Init(name, ctx)
+			// return ondisk.Init(name, ctx)
+			return inmemory.Init(name, ctx)
 		},
 		sharding.StaticRouter{}.Route,
-		context.Background())
+		ctx)
 	if err != nil {
+		cancel()
 		b.Error(err)
 		return
 	}
-	serv, err := webserver.Init(3133+1, true)
+	serv, err := webserver.Init(uint16(3133+i), true)
 	i += 4
 	if err != nil {
+		cancel()
 		b.Fatal(err)
 	}
 	edt, err = saga.Init(
@@ -732,20 +738,153 @@ func BenchmarkSaga(b *testing.B) {
 		stryBM,
 		cryptKeyProvider,
 		runtime.NumCPU()*100,
-		context.Background(),
+		ctx,
 	)
 	if err != nil {
+		cancel()
 		b.Error(err)
 		return
 	}
 	defer edt.Close()
 	go serv.Run()
 	defer serv.Shutdown()
+	defer cancel()
+
+	var wg sync.WaitGroup
+	sagaErrs := make(chan error, b.N) // Buffer for errors from all sagas
+
+	bv := bcts.TinyString(fmt.Sprintf("BENCHMARK_%d", b.N))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sagaCtx, sagaCancel := context.WithCancel(
+			context.Background(),
+		) // Context for this specific saga
+		sagaID, err := edt.ExecuteFirst(bv, sagaCtx)
+		if err != nil {
+			sagaCancel()
+			b.Errorf("Failed to start saga: %v", err)
+			continue
+		}
+
+		errCh, getStateFn, err := edt.ReadErrors(sagaID, sagaCtx)
+		if err != nil {
+			sagaCancel()
+			b.Errorf("Failed to read errors for saga %s: %v", sagaID, err)
+			continue
+		}
+
+		wg.Add(1)
+		go func(id uuid.UUID, cancelCtx context.CancelFunc, errs <-chan error, stateFn func() saga.State) {
+			defer wg.Done()
+			defer cancelCtx() // Crucial: Cancel the saga's context when this goroutine exits
+
+			for {
+				select {
+				case err, ok := <-errs:
+					if !ok { // Error channel closed, saga reader goroutine terminated
+						return
+					}
+					sagaErrs <- fmt.Errorf("Saga %s error: %v", id, err)
+				case <-time.After(10 * time.Second): // Timeout for saga completion (adjust as needed)
+					currentState := stateFn()
+					if currentState != saga.StatePending && currentState != saga.StateWorking {
+						// Saga should have completed/failed by now
+						sagaErrs <- fmt.Errorf("Saga %s timed out waiting for completion, final state: %s", id, currentState)
+						return
+					}
+					// Still pending/working, continue waiting
+				}
+				// Check saga state to know when it's truly done
+				currentState := stateFn()
+				if currentState == saga.StateSuccess || currentState == saga.StateFailed ||
+					currentState == saga.StatePaniced {
+					return // Saga completed, exit goroutine
+				}
+			}
+		}(
+			sagaID,
+			sagaCancel,
+			errCh,
+			getStateFn,
+		)
+	}
+
+	// Wait for all sagas to complete or timeout
+	wg.Wait()
+	b.StopTimer()
+
+	// Check for any collected errors
+	close(sagaErrs)
+	for err := range sagaErrs {
+		b.Error(err)
+	}
+}
+
+func BenchmarkSaga(b *testing.B) {
+	// ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	startGoroutines := runtime.NumGoroutine()
+	b.Logf("Starting with %d goroutines", startGoroutines)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				log.Info("runtime stats",
+					"goroutines", runtime.NumGoroutine(),
+				)
+			}
+		}
+	}()
+	// if edt == nil {
+	store, err := ondisk.Init("b", context.Background())
+	// if err != nil {
+	// 	b.Error(err)
+	// 	return
+	// }
+	// store, err := sharding.NewShardedStream(fmt.Sprintf("bench-%d", time.Now().Unix()),
+	// 	func(name string, ctx context.Context) (stream.Stream, error) {
+	// 		return ondisk.Init(name, ctx)
+	// 		// return inmemory.Init(name, ctx)
+	// 	},
+	// 	sharding.StaticRouter{}.Route,
+	// 	ctx)
+	if err != nil {
+		cancel()
+		b.Error(err)
+		return
+	}
+	serv, err := webserver.Init(uint16(3133+i), true)
+	i += 4
+	if err != nil {
+		cancel()
+		b.Fatal(err)
+	}
+	edt, err = saga.Init(
+		store,
+		serv,
+		"1.0.0",
+		stryBM,
+		cryptKeyProvider,
+		runtime.NumCPU()*100,
+		ctx,
+	)
+	if err != nil {
+		cancel()
+		b.Error(err)
+		return
+	}
+	defer edt.Close()
+	go serv.Run()
+	defer serv.Shutdown()
+	defer cancel()
 	// }
 	bv := bcts.TinyString(fmt.Sprintf("BENCHMARK_%d", b.N))
 	ids := make([]uuid.UUID, b.N)
 	for i := 0; i < b.N; i++ {
-		id, err := edt.ExecuteFirst(bv, context.Background())
+		id, err := edt.ExecuteFirst(bv, ctx)
 		if err != nil {
 			b.Error(err)
 			return
@@ -760,10 +899,10 @@ func BenchmarkSaga(b *testing.B) {
 		ids[i] = id
 		// fmt.Println("executed first", "time", time.Now(), "i", i, "id", ids[i].String())
 	}
+	b.Logf("started %d saga executions", b.N)
 	for i := 0; i < b.N; i++ {
 		// fmt.Println("reading errors", "time", time.Now(), "i", i, "id", ids[i].String())
-		// ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		errs, status, err := edt.ReadErrors(ids[i], context.Background())
+		errs, status, err := edt.ReadErrors(ids[i], ctx)
 		if err != nil {
 			b.Error(err)
 			return
@@ -772,21 +911,23 @@ func BenchmarkSaga(b *testing.B) {
 		for !done {
 			// fmt.Println("pre:", time.Now())
 			select {
-			case t := <-time.NewTimer(time.Second * 100).C:
-				fmt.Println("post:", t)
+			case <-time.NewTimer(time.Hour * 3).C:
 				b.Error("timed out")
 				return
 			case _, ok := <-errs:
 				if !ok {
 					done = true
 				}
+				runtime.Gosched()
 			}
 		}
 		// cancel()
 
-		if status() != saga.StateSuccess {
-			b.Error("saga failed")
+		state := status()
+		if state != saga.StateSuccess {
+			b.Error("saga failed", "status", state)
 			return
 		}
 	}
+	b.Logf("completed %d saga executions", b.N)
 }

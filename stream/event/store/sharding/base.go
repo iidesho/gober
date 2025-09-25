@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/iidesho/bragi/sbragi"
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/stream/event/store"
+	gsync "github.com/iidesho/gober/sync"
 )
 
 var log = sbragi.WithLocalScope(sbragi.LevelDebug)
@@ -22,9 +22,10 @@ type StreamFactory interface {
 
 // ShardedStream manages multiple shards with metadata tracking
 type ShardedStream struct {
-	meta       stream.Stream
-	shards     map[string]stream.Stream
-	shardsLock sync.RWMutex
+	meta stream.Stream
+	// shards     map[string]stream.Stream
+	shards gsync.Map[string, stream.Stream]
+	// shardsLock sync.RWMutex
 	// nextPos    atomic.Uint64
 	writeChan chan<- store.WriteEvent
 	// router     ShardRouter
@@ -92,8 +93,9 @@ func NewShardedStream(
 
 	writeChan := make(chan store.WriteEvent, 100)
 	s := &ShardedStream{
-		meta:      meta,
-		shards:    make(map[string]stream.Stream),
+		meta: meta,
+		// shards:    make(map[string]stream.Stream),
+		shards:    gsync.NewMap[string, stream.Stream](),
 		router:    router,
 		factory:   factory,
 		name:      name,
@@ -168,7 +170,8 @@ func (s *ShardedStream) loadShardsFromMeta(ctx context.Context) error {
 				if err != nil {
 					return fmt.Errorf("failed to load shard %s: %w", meta.ShardID, err)
 				}
-				s.shards[meta.ShardID] = shard
+				// s.shards[meta.ShardID] = shard
+				s.shards.Set(meta.ShardID, shard)
 			}
 		}
 	}
@@ -176,6 +179,7 @@ func (s *ShardedStream) loadShardsFromMeta(ctx context.Context) error {
 	// return nil
 }
 
+/*
 func (s *ShardedStream) getOrCreateShard(
 	shardID string,
 	ctx context.Context,
@@ -206,6 +210,7 @@ func (s *ShardedStream) getOrCreateShard(
 	s.shards[shardID] = shard
 	return shard, nil
 }
+*/
 
 func (s *ShardedStream) write(
 	event store.Event,
@@ -214,7 +219,18 @@ func (s *ShardedStream) write(
 	// shardID := s.router.Route(event)
 	shardID := s.router(event)
 
-	shard, err := s.getOrCreateShard(shardID, ctx)
+	// shard, err := s.getOrCreateShard(shardID, ctx)
+	var err error
+	shard, _ := s.shards.GetOrInit(shardID, func() stream.Stream {
+		var shard stream.Stream
+		shard, err = s.factory(fmt.Sprintf("%s-shard-%s", s.name, shardID), ctx)
+		if err != nil {
+			// return nil, fmt.Errorf("failed to create shard %s: %w", shardID, err)
+			err = fmt.Errorf("failed to create shard %s: %w", shardID, err)
+			log.WithError(err).Error("could not create shard")
+		}
+		return shard
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -264,9 +280,10 @@ func (s *ShardedStream) StreamShard(
 	from store.StreamPosition,
 	ctx context.Context,
 ) (<-chan store.ReadEvent, error) {
-	s.shardsLock.RLock()
-	shard, exists := s.shards[shardID]
-	s.shardsLock.RUnlock()
+	// s.shardsLock.RLock()
+	// shard, exists := s.shards[shardID]
+	// s.shardsLock.RUnlock()
+	shard, exists := s.shards.Get(shardID)
 
 	if !exists {
 		return nil, fmt.Errorf("shard %s not found", shardID)
@@ -277,11 +294,17 @@ func (s *ShardedStream) StreamShard(
 
 // GetShardIDs returns all known shard IDs
 func (s *ShardedStream) GetShardIDs() []string {
-	s.shardsLock.RLock()
-	defer s.shardsLock.RUnlock()
-
-	ids := make([]string, 0, len(s.shards))
-	for id := range s.shards {
+	// s.shardsLock.RLock()
+	// defer s.shardsLock.RUnlock()
+	//
+	// ids := make([]string, 0, len(s.shards))
+	// for id := range s.shards {
+	// 	ids = append(ids, id)
+	// }
+	// return ids
+	shards := s.shards.GetMap()
+	ids := make([]string, 0, len(shards))
+	for id := range shards {
 		ids = append(ids, id)
 	}
 	return ids
@@ -369,18 +392,31 @@ func (s *ShardedStream) Stream(
 				var exists bool
 				if reader, exists = shardReaders[meta.ShardID]; !exists {
 					// Try to get existing shard or create new one
-					shard, exists := s.shards[meta.ShardID]
-					if !exists {
-						// Dynamically load shard if not in initial map
-						// shard, err = z.factory.Init(
-						shard, err = s.factory(
+					// shard, exists := s.shards[meta.ShardID]
+					// if !exists {
+					// 	// Dynamically load shard if not in initial map
+					// 	// shard, err = z.factory.Init(
+					// 	shard, err = s.factory(
+					// 		fmt.Sprintf("%s-shard-%s", s.name, meta.ShardID),
+					// 		ctx,
+					// 	)
+					// 	if err != nil {
+					// 		continue
+					// 	}
+					// 	s.shards[meta.ShardID] = shard
+					// }
+					shard, _ := s.shards.GetOrInit(meta.ShardID, func() stream.Stream {
+						shard, err := s.factory(
 							fmt.Sprintf("%s-shard-%s", s.name, meta.ShardID),
 							ctx,
 						)
 						if err != nil {
-							continue
+							return nil
 						}
-						s.shards[meta.ShardID] = shard
+						return shard
+					})
+					if shard == nil {
+						continue
 					}
 
 					reader, err = shard.Stream(0, ctx)

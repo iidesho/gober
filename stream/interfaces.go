@@ -37,6 +37,7 @@ type FilteredStream[BT any, T bcts.ReadWriter[BT]] interface {
 	Name() string
 	FilteredEnd(eventTypes []event.Type, filter Filter) (pos store.StreamPosition, err error)
 }
+
 type ShardableFilteredStream[BT any, T bcts.ReadWriter[BT]] interface {
 	StreamShard(
 		shard string,

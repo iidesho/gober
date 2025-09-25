@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"runtime/debug"
-	"sync"
+
+	// "sync"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -13,7 +15,8 @@ import (
 	consensus "github.com/iidesho/gober/consensus/contenious"
 	"github.com/iidesho/gober/crypto"
 	"github.com/iidesho/gober/discovery/local"
-	"github.com/iidesho/gober/itr"
+
+	// "github.com/iidesho/gober/itr"
 	"github.com/iidesho/gober/metrics"
 	"github.com/iidesho/gober/stream"
 	"github.com/iidesho/gober/traces"
@@ -52,7 +55,7 @@ type Saga[BT bcts.Writer, T bcts.ReadWriter[BT]] interface {
 type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	ctx context.Context
 	// es       consumer.Consumer[sagaValue[BT, T], *sagaValue[BT, T]]
-	es       stream.ShardableFilteredStream[sagaValue[BT, T], *sagaValue[BT, T]]
+	es       stream.FilteredStream[sagaValue[BT, T], *sagaValue[BT, T]]
 	statuses gsync.Map[uuid.UUID, status]
 	// startPosition gsync.Map[uuid.UUID, store.StreamPosition]
 	// errors   gsync.Map[uuid.UUID, chan error]
@@ -62,12 +65,12 @@ type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	sagaName string
 	version  string
 	story    Story[BT, T]
-	tasks    []status
-	taskLock sync.Mutex
+	// tasks    []status
+	// taskLock sync.Mutex
 }
 
 func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
-	pers stream.ShardableStream,
+	pers stream.Stream,
 	serv webserver.Server,
 	dataTypeVersion string,
 	story Story[BT, T],
@@ -84,7 +87,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	dataTypeName := story.Name + "_saga"
 	token.Set(dataTypeName) // This should be configurable and secure
 	// es, err := consumer.New[sagaValue[BT, T]](pers, p, ctxTask)
-	es, err := stream.InitShardable[sagaValue[BT, T]](pers, ctxTask)
+	es, err := stream.Init[sagaValue[BT, T]](pers, ctxTask)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -102,7 +105,7 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	out := &executor[BT, T]{
 		sagaName: dataTypeName,
 		version:  dataTypeVersion,
-		taskLock: sync.Mutex{},
+		// taskLock: sync.Mutex{},
 		story:    story,
 		statuses: gsync.NewMap[uuid.UUID, status](),
 		// startPosition: gsync.NewMap[uuid.UUID, store.StreamPosition](),
@@ -126,6 +129,17 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		story.Actions[actI].cons = cons
 		story.Actions[actI].aborted = aborted
 		story.Actions[actI].approved = approved
+		go func() {
+			for {
+				select {
+				case <-out.ctx.Done():
+					return
+				case <-approved:
+				case <-aborted:
+				}
+				runtime.Gosched()
+			}
+		}()
 	}
 	if metrics.Registry != nil && executionCount == nil {
 		executionCount = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -167,258 +181,216 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 	for range workers {
 		// go func(events <-chan event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
 		go func(events <-chan event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
-			for e := range events {
-				func() {
-					startTime := time.Now()
-					actionI := findStep(story.Actions, e.Data.status.stepDone)
-					if actionI >= len(story.Actions) {
-						log.Fatal(
-							"this should never happen...",
-							"saga",
-							story.Name,
-							"actionLen",
-							len(story.Actions),
-							"gotI",
-							actionI,
-						)
-						return
-					}
-					var curActionI int
-					if e.Data.status.state == StateRetryable ||
-						e.Data.status.state == StateFailed { // story.Actions[actionI].Id {
-						curActionI = actionI
-					} else {
-						curActionI = actionI + 1
-					}
-					ctx := e.Data.ctx
-					var childSpan trace.Span
-					if traces.Traces != nil {
-						ctx, childSpan = traces.Traces.Start(
-							e.Data.ctx,
-							fmt.Sprintf(
-								"saga[%s] execute step %s id %s",
+			// for e := range events {
+			for {
+				select {
+				case <-out.ctx.Done():
+					return
+				case e := <-events:
+					func() {
+						startTime := time.Now()
+						actionI := findStep(story.Actions, e.Data.status.stepDone)
+						if actionI >= len(story.Actions) {
+							log.Fatal(
+								"this should never happen...",
+								"saga",
 								story.Name,
-								story.Actions[curActionI].ID,
-								e.Data.status.id.String(),
-							),
-						)
-						defer childSpan.End()
-					}
-					log := log.WithContext(ctx)
-					defer func() {
-						r := recover()
-						if r != nil {
-							log.WithError(
-								fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
-							).Error("panic while executing")
-							//TODO: add panic event
-							/* No need to chose error channel? but should ensure last error is added as event
-							if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-								select {
-								case errChan <- fmt.Errorf("panic while executing, recoverd: %v, stack: %s", r, string(debug.Stack())):
-								default: // errChan is full, probably no receiver
-									close(errChan)
-									out.errors.Delete(e.Data.status.id)
-								}
-							} else {
-								log.Error("error channel not found")
+								"actionLen",
+								len(story.Actions),
+								"gotI",
+								actionI,
+							)
+							return
+						}
+						var curActionI int
+						if e.Data.status.state == StateRetryable ||
+							e.Data.status.state == StateFailed { // story.Actions[actionI].Id {
+							curActionI = actionI
+						} else {
+							curActionI = actionI + 1
+						}
+						ctx := e.Data.ctx
+						var childSpan trace.Span
+						if traces.Traces != nil {
+							ctx, childSpan = traces.Traces.Start(
+								e.Data.ctx,
+								fmt.Sprintf(
+									"saga[%s] execute step %s id %s",
+									story.Name,
+									story.Actions[curActionI].ID,
+									e.Data.status.id.String(),
+								),
+							)
+							defer childSpan.End()
+						}
+						log := log.WithContext(ctx)
+						defer func() {
+							r := recover()
+							if r != nil {
+								log.WithError(
+									fmt.Errorf("recoverd: %v, stack: %s", r, string(debug.Stack())),
+								).Error("panic while executing")
+								id, err := uuid.NewV7()
+								log.WithError(err).Fatal("could not generage UUID")
+								log.WithError(out.writeEvent(sagaValue[BT, T]{
+									v: e.Data.v,
+									status: status{
+										stepDone:  e.Data.status.stepDone,
+										retryFrom: "",
+										duration:  time.Since(startTime),
+										state:     StatePaniced,
+										id:        e.Data.status.id,
+										consID:    consensus.ConsID(id),
+										err:       fmt.Errorf("recoveced panic: %v", r),
+									},
+									ctx: e.Data.ctx,
+								})).Error("writing panic event", "id", e.Data.status.id.String())
+								return
 							}
-							*/
-							id, err := uuid.NewV7()
-							log.WithError(err).Fatal("could not generage UUID")
+						}()
+						log.Debug("selected task", "id", e.Data.status.id, "event", e)
+						if curActionI >= 0 && // Falesafing the -1 case
+							(e.Data.status.state == StateRetryable ||
+								e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
+							state := StateFailed
+							start := time.Now()
+							reduceErr := story.Actions[curActionI].Handler.Reduce(&e.Data.v, ctx)
+							if reductionCount != nil {
+								var traceID string
+								if childSpan != nil && childSpan.SpanContext().IsValid() {
+									traceID = childSpan.SpanContext().TraceID().String()
+								} else {
+									traceID = "nil"
+								}
+								reductionCount.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
+									Inc()
+								reductionTimeTotal.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
+									Add(float64(time.Since(start).Microseconds()))
+							}
+
+							story.Actions[curActionI].cons.Completed(e.Data.status.consID)
+							retryFrom := e.Data.status.retryFrom
+							consID := e.Data.status.consID
+							if reduceErr == nil &&
+								e.Data.status.state == StateRetryable {
+								state = StateRetryable
+								if curActionI == 0 ||
+									story.Actions[curActionI].ID == e.Data.status.retryFrom {
+									retryFrom = ""
+									state = StatePending
+									id, err := uuid.NewV7()
+									log.WithError(err).Fatal("could not generage UUID")
+									consID = consensus.ConsID(id)
+								}
+							}
+
+							prevStepID := ""
+							if curActionI != 0 {
+								prevStepID = story.Actions[curActionI-1].ID
+							}
 							log.WithError(out.writeEvent(sagaValue[BT, T]{
 								v: e.Data.v,
 								status: status{
-									stepDone:  e.Data.status.stepDone,
-									retryFrom: "",
+									stepDone:  prevStepID,
+									retryFrom: retryFrom,
 									duration:  time.Since(startTime),
-									state:     StatePaniced,
+									state:     state,
 									id:        e.Data.status.id,
-									consID:    consensus.ConsID(id),
-									err:       fmt.Errorf("recoveced panic: %v", r),
+									consID:    consID,
+									err:       reduceErr,
 								},
 								ctx: e.Data.ctx,
-							})).Error("writing panic event", "id", e.Data.status.id.String())
+							})).Error("writing failed event", "id", e.Data.status.id.String())
 							return
 						}
-					}()
-					log.Debug("selected task", "id", e.Data.status.id, "event", e)
-					if curActionI >= 0 && // Falesafing the -1 case
-						(e.Data.status.state == StateRetryable ||
-							e.Data.status.state == StateFailed) { // story.Actions[actionI].Id {
-						state := StateFailed
+						// Ignoring this state for now
+						log.WithError(out.writeEvent(sagaValue[BT, T]{
+							v: e.Data.v,
+							status: status{
+								stepDone:  e.Data.status.stepDone,
+								retryFrom: e.Data.status.stepDone,
+								state:     StateWorking,
+								id:        e.Data.status.id,
+								consID:    e.Data.status.consID,
+							},
+							ctx: e.Data.ctx,
+						})).Error("writing panic event", "id", e.Data.status.id.String())
+						state := StateSuccess
 						start := time.Now()
-						reduceErr := story.Actions[curActionI].Handler.Reduce(&e.Data.v, ctx)
-						if reductionCount != nil {
+						execErr := story.Actions[curActionI].Handler.Execute(&e.Data.v, ctx)
+						if executionCount != nil {
 							var traceID string
 							if childSpan != nil && childSpan.SpanContext().IsValid() {
 								traceID = childSpan.SpanContext().TraceID().String()
 							} else {
 								traceID = "nil"
 							}
-							reductionCount.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
+							executionCount.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
 								Inc()
-							reductionTimeTotal.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
+							executionTimeTotal.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
 								Add(float64(time.Since(start).Microseconds()))
 						}
-
-						//TODO: add failed event?
-						/* No need to chose error channel? but should ensure last error is added as event
-							if log. // Should not escalate
-								WithError(err).
-								Warning("there was an error while reducing saga part") {
-								if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-									select {
-									case errChan <- err:
-									default: // errChan is full, probably no receiver
-										close(errChan)
-										out.errors.Delete(e.Data.status.id)
-									}
-								} else {
-									log.Error("error channel not found")
+						if execErr != nil {
+							state := StateFailed
+							retryFrom := ""
+							stepDone := e.Data.status.stepDone
+							var retryError retryableError
+							if errors.As(execErr, &retryError) {
+								log.WithError(retryError.err).
+									Notice("there was an retryable error while executing task")
+								retryFrom = retryError.from
+								state = StateRetryable
+								stepDone = story.Actions[curActionI].ID
+								select {
+								case <-out.ctx.Done():
+									return
+								case <-time.NewTimer(time.Second * 10).C:
+									log.Warning("slept before retry", "duration", time.Second*10)
 								}
-						  }
-						if reduceErr != nil {
-							state = StateFailed
-						}
-						*/
-						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
-						story.Actions[curActionI].cons.Completed(e.Data.status.consID)
-						retryFrom := e.Data.status.retryFrom
-						consID := e.Data.status.consID
-						if reduceErr == nil &&
-							e.Data.status.state == StateRetryable {
-							state = StateRetryable
-							if curActionI == 0 ||
-								story.Actions[curActionI].ID == e.Data.status.retryFrom {
-								retryFrom = ""
-								state = StatePending
-								id, err := uuid.NewV7()
-								log.WithError(err).Fatal("could not generage UUID")
-								consID = consensus.ConsID(id)
+							} else {
+								log.WithError(execErr).
+									Warning("there was an error while executing task. not finishing")
 							}
+							id, err := uuid.NewV7()
+							log.WithError(err).Fatal("could not generage UUID")
+							log.WithError(out.writeEvent(sagaValue[BT, T]{
+								v: e.Data.v,
+								status: status{
+									stepDone:  stepDone,
+									retryFrom: retryFrom,
+									duration:  time.Since(startTime),
+									state:     state,
+									id:        e.Data.status.id,
+									consID:    consensus.ConsID(id),
+									err:       execErr,
+								},
+								ctx: e.Data.ctx,
+							})).Error("writing failed event", "id", e.Data.status.id.String())
+							return
 						}
-
-						prevStepID := ""
-						if curActionI != 0 {
-							prevStepID = story.Actions[curActionI-1].ID
+						if state != StateSuccess {
+							log.Fatal(
+								"Invalid saga state, should be success",
+								"state",
+								state,
+								"value",
+								e.Data,
+							)
 						}
 						log.WithError(out.writeEvent(sagaValue[BT, T]{
 							v: e.Data.v,
 							status: status{
-								stepDone:  prevStepID,
-								retryFrom: retryFrom,
-								duration:  time.Since(startTime),
-								state:     state,
-								id:        e.Data.status.id,
-								consID:    consID,
-								err:       reduceErr,
+								stepDone: story.Actions[curActionI].ID,
+								duration: time.Since(startTime),
+								state:    state,
+								id:       e.Data.status.id,
+								consID:   e.Data.status.consID, // consensus.ConsID(rid),
 							},
 							ctx: e.Data.ctx,
-						})).Error("writing failed event", "id", e.Data.status.id.String())
-						return
-					}
-					// Ignoring this state for now
-					log.WithError(out.writeEvent(sagaValue[BT, T]{
-						v: e.Data.v,
-						status: status{
-							stepDone:  e.Data.status.stepDone,
-							retryFrom: e.Data.status.stepDone,
-							state:     StateWorking,
-							id:        e.Data.status.id,
-							consID:    e.Data.status.consID,
-						},
-						ctx: e.Data.ctx,
-					})).Error("writing panic event", "id", e.Data.status.id.String())
-					state := StateSuccess
-					start := time.Now()
-					execErr := story.Actions[curActionI].Handler.Execute(&e.Data.v, ctx)
-					if executionCount != nil {
-						var traceID string
-						if childSpan != nil && childSpan.SpanContext().IsValid() {
-							traceID = childSpan.SpanContext().TraceID().String()
-						} else {
-							traceID = "nil"
-						}
-						executionCount.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
-							Inc()
-						executionTimeTotal.WithLabelValues(story.Name, story.Actions[curActionI].ID, e.Data.status.id.String(), traceID).
-							Add(float64(time.Since(start).Microseconds()))
-					}
-					if execErr != nil {
-						// out.consensus.Abort(consensus.ConsID(e.Data.Status.id))
-						//TODO: add failed event?
-						/* No need to chose error channel? but should ensure last error is added as event
-						if errChan, ok := out.errors.Get(e.Data.status.id); ok {
-							select {
-							case errChan <- err:
-							default: // errChan is full, probably no receiver
-								close(errChan)
-								out.errors.Delete(e.Data.status.id)
-							}
-						} else {
-							log.Error("error channel not found")
-						}
-						*/
-						state := StateFailed
-						retryFrom := ""
-						stepDone := e.Data.status.stepDone
-						var retryError retryableError
-						if errors.As(execErr, &retryError) {
-							log.WithError(retryError.err).
-								Notice("there was an retryable error while executing task")
-							retryFrom = retryError.from
-							state = StateRetryable
-							stepDone = story.Actions[curActionI].ID
-							select {
-							case <-out.ctx.Done():
-								return
-							case <-time.NewTimer(time.Second * 10).C:
-								log.Warning("slept before retry", "duration", time.Second*10)
-							}
-						} else {
-							log.WithError(execErr).
-								Warning("there was an error while executing task. not finishing")
-						}
-						id, err := uuid.NewV7()
-						log.WithError(err).Fatal("could not generage UUID")
-						log.WithError(out.writeEvent(sagaValue[BT, T]{
-							v: e.Data.v,
-							status: status{
-								stepDone:  stepDone,
-								retryFrom: retryFrom,
-								duration:  time.Since(startTime),
-								state:     state,
-								id:        e.Data.status.id,
-								consID:    consensus.ConsID(id),
-								err:       execErr,
-							},
-							ctx: e.Data.ctx,
-						})).Error("writing failed event", "id", e.Data.status.id.String())
-						return
-					}
-					if state != StateSuccess {
-						log.Fatal(
-							"Invalid saga state, should be success",
-							"state",
-							state,
-							"value",
-							e.Data,
-						)
-					}
-					log.WithError(out.writeEvent(sagaValue[BT, T]{
-						v: e.Data.v,
-						status: status{
-							stepDone: story.Actions[curActionI].ID,
-							duration: time.Since(startTime),
-							state:    state,
-							id:       e.Data.status.id,
-							consID:   e.Data.status.consID, // consensus.ConsID(rid),
-						},
-						ctx: e.Data.ctx,
-					})).Error("writing panic event", "id", e.Data.status.id.String())
-					log.Trace("executed task", "event", e)
-				}()
+						})).Error("writing panic event", "id", e.Data.status.id.String())
+						log.Trace("executed task", "event", e)
+					}()
+				}
 			}
 		}(exec)
 	}
@@ -436,236 +408,239 @@ func (t *executor[BT, T]) handler(
 ) {
 	defer func() {
 		r := recover()
-		log.Fatal("exiting reader!!!", "r", r)
+		if r != nil {
+			log.Fatal("exiting reader!!!", "r", r)
+		}
 	}()
 	lastEventTime := time.Now()
 	eventCount := 0
+	completedSagas := 0
+	startedSagas := 0
+	prevEventCount := 0
+	prevCompletedSagas := 0
+	prevStartedSagas := 0
 
-	for e := range events {
-		eventCount++
-		now := time.Now()
-		gap := now.Sub(lastEventTime)
-
-		if gap > 100*time.Millisecond {
-			log.Debug("event gap detected",
-				"gap_ms", gap.Milliseconds(),
-				"saga_id", e.Data.status.id,
-				"event_count", eventCount,
-			)
-		}
-		lastEventTime = now
-		log := log.WithContext(e.Data.ctx)
-		log.Trace(
-			"read event",
-			"event",
-			e,
-			"data",
-			e.Data,
-			"id",
-			e.Data.status.id,
-			"state",
-			e.Data.status.state,
-			"step",
-			findStep(t.story.Actions, e.Data.status.stepDone)+1,
-		)
-		// e.Acc()
-		var actionI int
-		switch e.Data.status.state {
-		case StatePending:
-			// _, isNew := t.startPosition.GetOrInit(e.Data.status.id, func() store.StreamPosition {
-			// 	return e.Position
-			// })
-			// if isNew {
-			// 	log.Info("found new event", "id", e.Data.status.id.String())
-			// }
-			fallthrough
-		case StateSuccess:
-			t.taskLock.Lock()
-			i := itr.NewIterator(t.tasks).
-				Enumerate().
-				Contains(func(v status) bool { return v.id == e.Data.status.id })
-			if i >= 0 {
-				t.tasks[i] = e.Data.status
-			} else {
-				t.tasks = append(t.tasks, e.Data.status)
-			}
-			t.taskLock.Unlock()
-			actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
-			log.Trace("success / pending found", "loc", "executor")
-			if actionI >= len(t.story.Actions) {
-				/* no need
-				if errChan, ok := t.errors.Get(e.Data.status.id); ok {
-					close(errChan)
-					t.errors.Delete(e.Data.status.id)
-				}
-				*/
-				log.Trace("saga is completed", "loc", "executor")
-				continue
-			}
-		case StatePaniced:
-			fallthrough
-		case StateFailed:
-			t.taskLock.Lock()
-			i := itr.NewIterator(t.tasks).
-				Enumerate().
-				Contains(func(v status) bool { return v.id == e.Data.status.id })
-			if i >= 0 {
-				t.tasks[i] = e.Data.status
-			} else {
-				t.tasks = append(t.tasks, e.Data.status)
-			}
-			t.taskLock.Unlock()
-			if e.Data.status.stepDone == "" {
-				/* no need
-				if errChan, ok := t.errors.Get(e.Data.status.id); ok {
-					close(errChan)
-					t.errors.Delete(e.Data.status.id)
-				}
-				*/
-				log.Trace(
-					"rollback completed as there is no more completed steps",
-					"loc",
-					"executor",
-				)
-				continue
-			}
-			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
-			if actionI >= len(t.story.Actions) {
-				log.Fatal(
-					"this should never happen...",
-					"saga",
-					t.sagaName,
-					"actionLen",
-					len(t.story.Actions),
-					"gotI",
-					actionI,
-				)
-				continue
-			}
-			/* this no longer works as we are setting the stageDone when failing as well
-			if actionI-1 == len(t.story.Actions) {
-				log.Fatal(
-					"we should never roll back a successfull saga",
-					"saga",
-					t.sagaName,
-					"actionLen",
-					len(t.story.Actions),
-					"gotI",
-					actionI,
-				)
-				continue
-			}
-			*/
-			// This is just temporary, it will change when Barry is done...
-			log.Trace("failed / paniced found")
-		case StateRetryable:
-			t.taskLock.Lock()
-			i := itr.NewIterator(t.tasks).
-				Enumerate().
-				Contains(func(v status) bool { return v.id == e.Data.status.id })
-			if i >= 0 {
-				t.tasks[i] = e.Data.status
-			} else {
-				t.tasks = append(t.tasks, e.Data.status)
-			}
-			t.taskLock.Unlock()
-			if e.Data.status.stepDone == "" {
-				// t.story.Actions[0].cons.Request(e.Data.status.consID)
-				actionI = 0
-				e.Data.status.state = StatePending
-				break
-				/*
-					} else if t.story.Actions[actionI+1].Id == e.Data.status.retryFrom {
-						// This is just temporary, it will change when Barry is done...
-						t.story.Actions[actionI+1].cons.Request(
-							consensus.ConsID(e.Data.status.consID),
-						) // this might / will have issues as we are not aborting these while reverting
-						e.Data.status.state = StatePending
-				*/
-			}
-			actionI = findStep(t.story.Actions, e.Data.status.stepDone)
-			if actionI >= len(t.story.Actions) {
-				log.Fatal(
-					"this should never happen...",
-					"saga",
-					t.sagaName,
-					"actionLen",
-					len(t.story.Actions),
-					"gotI",
-					actionI,
-				)
-				continue
-			}
-			/* this no longer works as we are setting the stageDone when failing as well
-			if actionI == len(t.story.Actions)-1 {
-				log.Fatal(
-					"we should never roll back a successfull saga",
-					"saga",
-					t.sagaName,
-					"actionLen",
-					len(t.story.Actions),
-					"gotI",
-					actionI,
-				)
-				continue
-			}
-			*/
-			log.Trace("retryable found")
-		case StateWorking:
-			t.taskLock.Lock()
-			i := itr.NewIterator(t.tasks).
-				Enumerate().
-				Contains(func(v status) bool { return v.id == e.Data.status.id })
-			if i >= 0 {
-				t.tasks[i] = e.Data.status
-			} else {
-				t.tasks = append(t.tasks, e.Data.status)
-			}
-			t.taskLock.Unlock()
-			log.Trace("working found")
-			continue
-		default:
-			log.Fatal("Invalid state found", "state", e.Data.status.state, "status", e.Data.status)
-			continue
-		}
-		// This is just temporary, it will change when Barry is done...
-		// log.Info("requesting consensus")
-		startCons := time.Now()
-		t.story.Actions[actionI].cons.Request(e.Data.status.consID)
-		log.Debug("consensus timing",
-			"saga_id", e.Data.status.id,
-			"action", t.story.Actions[actionI].ID,
-			"duration", time.Since(startCons),
-			"action_index", actionI,
-		)
-		// log.Debug(
-		// 	"won event",
-		// 	"name",
-		// 	t.es.Name(),
-		// 	"id",
-		// 	e.Data.status.id,
-		// )
-		// log.Info("received consensus consensus")
-		// func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
-		func(e event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
-			log.Trace("time to do work, writing to exec chan")
+	go func() {
+		for {
 			select {
-			case execChan <- e:
-				log.Trace(
-					"wrote to exec chan",
-					"name",
-					t.es.Name(),
-					"id",
-					e.Data.status.id,
-				)
 			case <-t.ctx.Done():
-				log.Trace("service context timed out")
 				return
-				// case <-e.CTX.Done():
-				// 	log.Trace("event context timed out")
-				// 	return
+			case <-time.NewTicker(time.Second).C:
+				fmt.Printf(
+					"eventCount: %d/s\tstartedSagas: %d/s\tcompletedSagas: %d/s\n",
+					eventCount-prevEventCount,
+					startedSagas-prevStartedSagas,
+					completedSagas-prevCompletedSagas,
+				)
+				prevEventCount = eventCount
+				prevStartedSagas = startedSagas
+				prevCompletedSagas = completedSagas
 			}
-		}(e)
+		}
+	}()
+
+	// for e := range events {
+	for {
+		select {
+		case <-t.ctx.Done():
+			log.Trace("service context timed out")
+			return
+		case e, ok := <-events:
+			if !ok {
+				return
+			}
+			eventCount++
+			now := time.Now()
+			gap := now.Sub(lastEventTime)
+
+			if gap > 100*time.Millisecond {
+				log.Debug("event gap detected",
+					"gap_ms", gap.Milliseconds(),
+					"saga_id", e.Data.status.id,
+					"event_count", eventCount,
+				)
+			}
+			lastEventTime = now
+			log := log.WithContext(e.Data.ctx)
+			log.Trace(
+				"read event",
+				"event",
+				e,
+				"data",
+				e.Data,
+				"id",
+				e.Data.status.id,
+				"state",
+				e.Data.status.state,
+				"step",
+				findStep(t.story.Actions, e.Data.status.stepDone)+1,
+			)
+			// e.Acc()
+			var actionI int
+			switch e.Data.status.state {
+			case StatePending:
+				if e.Data.status.stepDone == "" {
+					startedSagas++
+				}
+				fallthrough
+			case StateSuccess:
+				// t.taskLock.Lock()
+				// i := itr.NewIterator(t.tasks).
+				// 	Enumerate().
+				// 	Contains(func(v status) bool { return v.id == e.Data.status.id })
+				// if i >= 0 {
+				// 	t.tasks[i] = e.Data.status
+				// } else {
+				// 	t.tasks = append(t.tasks, e.Data.status)
+				// }
+				// t.taskLock.Unlock()
+				actionI = findStep(t.story.Actions, e.Data.status.stepDone) + 1
+				log.Trace("success / pending found", "loc", "executor")
+				if actionI >= len(t.story.Actions) {
+					log.Trace("saga is completed", "loc", "executor")
+					completedSagas++
+					continue
+				}
+			case StatePaniced:
+				fallthrough
+			case StateFailed:
+				// t.taskLock.Lock()
+				// i := itr.NewIterator(t.tasks).
+				// 	Enumerate().
+				// 	Contains(func(v status) bool { return v.id == e.Data.status.id })
+				// if i >= 0 {
+				// 	t.tasks[i] = e.Data.status
+				// } else {
+				// 	t.tasks = append(t.tasks, e.Data.status)
+				// }
+				// t.taskLock.Unlock()
+				if e.Data.status.stepDone == "" {
+					log.Trace(
+						"rollback completed as there is no more completed steps",
+						"loc",
+						"executor",
+					)
+					completedSagas++
+					continue
+				}
+				actionI = findStep(t.story.Actions, e.Data.status.stepDone)
+				if actionI >= len(t.story.Actions) {
+					log.Fatal(
+						"this should never happen...",
+						"saga",
+						t.sagaName,
+						"actionLen",
+						len(t.story.Actions),
+						"gotI",
+						actionI,
+					)
+					continue
+				}
+				log.Trace("failed / paniced found")
+			case StateRetryable:
+				// t.taskLock.Lock()
+				// i := itr.NewIterator(t.tasks).
+				// 	Enumerate().
+				// 	Contains(func(v status) bool { return v.id == e.Data.status.id })
+				// if i >= 0 {
+				// 	t.tasks[i] = e.Data.status
+				// } else {
+				// 	t.tasks = append(t.tasks, e.Data.status)
+				// }
+				// t.taskLock.Unlock()
+				if e.Data.status.stepDone == "" {
+					actionI = 0
+					e.Data.status.state = StatePending
+					break
+				}
+				actionI = findStep(t.story.Actions, e.Data.status.stepDone)
+				if actionI >= len(t.story.Actions) {
+					log.Fatal(
+						"this should never happen...",
+						"saga",
+						t.sagaName,
+						"actionLen",
+						len(t.story.Actions),
+						"gotI",
+						actionI,
+					)
+					continue
+				}
+				log.Trace("retryable found")
+			case StateWorking:
+				// t.taskLock.Lock()
+				// i := itr.NewIterator(t.tasks).
+				// 	Enumerate().
+				// 	Contains(func(v status) bool { return v.id == e.Data.status.id })
+				// if i >= 0 {
+				// 	t.tasks[i] = e.Data.status
+				// } else {
+				// 	t.tasks = append(t.tasks, e.Data.status)
+				// }
+				// t.taskLock.Unlock()
+				log.Trace("working found")
+				continue
+			default:
+				log.Fatal(
+					"Invalid state found",
+					"state",
+					e.Data.status.state,
+					"status",
+					e.Data.status,
+				)
+				continue
+			}
+			// This is just temporary, it will change when Barry is done...
+			// log.Info("requesting consensus")
+			startCons := time.Now()
+			t.story.Actions[actionI].cons.Request(e.Data.status.consID)
+			log.Debug("consensus timing",
+				"saga_id", e.Data.status.id,
+				"action", t.story.Actions[actionI].ID,
+				"duration", time.Since(startCons),
+				"action_index", actionI,
+			)
+			// log.Debug(
+			// 	"won event",
+			// 	"name",
+			// 	t.es.Name(),
+			// 	"id",
+			// 	e.Data.status.id,
+			// )
+			// log.Info("received consensus consensus")
+			// func(e event.ReadEventWAcc[sagaValue[BT, T], *sagaValue[BT, T]]) {
+			func(e event.ReadEvent[sagaValue[BT, T], *sagaValue[BT, T]]) {
+				log.Trace("time to do work, writing to exec chan")
+				select {
+				case execChan <- e:
+					log.Trace(
+						"wrote to exec chan",
+						"name",
+						t.es.Name(),
+						"id",
+						e.Data.status.id,
+					)
+				case <-t.ctx.Done():
+					log.Trace("service context timed out")
+					return
+					// case <-time.After(time.Second * 10):
+					// 	log.Fatal("timed out writing to exec chan")
+					// case <-e.CTX.Done():
+					// 	log.Trace("event context timed out")
+					// 	return
+				}
+			}(e)
+			// case <-time.After(time.Second * 20):
+			// 	log.Fatal(
+			// 		"timed out reading new events",
+			// 		"completedSagas",
+			// 		completedSagas,
+			// 		"started",
+			// 		startedSagas,
+			// 		"events",
+			// 		eventCount,
+			// 	)
+		}
 	}
 }
 
@@ -690,10 +665,44 @@ func (t *executor[BT, T]) event(
 }
 
 func (t *executor[BT, T]) writeEvent(tt sagaValue[BT, T]) error {
+	// start := time.Now()
+	// defer func() {
+	// 	log.Notice("wrote event", "took", time.Since(start))
+	// }()
 	we := event.NewWriteEvent(t.event(event.Created, &tt))
-	t.es.Write() <- we
-	ws := <-we.Done()
-	return ws.Error
+	select {
+	case t.es.Write() <- we:
+	// case <-time.After(time.Second * 6):
+	// 	err := fmt.Errorf("failed to write event in time, %s=%s", "id", tt.status.id)
+	// 	log.WithError(err).Fatal("writing event")
+	// 	return err
+	case <-t.ctx.Done():
+		log.Info("Executor context cancelled during event write")
+		select {
+		case t.es.Write() <- we:
+		case <-time.After(time.Second * 6):
+			log.Info("timed out writing after ctx done")
+			// return nil
+		}
+		return nil
+	}
+	select {
+	case ws := <-we.Done():
+		return ws.Error
+	// case <-time.After(time.Second * 6):
+	// 	err := fmt.Errorf("failed to read write event status in time, %s=%s", "id", tt.status.id)
+	// 	log.WithError(err).Fatal("writing event")
+	// 	return err
+	case <-t.ctx.Done():
+		log.Info("Executor context cancelled during event write")
+		select {
+		case ws := <-we.Done():
+			return ws.Error
+		case <-time.After(time.Second * 6):
+			log.Info("timed out writing after ctx done")
+			return nil
+		}
+	}
 }
 
 func (t *executor[BT, T]) ExecuteFirst(
@@ -730,25 +739,19 @@ func (t *executor[BT, T]) ReadErrors(
 	curState := StateInvalid
 	idstr := id.String()
 	ctx, cancel := context.WithCancel(ctx)
-	// startPosition, ok := t.startPosition.Get(id)
-	// count := 0
-	// for !ok {
-	// 	count++
-	// 	time.Sleep(time.Millisecond * 10)
-	// 	startPosition, ok = t.startPosition.Get(id)
-	// 	if count > 3000 {
-	// 		log.Fatal("did not find start pos", "id", id.String())
-	// 	}
-	// }
-	s, err := t.es.StreamShard(
-		idstr,
-		event.AllTypes(),
-		store.STREAM_START,
+	// s, err := t.es.StreamShard(
+	// 	idstr,
+	// 	event.AllTypes(),
+	// 	store.STREAM_START,
+	// 	func(md event.Metadata) bool {
+	// 		return md.Extra["id"] != idstr
+	// 	},
+	// 	ctx,
+	// )
+	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START,
 		func(md event.Metadata) bool {
 			return md.Extra["id"] != idstr
-		},
-		ctx,
-	)
+		}, ctx)
 	if err != nil {
 		cancel()
 		return nil, nil, err
@@ -831,45 +834,9 @@ func (t *executor[BT, T]) ReadErrors(
 	return out, func() State { return curState }, nil
 }
 
-/*
-func (t *executor[BT, T]) Status(id uuid.UUID) (State, error) {
-	st := itr.NewIterator(t.tasks).
-		Filter(func(v status) bool { return v.id == id }).First()
-	if st.id == uuid.Nil {
-		log.Error("invalid saga id")
-		return StateInvalid, ErrExecutionNotFound
-	}
-	if st.state == StateInvalid {
-		log.Error("invalid saga status")
-		return StateInvalid, errors.New("saga status was invalid")
-	}
-	log.Info("got state", "step", st.stepDone, "state", st.state, "status", st)
-	if st.state == StateSuccess {
-		i := findStep(t.story.Actions, st.stepDone) + 1
-		if i >= len(t.story.Actions) {
-			log.Info("return success")
-			return StateSuccess, nil
-		}
-		log.Info("return pending")
-		return StatePending, nil
-	}
-	return st.state, nil
-}
-*/
-
 func (t *executor[BT, T]) Close() {
 	t.close()
 }
-
-/*
-func (t *executor[BT, T]) Tasks() (tasks []status) {
-	t.taskLock.Lock()
-	defer t.taskLock.Unlock()
-	tasks = make([]status, len(t.tasks))
-	copy(tasks, t.tasks)
-	return
-}
-*/
 
 func findStep[BT any, T bcts.ReadWriter[BT]](actions []Action[BT, T], id string) int {
 	if id == "" {
