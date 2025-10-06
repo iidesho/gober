@@ -105,9 +105,11 @@ func ReadTinyString[T ~string](r io.Reader, s *T) error {
 		return err
 	}
 	buf := make([]byte, l)
-	_, err = io.ReadFull(r, buf)
-	if err != nil {
-		return err
+	if l != 0 {
+		_, err = io.ReadFull(r, buf)
+		if err != nil {
+			return err
+		}
 	}
 	*s = T(buf)
 	return nil
@@ -120,9 +122,11 @@ func ReadSmallString[T ~string](r io.Reader, s *T) error {
 		return err
 	}
 	buf := make([]byte, l)
-	_, err = io.ReadFull(r, buf)
-	if err != nil {
-		return err
+	if l != 0 {
+		_, err = io.ReadFull(r, buf)
+		if err != nil {
+			return err
+		}
 	}
 	*s = T(buf)
 	return nil
@@ -135,9 +139,11 @@ func ReadString[T ~string](r io.Reader, s *T) error {
 		return err
 	}
 	buf := make([]byte, l)
-	_, err = io.ReadFull(r, buf)
-	if err != nil {
-		return err
+	if l != 0 {
+		_, err = io.ReadFull(r, buf)
+		if err != nil {
+			return err
+		}
 	}
 	*s = T(buf)
 	return nil
@@ -150,6 +156,9 @@ func ReadTinyBytes[T ~[]byte](r io.Reader, b *T) error {
 		return err
 	}
 	*b = make([]byte, l)
+	if l == 0 {
+		return nil
+	}
 	_, err = io.ReadFull(r, *b)
 	return err
 }
@@ -161,6 +170,9 @@ func ReadSmallBytes[T ~[]byte](r io.Reader, b *T) error {
 		return err
 	}
 	*b = make([]byte, l)
+	if l == 0 {
+		return nil
+	}
 	_, err = io.ReadFull(r, *b)
 	return err
 }
@@ -172,6 +184,9 @@ func ReadBytes[T ~[]byte](r io.Reader, b *T) error {
 		return err
 	}
 	*b = make([]byte, l)
+	if l == 0 {
+		return nil
+	}
 	_, err = io.ReadFull(r, *b)
 	return err
 }
