@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -102,8 +101,9 @@ func WriteTinyString[T ~string](w io.Writer, s T) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.Write([]byte(s))
-	return err
+	return writeAll(w, []byte(s))
+	// _, err = w.Write([]byte(s))
+	// return err
 }
 
 func WriteSmallString[T ~string](w io.Writer, s T) error {
@@ -118,8 +118,9 @@ func WriteSmallString[T ~string](w io.Writer, s T) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.Write([]byte(s))
-	return err
+	return writeAll(w, []byte(s))
+	// _, err = w.Write([]byte(s))
+	// return err
 }
 
 func WriteString[T ~string](w io.Writer, s T) error {
@@ -134,8 +135,9 @@ func WriteString[T ~string](w io.Writer, s T) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.Write([]byte(s))
-	return err
+	return writeAll(w, []byte(s))
+	// _, err = w.Write([]byte(s))
+	// return err
 }
 
 func WriteTinyBytes(w io.Writer, b []byte) error {
@@ -150,8 +152,9 @@ func WriteTinyBytes(w io.Writer, b []byte) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.Write(b)
-	return err
+	return writeAll(w, b)
+	// _, err = w.Write(b)
+	// return err
 }
 
 func WriteSmallBytes(w io.Writer, b []byte) error {
@@ -166,8 +169,9 @@ func WriteSmallBytes(w io.Writer, b []byte) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.Write(b)
-	return err
+	return writeAll(w, b)
+	// _, err = w.Write(b)
+	// return err
 }
 
 func WriteBytes(w io.Writer, b []byte) error {
@@ -179,18 +183,21 @@ func WriteBytes(w io.Writer, b []byte) error {
 	if l == 0 {
 		return nil
 	}
-	_, err = w.Write(b)
-	return err
+	return writeAll(w, b)
+	// _, err = w.Write(b)
+	// return err
 }
 
 func WriteStaticBytes(w io.Writer, b []byte) error {
-	_, err := w.Write(b)
-	return err
+	return writeAll(w, b)
+	// _, err := w.Write(b)
+	// return err
 }
 
 func WriteUUID(w io.Writer, b uuid.UUID) error {
-	_, err := w.Write(b[:])
-	return err
+	return writeAll(w, b[:])
+	// _, err := w.Write(b[:])
+	// return err
 }
 
 func WriteTime(w io.Writer, t time.Time) error {
@@ -352,8 +359,11 @@ func WriteMapAnyFunc[K comparable, T any](
 }
 
 func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
-	if len(s) > math.MaxUint32 {
+	if len(s) > int(maxUint32) {
 		return fmt.Errorf("slice length is too long")
+	}
+	if len(s) > 100000 {
+		log.Fatal("writing huge slice", "len", len(s))
 	}
 	err := WriteUInt32(w, uint32(len(s)))
 	if err != nil {
@@ -369,7 +379,7 @@ func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
 }
 
 func WriteSliceAny[T any, TI ~[]T](w io.Writer, s TI, t func(w io.Writer, s T) error) error {
-	if len(s) > math.MaxUint32 {
+	if len(s) > int(maxUint32) {
 		return fmt.Errorf("slice length is too long")
 	}
 	err := WriteUInt32(w, uint32(len(s)))
@@ -392,6 +402,18 @@ func WriteError(w io.Writer, err error) error {
 	err = WriteSmallString(w, err.Error())
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func writeAll(w io.Writer, b []byte) error {
+	written := 0
+	for written < len(b) {
+		n, err := w.Write(b[written:])
+		if err != nil {
+			return err
+		}
+		written += n
 	}
 	return nil
 }

@@ -227,10 +227,11 @@ func (s *states) ReadBytes(r io.Reader) error {
 	}
 	*s = make(states, l)
 	for i := range l {
-		err = (*s)[i].ReadBytes(r)
+		v, err := bcts.ReadReader[State](r)
 		if err != nil {
 			return err
 		}
+		(*s)[i] = v
 	}
 	return nil
 }

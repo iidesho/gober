@@ -43,7 +43,7 @@ func (m Metadata) WriteBytes(w io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	err = bcts.WriteString(w, string(m.EventType))
+	err = bcts.WriteString(w, m.EventType)
 	if err != nil {
 		return err
 	}

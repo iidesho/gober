@@ -4,7 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"io"
+
+	"github.com/iidesho/bragi/sbragi"
 )
+
+var log = sbragi.WithLocalScope(sbragi.LevelInfo)
 
 func Write(w Writer) ([]byte, error) {
 	dByte := bytes.NewBuffer([]byte{})
