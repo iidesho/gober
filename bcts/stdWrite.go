@@ -362,9 +362,6 @@ func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
 	if len(s) > int(maxUint32) {
 		return fmt.Errorf("slice length is too long")
 	}
-	if len(s) > 100000 {
-		log.Fatal("writing huge slice", "len", len(s))
-	}
 	err := WriteUInt32(w, uint32(len(s)))
 	if err != nil {
 		return err

@@ -708,7 +708,7 @@ func (t *executor[BT, T]) ReadErrors(
 	// )
 	s, err := t.es.Stream(event.AllTypes(), store.STREAM_START,
 		func(md event.Metadata) bool {
-			return md.Extra["id"] != idstr
+			return stream.ReadDataType(t.sagaName)(md) || md.Extra["id"] != idstr
 		}, ctx)
 	if err != nil {
 		cancel()

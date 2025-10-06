@@ -406,9 +406,6 @@ func ReadSlice[TV any, T Reader[TV]](r io.Reader, s *[]TV) error {
 	if err != nil {
 		return err
 	}
-	if l > 100000 {
-		log.Fatal("reading huge slice", "len", l)
-	}
 	*s = make([]TV, l)
 	for i := range l {
 		v, err := ReadReader[TV, T](r)
