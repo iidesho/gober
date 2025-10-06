@@ -721,14 +721,14 @@ func (t *executor[BT, T]) ReadErrors(
 		for {
 			select {
 			case <-t.ctx.Done():
-				log.Info("ReadErrors: context done")
+				log.Trace("ReadErrors: context done")
 				return
 			case <-ctx.Done():
-				log.Info("ReadErrors: caller context done")
+				log.Trace("ReadErrors: caller context done")
 				return
 			case e, ok := <-s:
 				if !ok {
-					log.Info("ReadErrors: stream closed")
+					log.Trace("ReadErrors: stream closed")
 					return
 				}
 				curState = e.Data.status.state
@@ -750,10 +750,10 @@ func (t *executor[BT, T]) ReadErrors(
 				if e.Data.status.err != nil {
 					select {
 					case <-t.ctx.Done():
-						log.Info("ReadErrors: context done")
+						log.Trace("ReadErrors: context done")
 						return
 					case <-ctx.Done():
-						log.Info("ReadErrors: caller context done")
+						log.Trace("ReadErrors: caller context done")
 						return
 					case out <- e.Data.status.err:
 					}
