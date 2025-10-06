@@ -37,9 +37,12 @@ func ReadReader[BT any, T Reader[BT]](r io.Reader) (BT, error) {
 	return *v, err
 }
 
-func Read[BT any, T Reader[BT]](data []byte) (T, error) {
+func Read[BT any, T Reader[BT]](data []byte) (BT, error) {
 	dByte := bytes.NewReader(data)
-	v := T(new(BT))
-	err := v.ReadBytes(dByte)
-	return v, err
+	return ReadReader[BT, T](dByte)
+	/*
+	   v := T(new(BT))
+	   err := v.ReadBytes(dByte)
+	   return v, err
+	*/
 }

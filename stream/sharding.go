@@ -197,7 +197,7 @@ func (es eventShardService[BT, T]) StreamShard(
 				if err != nil {
 					continue
 				}
-				if filter(*metadata) {
+				if filter(metadata) {
 					log.Debug("Filtering metadata", "metadata", metadata)
 					continue
 				}
@@ -218,8 +218,8 @@ func (es eventShardService[BT, T]) StreamShard(
 				case eventChan <- event.ReadEvent[BT, T]{
 					Event: event.Event[BT, T]{
 						Type:     t,
-						Data:     d,
-						Metadata: *metadata,
+						Data:     &d,
+						Metadata: metadata,
 					},
 
 					Position: e.Position,

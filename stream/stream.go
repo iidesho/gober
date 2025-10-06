@@ -214,7 +214,7 @@ func (es eventService[BT, T]) Stream(
 				if err != nil {
 					continue
 				}
-				if filter(*metadata) {
+				if filter(metadata) {
 					log.Debug("Filtering metadata", "metadata", metadata)
 					continue
 				}
@@ -222,7 +222,7 @@ func (es eventService[BT, T]) Stream(
 				// err = json.Unmarshal(e.Data, &d)
 				d, err := bcts.Read[BT, T](e.Data)
 				log.WithError(err).
-					Trace("Unmarshalling event data", "type", fmt.Sprintf("%T", d), "stream", es.Name(), "event", string(e.Data), "data", d, "metadata", *metadata)
+					Trace("Unmarshalling event data", "type", fmt.Sprintf("%T", d), "stream", es.Name(), "event", string(e.Data), "data", d, "metadata", metadata)
 				if err != nil {
 					continue
 				}
@@ -235,8 +235,8 @@ func (es eventService[BT, T]) Stream(
 				case eventChan <- event.ReadEvent[BT, T]{
 					Event: event.Event[BT, T]{
 						Type:     t,
-						Data:     d,
-						Metadata: *metadata,
+						Data:     &d,
+						Metadata: metadata,
 					},
 
 					Position: e.Position,

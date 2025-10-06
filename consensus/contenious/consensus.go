@@ -961,7 +961,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					case <-c.ctx.Done():
 						c.mutex.Unlock()
 						return
-					case c.distributor <- *d:
+					case c.distributor <- d:
 					}
 
 					if len(c.discoverer.Servers()) <= 3 { // there will be more than half approval
@@ -1343,7 +1343,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 						return
 					case <-c.ctx.Done():
 						return
-					case c.distributor <- *d:
+					case c.distributor <- d:
 					}
 					continue
 				}
@@ -1386,7 +1386,7 @@ func (c *consensus) reader(r <-chan []byte, w chan<- websocket.Write[[]byte], ct
 					return
 				case <-c.ctx.Done():
 					return
-				case c.distributor <- *d:
+				case c.distributor <- d:
 				}
 			case completed:
 				log.Trace(
