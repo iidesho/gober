@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/gofrs/uuid"
@@ -351,7 +352,10 @@ func WriteMapAnyFunc[K comparable, T any](
 }
 
 func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
-	err := WriteInt32(w, int32(len(s)))
+	if len(s) > math.MaxUint32 {
+		return fmt.Errorf("slice length is too long")
+	}
+	err := WriteUInt32(w, uint32(len(s)))
 	if err != nil {
 		return err
 	}
@@ -365,7 +369,10 @@ func WriteSlice[T Writer, TI ~[]T](w io.Writer, s TI) error {
 }
 
 func WriteSliceAny[T any, TI ~[]T](w io.Writer, s TI, t func(w io.Writer, s T) error) error {
-	err := WriteInt32(w, int32(len(s)))
+	if len(s) > math.MaxUint32 {
+		return fmt.Errorf("slice length is too long")
+	}
+	err := WriteUInt32(w, uint32(len(s)))
 	if err != nil {
 		return err
 	}

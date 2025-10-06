@@ -138,10 +138,12 @@ func Init(name string, ctx context.Context) (s *Stream, err error) {
 	var se storeEvent
 	p := store.STREAM_START
 	for err = se.ReadBytes(f); err == nil; err = se.ReadBytes(f) {
+		log.Info("reading start", "curPos", p, "got", se.Position)
 		if p < se.Position {
 			p = se.Position
 		}
 	}
+	log.WithError(err).Info("got end")
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}

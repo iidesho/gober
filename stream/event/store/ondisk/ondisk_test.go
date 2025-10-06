@@ -262,7 +262,7 @@ func BenchmarkStoreAndStream(b *testing.B) {
 	}
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
-	es, err = ondisk.Init(fmt.Sprintf("b_%s", STREAM_NAME), ctx)
+	es, err = ondisk.Init(fmt.Sprintf("b_%s_%d", STREAM_NAME, b.N), ctx)
 	if err != nil {
 		b.Error(err)
 		return
@@ -296,7 +296,18 @@ func BenchmarkStoreAndStream(b *testing.B) {
 		b.Error(err)
 		return
 	}
+	b.StopTimer()
+	time.Sleep(time.Second)
+	b.StartTimer()
 	pos, err := es.End()
+	if err != nil {
+		b.Error(err)
+		return
+	}
+	if pos != store.StreamPosition(b.N) {
+		b.Error("end pos != b.N", "pos", pos, "b.N", b.N)
+		return
+	}
 	for i := 0; i < int(pos); i++ {
 		e := <-stream
 		if e.Type != string(event.Created) {
@@ -353,12 +364,47 @@ func BenchmarkEND(b *testing.B) {
 			return
 		}
 	}
+	time.Sleep(time.Second)
 	b.ResetTimer()
 	pos, err := es.End()
 	if err != nil {
 		b.Fatal(err)
 	}
-	if pos != store.StreamPosition(b.N-1) {
-		b.Errorf("wrong end pos, %d!=%d", pos, b.N-1)
+	if pos != store.StreamPosition(b.N) {
+		b.Errorf("wrong end pos, %d!=%d", pos, b.N)
+	}
+	eventsRead := 0
+	go func() {
+		t := time.NewTicker(time.Second)
+		prev := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				fmt.Printf("events read %d/s\n", eventsRead-prev)
+				prev = eventsRead
+			}
+		}
+	}()
+	for range b.N {
+		ctx, cancel := context.WithCancel(ctx)
+		stream, err := es.Stream(store.STREAM_START, ctx)
+		if err != nil {
+			b.Error(err)
+			cancel()
+			return
+		}
+		for i := 0; i < int(pos); i++ {
+			select {
+			case <-time.After(time.Second):
+				b.Error("timed out")
+				cancel()
+				return
+			case <-stream:
+				eventsRead++
+			}
+		}
+		cancel()
 	}
 }

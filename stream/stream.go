@@ -222,7 +222,7 @@ func (es eventService[BT, T]) Stream(
 				// err = json.Unmarshal(e.Data, &d)
 				d, err := bcts.Read[BT, T](e.Data)
 				log.WithError(err).
-					Trace("Unmarshalling event data", "event", string(e.Data), "data", d)
+					Trace("Unmarshalling event data", "type", fmt.Sprintf("%T", d), "stream", es.Name(), "event", string(e.Data), "data", d, "metadata", *metadata)
 				if err != nil {
 					continue
 				}

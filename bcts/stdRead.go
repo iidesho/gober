@@ -386,26 +386,27 @@ func ReadMapAnyFunc[K comparable, V any](
 }
 
 func ReadSlice[TV any, T Reader[TV]](r io.Reader, s *[]TV) error {
-	var l int32
-	err := ReadInt32(r, &l)
+	var l uint32
+	err := ReadUInt32(r, &l)
 	if err != nil {
 		return err
 	}
 	*s = make([]TV, l)
 	for i := range l {
-		v := new(TV)
-		err = T(v).ReadBytes(r)
+		v, err := ReadReader[TV, T](r)
+		// v := new(TV)
+		// err = T(v).ReadBytes(r)
 		if err != nil {
 			return err
 		}
-		(*s)[i] = *v
+		(*s)[i] = v
 	}
 	return nil
 }
 
 func ReadSliceAny[TV any](r io.Reader, s *[]TV, t func(r io.Reader, v *TV) error) error {
-	var l int32
-	err := ReadInt32(r, &l)
+	var l uint32
+	err := ReadUInt32(r, &l)
 	if err != nil {
 		return err
 	}
