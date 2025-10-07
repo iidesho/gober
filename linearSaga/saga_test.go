@@ -17,10 +17,7 @@ import (
 	"github.com/iidesho/gober/bcts"
 	"github.com/iidesho/gober/itr"
 	saga "github.com/iidesho/gober/linearSaga"
-	"github.com/iidesho/gober/stream"
-	"github.com/iidesho/gober/stream/event/store/inmemory"
-	"github.com/iidesho/gober/stream/event/store/ondisk"
-	"github.com/iidesho/gober/stream/event/store/sharding"
+	"github.com/iidesho/gober/stream/event/store/mariadb"
 	"github.com/iidesho/gober/webserver"
 )
 
@@ -198,13 +195,13 @@ var stry = saga.Story[bcts.TinyString, *bcts.TinyString]{
 
 func TestInit(t *testing.T) {
 	os.Remove("./streams")
-	// store, err := inmemory.Init("t", context.Background())
-	store, err := sharding.NewShardedStream("test",
-		func(name string, ctx context.Context) (stream.Stream, error) {
-			return inmemory.Init(name, ctx)
-		},
-		sharding.StaticRouter{}.Route,
-		context.Background())
+	store, err := mariadb.Init("t", context.Background())
+	// store, err := sharding.NewShardedStream("test",
+	// 	func(name string, ctx context.Context) (stream.Stream, error) {
+	// 		return inmemory.Init(name, ctx)
+	// 	},
+	// 	sharding.StaticRouter{}.Route,
+	// 	context.Background())
 	if err != nil {
 		t.Error(err)
 		return
@@ -387,13 +384,14 @@ func BenchmarkSagaNew(b *testing.B) {
 		}
 	}()
 
-	store, err := sharding.NewShardedStream(fmt.Sprintf("bench-%d", time.Now().Unix()),
-		func(name string, ctx context.Context) (stream.Stream, error) {
-			// return ondisk.Init(name, ctx)
-			return inmemory.Init(name, ctx)
-		},
-		sharding.StaticRouter{}.Route,
-		ctx)
+	// store, err := sharding.NewShardedStream(fmt.Sprintf("bench-%d", time.Now().Unix()),
+	// 	func(name string, ctx context.Context) (stream.Stream, error) {
+	// 		// return ondisk.Init(name, ctx)
+	// 		return inmemory.Init(name, ctx)
+	// 	},
+	// 	sharding.StaticRouter{}.Route,
+	// 	ctx)
+	store, err := mariadb.Init(fmt.Sprintf("bench-%d", time.Now().Unix()), ctx)
 	if err != nil {
 		cancel()
 		b.Error(err)
@@ -514,7 +512,8 @@ func BenchmarkSaga(b *testing.B) {
 		}
 	}()
 	// if edt == nil {
-	store, err := ondisk.Init("b", context.Background())
+	// store, err := ondisk.Init("b", context.Background())
+	store, err := mariadb.Init("b", context.Background())
 	// if err != nil {
 	// 	b.Error(err)
 	// 	return

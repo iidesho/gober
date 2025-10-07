@@ -7,6 +7,7 @@ toolchain go1.24.5
 require (
 	github.com/EventStore/EventStore-Client-Go v1.0.2
 	github.com/dgraph-io/badger v1.6.2
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gobwas/ws v1.4.0
 	github.com/gofiber/contrib/websocket v1.3.2
 	github.com/gofiber/fiber/v2 v2.52.5
@@ -30,6 +31,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/AndreasBriese/bbloom v0.0.0-20190825152654-46b345b51c96 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/antlabs/stl v0.0.1 // indirect
