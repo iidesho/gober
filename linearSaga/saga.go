@@ -58,13 +58,13 @@ type executor[BT bcts.Writer, T bcts.ReadWriter[BT]] struct {
 	es       stream.FilteredStream[sagaValue[BT, T], *sagaValue[BT, T]]
 	statuses gsync.Map[uuid.UUID, status]
 	// startPosition gsync.Map[uuid.UUID, store.StreamPosition]
-	// errors   gsync.Map[uuid.UUID, chan error]
-	provider stream.CryptoKeyProvider
-	failed   chan<- uuid.UUID
-	close    context.CancelFunc
-	sagaName string
-	version  string
-	story    Story[BT, T]
+	knownExecutions gsync.Map[uuid.UUID, struct{}]
+	provider        stream.CryptoKeyProvider
+	failed          chan<- uuid.UUID
+	close           context.CancelFunc
+	sagaName        string
+	version         string
+	story           Story[BT, T]
 	// tasks    []status
 	// taskLock sync.Mutex
 }
@@ -106,8 +106,9 @@ func Init[BT bcts.Writer, T bcts.ReadWriter[BT]](
 		sagaName: dataTypeName,
 		version:  dataTypeVersion,
 		// taskLock: sync.Mutex{},
-		story:    story,
-		statuses: gsync.NewMap[uuid.UUID, status](),
+		story:           story,
+		statuses:        gsync.NewMap[uuid.UUID, status](),
+		knownExecutions: gsync.NewMap[uuid.UUID, struct{}](),
 		// startPosition: gsync.NewMap[uuid.UUID, store.StreamPosition](),
 		// errors:   gsync.NewMap[uuid.UUID, chan error](),
 		es:    es,
@@ -442,6 +443,7 @@ func (t *executor[BT, T]) handler(
 			var actionI int
 			switch e.Data.status.state {
 			case StatePending:
+				t.knownExecutions.GetOrInit(e.Data.status.id, func() struct{} { return struct{}{} })
 				fallthrough
 			case StateSuccess:
 				// t.taskLock.Lock()
@@ -679,7 +681,7 @@ func (t *executor[BT, T]) ExecuteFirst(
 		defer childSpan.End()
 	}
 	// errChan := make(chan error, MESSAGE_BUFFER_SIZE)
-	return id, t.writeEvent(sagaValue[BT, T]{
+	err = t.writeEvent(sagaValue[BT, T]{
 		v: dt,
 		status: status{
 			state:  StatePending,
@@ -688,12 +690,21 @@ func (t *executor[BT, T]) ExecuteFirst(
 		},
 		ctx: ctx,
 	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	t.knownExecutions.Set(id, struct{}{})
+	return id, nil
 }
 
 func (t *executor[BT, T]) ReadErrors(
 	id uuid.UUID,
 	ctx context.Context,
 ) (<-chan error, func() State, error) {
+	_, ok := t.knownExecutions.Get(id)
+	if !ok {
+		return nil, nil, ErrExecutionNotFound
+	}
 	curState := StateInvalid
 	idstr := id.String()
 	ctx, cancel := context.WithCancel(ctx)
