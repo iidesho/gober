@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	// "sync"
 	"time"
@@ -820,7 +821,7 @@ func findStep[BT any, T bcts.ReadWriter[BT]](actions []Action[BT, T], id string)
 }
 
 func IsRetryableError(err error) bool {
-	return errors.As(err, &retryableError{})
+	return strings.HasPrefix(err.Error(), "RetryableError")
 }
 
 func RetryableError(from string, err error) retryableError {
