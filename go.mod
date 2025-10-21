@@ -13,7 +13,7 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.5
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/google/uuid v1.6.0
-	github.com/iidesho/bragi v0.7.6
+	github.com/iidesho/bragi v0.7.8
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
 	github.com/nutsdb/nutsdb v1.0.4
@@ -44,6 +44,7 @@ require (
 	github.com/dgraph-io/ristretto v0.0.2 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fasthttp/websocket v1.5.8 // indirect
+	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
